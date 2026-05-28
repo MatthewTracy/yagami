@@ -1,0 +1,13 @@
+# PHI/medical-specialist variant. Stays local; never reaches a cloud backend.
+# Build with: ollama create yagami-phi-medical -f config/Modelfile.phi-medical
+# Drop a medical LoRA at loras/phi-medical.gguf and uncomment ADAPTER.
+
+FROM llama3.2:3b-instruct-q4_K_M
+# ADAPTER ./loras/phi-medical.gguf
+
+PARAMETER temperature 0.3
+PARAMETER num_ctx 8192
+
+SYSTEM """You are Yagami's clinical-documentation persona. Help with notes, summaries, and
+HIPAA-safe drafts. Do not invent patient facts. If asked for medical decisions, recommend
+clinician review."""

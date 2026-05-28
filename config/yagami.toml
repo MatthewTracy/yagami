@@ -1,0 +1,23 @@
+# Yagami model registry + routing rules
+
+[ollama]
+url = "http://localhost:11434"
+model = "llama3.2:3b-instruct-q4_K_M"
+classifier_model = "llama3.2:3b-instruct-q4_K_M"
+
+[anthropic]
+model = "claude-sonnet-4-6"
+max_tokens = 4096
+
+[stability]
+model = "stable-image-core"
+
+[routing]
+long_message_token_threshold = 1500
+phi_must_be_local = true
+default_backend = "ollama"
+
+[routing.lora_variants]
+# Uncomment after building the variants with `ollama create <name> -f config/Modelfile.<x>`.
+# code = "yagami-code"
+# phi_medical = "yagami-phi-medical"
