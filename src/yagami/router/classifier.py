@@ -14,6 +14,10 @@ log = logging.getLogger("yagami.classifier")
 _SYSTEM_PROMPT = (
     'Classify the user message. JSON only: {"intent":"simple_qa|complex_reasoning|code|creative|image",'
     '"sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high"}. '
+    "Choose 'image' when the user asks to generate/create/make/draw/paint/render/show/give/build "
+    "a visual thing (animal, object, scene, character, logo, design) AND does not request text "
+    "output (story, essay, poem, list, recipe, code, description). When ambiguous between image "
+    "and creative writing, prefer image. "
     "phi/phi_medical for personal health, SSN, address, phone, medical details. "
     "secret for keys/passwords. high complexity for multi-step or specialized."
 )

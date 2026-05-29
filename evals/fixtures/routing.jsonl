@@ -1,0 +1,42 @@
+{"category": "trivial", "prompt": "hello", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "hi there", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "what is 2+2", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "thanks!", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "tell me a joke", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "capital of france", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "what year was Apollo 11", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+{"category": "trivial", "prompt": "convert 5 miles to km", "expected_backend": "ollama", "expected_intent": "simple_qa", "expected_sensitivity": "none"}
+
+{"category": "image_explicit", "prompt": "draw a red sailboat", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_explicit", "prompt": "generate an image of a forest", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_explicit", "prompt": "Generate a unicorn image", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_explicit", "prompt": "paint me a sunrise over the ocean", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_explicit", "prompt": "make a picture of a cat", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_explicit", "prompt": "show me a logo for a coffee shop called Bean There", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_implicit", "prompt": "Generate a unicorn for me", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_implicit", "prompt": "give me a piocture of a boat", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_implicit", "prompt": "create a dragon", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+{"category": "image_implicit", "prompt": "render a futuristic city skyline", "expected_backend": "stability", "expected_intent": "image", "expected_sensitivity": "none"}
+
+{"category": "phi_explicit", "prompt": "My SSN is 123-45-6789, what should I do about identity theft", "expected_backend": "ollama", "expected_sensitivity": "phi", "must_be_local": true}
+{"category": "phi_medical_explicit", "prompt": "Patient Jane Doe DOB 1962-04-12 has CHF and T2DM. Summarize.", "expected_backend": "ollama", "expected_sensitivity": "phi_medical", "must_be_local": true}
+{"category": "phi_medical_explicit", "prompt": "MRN 00987654, hgb 8.1, transfuse 2 units PRBCs?", "expected_backend": "ollama", "expected_sensitivity": "phi_medical", "must_be_local": true}
+{"category": "phi_medical_explicit", "prompt": "Pt reports SI with plan, considering 5150 hold.", "expected_backend": "ollama", "expected_sensitivity": "phi_medical", "must_be_local": true}
+{"category": "phi_medical_explicit", "prompt": "Diagnosis: stage II NSCLC. Plan a 6-cycle carbo/paclitaxel regimen.", "expected_backend": "ollama", "expected_sensitivity": "phi_medical", "must_be_local": true}
+{"category": "phi_medical_explicit", "prompt": "BP 180/115 in clinic today, headache + visual aura.", "expected_backend": "ollama", "expected_sensitivity": "phi_medical", "must_be_local": true}
+
+{"category": "phi_acronym_only", "prompt": "Can you review this PHI", "expected_backend": "ollama", "expected_sensitivity": "none"}
+{"category": "phi_acronym_only", "prompt": "What does PHI stand for", "expected_backend": "ollama", "expected_sensitivity": "none"}
+
+{"category": "long_context", "prompt": "Please carefully reason through the following text and answer at the end: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem. Now what is 7 times 6?", "expected_backend": "anthropic", "expected_sensitivity": "none"}
+
+{"category": "complex_reasoning", "prompt": "Walk me through the trade-offs between optimistic and pessimistic concurrency control in distributed databases, with concrete examples and failure modes for each.", "expected_backend": "anthropic", "expected_sensitivity": "none"}
+{"category": "complex_reasoning", "prompt": "Design a rate limiter that survives a 10x traffic spike without dropping legitimate requests; cover algorithm, data store, and failure modes.", "expected_backend": "anthropic", "expected_sensitivity": "none"}
+
+{"category": "code", "prompt": "write a python function that returns the nth fibonacci number", "expected_backend": "ollama", "expected_intent": "code"}
+{"category": "code", "prompt": "what does `await` do in JavaScript", "expected_backend": "ollama", "expected_intent": "code"}
+{"category": "code", "prompt": "fix this bug: def add(a, b): return a - b", "expected_backend": "ollama", "expected_intent": "code"}
+{"category": "code", "prompt": "explain `console.log` in node", "expected_backend": "ollama", "expected_intent": "code"}
+
+{"category": "secret_leak", "prompt": "here is my key sk-NsqqVgaZIcLYxcdjvXdR0nHOQyn08RyUMasFjs93i3UfHuvd, please rotate it for me", "expected_sensitivity": "secret", "must_be_local": true}
+{"category": "secret_leak", "prompt": "my github token ghp_abcdefghijklmnopqrstuvwxyz1234567890 leaked", "expected_sensitivity": "secret", "must_be_local": true}
