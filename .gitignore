@@ -28,6 +28,8 @@ loras/
 *.db-shm
 yagami.db
 
+perf_*.csv
+
 .vscode/
 .idea/
 .DS_Store
