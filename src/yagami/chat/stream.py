@@ -9,9 +9,11 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from ..backends.base import BackendOptions, Message
-from ..router.policy import RoutingPolicy
+from ..router.policy import OverrideRefused, RoutingPolicy
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
+
+_IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
 
 log = logging.getLogger("yagami.stream")
 
@@ -67,13 +69,36 @@ async def chat_endpoint(
 
             user_msg = Message(role="user", content=user_text)
             history_cache.append(user_msg)
+            force_backend = payload.get("force_backend")
 
             t_start = time.perf_counter()
             append_task = asyncio.create_task(sessions.append(session_id, user_msg))
-            decide_task = asyncio.create_task(policy.decide(history_cache))
+            decide_task = asyncio.create_task(
+                policy.decide(history_cache, force_backend=force_backend)
+            )
             await append_task
-            decision = await decide_task
+            try:
+                decision = await decide_task
+            except OverrideRefused as exc:
+                await _send(ws, {"type": "error", "content": str(exc), "meta": {"refused": True}})
+                await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
+                continue
             t_classify_ms = int((time.perf_counter() - t_start) * 1000)
+
+            # If the policy stripped a slash command, swap the last user message
+            # so the backend sees the cleaned text. History cache stays as-is
+            # (the user's original message is preserved in the chat).
+            if decision.effective_user_text and decision.effective_user_text != user_text:
+                history_cache[-1] = Message(role="user", content=decision.effective_user_text)
+
+            # Image-prompt auto-enhancement: if the chosen backend is an image
+            # generator and the prompt is short, prepend a quality hint.
+            if decision.backend.name == "stability":
+                last = history_cache[-1]
+                if len(last.content) < 40 and not last.content.startswith(_IMAGE_PROMPT_PREFIX):
+                    history_cache[-1] = Message(
+                        role="user", content=_IMAGE_PROMPT_PREFIX + last.content
+                    )
 
             decision_payload = {
                 "backend": decision.backend.name,

@@ -33,11 +33,19 @@ const PENDING_HINT: Record<string, string> = {
   echo: "echoing",
 };
 
+const FORCE_OPTIONS = [
+  { value: "", label: "Auto" },
+  { value: "ollama", label: "Local (Ollama)" },
+  { value: "anthropic", label: "Cloud (Claude)" },
+  { value: "stability", label: "Image (Stability)" },
+];
+
 export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Props) {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [inFlight, setInFlight] = useState(false);
+  const [forceBackend, setForceBackend] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -127,7 +135,9 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     const text = input.trim();
     if (!text || !wsRef.current || inFlight) return;
     setBubbles((b) => [...b, { role: "user", text }]);
-    sendChat(wsRef.current, { content: text });
+    const payload: { content: string; force_backend?: string } = { content: text };
+    if (forceBackend) payload.force_backend = forceBackend;
+    sendChat(wsRef.current, payload);
     setInput("");
     setInFlight(true);
     const ta = document.querySelector<HTMLTextAreaElement>("textarea");
@@ -185,7 +195,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                 ? "connecting…"
                 : inFlight
                   ? "waiting for reply…"
-                  : "Message Yagami… (Shift+Enter for newline; paste a document to discuss it)"
+                  : "Message Yagami… (Shift+Enter newline · /cloud /local /image /think /code to force route)"
             }
             value={input}
             onChange={(e) => {
@@ -209,6 +219,19 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
             </div>
           )}
         </div>
+        <select
+          value={forceBackend}
+          onChange={(e) => setForceBackend(e.target.value)}
+          disabled={!connected || inFlight}
+          title="Force routing to a specific backend (PHI guard still applies)"
+          className="bg-zinc-900 border border-zinc-800 rounded-md px-2 py-2 text-xs text-zinc-300 disabled:opacity-50 focus:border-zinc-600 outline-none"
+        >
+          {FORCE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
         {inFlight ? (
           <button
             onClick={stop}

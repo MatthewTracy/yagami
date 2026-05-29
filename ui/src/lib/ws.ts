@@ -7,7 +7,7 @@ export type ServerMsg =
   | { type: "done"; content: string; meta: Record<string, unknown> };
 
 export type ClientMsg =
-  | { content: string }
+  | { content: string; force_backend?: string | null }
   | { type: "cancel" }
   | { type: "load_session"; session_id: string };
 

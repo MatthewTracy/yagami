@@ -52,3 +52,12 @@
 
 {"category": "creative", "prompt": "write a short poem about the ocean", "expected_intent": "creative", "expected_sensitivity": "none"}
 {"category": "creative", "prompt": "tell me a 2-paragraph story about a lost robot", "expected_intent": "creative", "expected_sensitivity": "none"}
+
+# User overrides via leading slash command — these MUST route as the user demanded.
+{"category": "slash_override", "prompt": "/cloud explain quantum entanglement in 100 words", "expected_backend": "anthropic"}
+{"category": "slash_override", "prompt": "/claude what's the time complexity of quicksort", "expected_backend": "anthropic"}
+{"category": "slash_override", "prompt": "/local what is 2+2", "expected_backend": "ollama"}
+{"category": "slash_override", "prompt": "/ollama hi", "expected_backend": "ollama"}
+{"category": "slash_override", "prompt": "/image a red sailboat at sunset", "expected_backend": "stability"}
+{"category": "slash_override", "prompt": "/think compare CRDTs and OT for collaborative editing", "expected_backend": "anthropic"}
+{"category": "slash_override", "prompt": "/code write a quick python decorator that memoizes", "expected_backend": "ollama"}
