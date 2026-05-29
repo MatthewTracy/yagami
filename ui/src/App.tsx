@@ -24,8 +24,8 @@ export default function App() {
   }
 
   return (
-    <div className="h-full grid grid-cols-[220px_1fr_320px]">
-      <aside className="border-r border-zinc-800">
+    <div className="h-screen grid grid-cols-[220px_1fr_320px] overflow-hidden">
+      <aside className="border-r border-zinc-800 min-h-0 overflow-hidden">
         <ConversationsSidebar
           activeSessionId={sessionId}
           refreshKey={refreshKey}
@@ -33,8 +33,8 @@ export default function App() {
           onNew={newChat}
         />
       </aside>
-      <div className="border-r border-zinc-800 flex flex-col">
-        <header className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2">
+      <div className="border-r border-zinc-800 flex flex-col min-h-0 overflow-hidden">
+        <header className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2 shrink-0">
           <span className="font-semibold tracking-tight">Yagami</span>
           <span className="text-xs text-zinc-500">local-first AI orchestrator</span>
         </header>
@@ -45,7 +45,7 @@ export default function App() {
           onTurnComplete={() => setRefreshKey((k) => k + 1)}
         />
       </div>
-      <aside className="p-3 space-y-4 overflow-y-auto">
+      <aside className="p-3 space-y-4 overflow-y-auto min-h-0">
         <section>
           <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Routing (current)</div>
           <DebugPanel

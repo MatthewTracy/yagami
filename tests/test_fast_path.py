@@ -43,6 +43,21 @@ IMAGE_FIXTURES = [
     "paint me a sunrise",
 ]
 
+# Imperative requests (including typos) that should always fall through to
+# the classifier — fast-path can't tell what the user wants generated.
+IMPERATIVE_FIXTURES = [
+    "Give me a piocture of a boat",   # typo on purpose — was the real-user bug
+    "give me a picture of a boat",
+    "show me the weather",
+    "make me a recipe",
+    "build me a website outline",
+    "create a logo idea",
+    "generate the next chapter",
+    "find me a quote",
+    "design a tattoo",
+    "sketch the room layout",
+]
+
 
 @pytest.mark.parametrize("prompt", PHI_FIXTURES)
 def test_phi_never_bypasses(prompt: str):
@@ -62,6 +77,11 @@ def test_code_never_bypasses(prompt: str):
 @pytest.mark.parametrize("prompt", IMAGE_FIXTURES)
 def test_image_keyword_never_bypasses(prompt: str):
     assert can_bypass(prompt) is None, f"Image prompt slipped past bypass: {prompt[:60]}"
+
+
+@pytest.mark.parametrize("prompt", IMPERATIVE_FIXTURES)
+def test_imperative_request_never_bypasses(prompt: str):
+    assert can_bypass(prompt) is None, f"Imperative request slipped past bypass: {prompt[:60]}"
 
 
 @pytest.mark.parametrize(

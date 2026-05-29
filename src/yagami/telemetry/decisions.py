@@ -73,18 +73,15 @@ async def update_decision_timings(decision_id: int, *, first_token_ms: int | Non
 
 async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> list[dict]:
     db = get_db()
+    cols = (
+        "id, session_id, created_at, backend, is_local, reason, classification,"
+        " scrubbed_preview, source, t_classify_ms, t_first_token_ms, t_total_ms"
+    )
     if session_id:
-        sql = (
-            "SELECT id, session_id, created_at, backend, is_local, reason, classification,"
-            " scrubbed_preview, source FROM decisions WHERE session_id=?"
-            " ORDER BY id DESC LIMIT ?"
-        )
+        sql = f"SELECT {cols} FROM decisions WHERE session_id=? ORDER BY id DESC LIMIT ?"
         args = (session_id, limit)
     else:
-        sql = (
-            "SELECT id, session_id, created_at, backend, is_local, reason, classification,"
-            " scrubbed_preview, source FROM decisions ORDER BY id DESC LIMIT ?"
-        )
+        sql = f"SELECT {cols} FROM decisions ORDER BY id DESC LIMIT ?"
         args = (limit,)
     async with db.execute(sql, args) as cur:
         rows = []

@@ -70,6 +70,16 @@ _CODE_REGEX = re.compile(r";\s*$", re.MULTILINE)
 
 _IMAGE_MARKERS = ("draw", "image of", "picture of", "/image", "generate an image", "paint")
 
+# Imperative "give me / show me / create a / generate the / ..." phrasings
+# almost always imply intent worth classifying (image, code, file, fetch).
+# Falling through to the LLM also handles typos in image keywords (e.g.
+# "give me a piocture" — fast-path can't fix that, but classifier can).
+_IMPERATIVE_PATTERN = re.compile(
+    r"\b(give|show|make|build|create|generate|fetch|find|render|design|paint|draw|sketch)\s+"
+    r"(?:me\s+)?(?:a|an|the|some|me)\b",
+    re.IGNORECASE,
+)
+
 
 def _has_secret(text: str) -> bool:
     return any(p.search(text) for p in _SECRET_PATTERNS)
@@ -97,6 +107,10 @@ def _has_image_keyword(text: str) -> bool:
     return any(marker in lowered for marker in _IMAGE_MARKERS)
 
 
+def _is_imperative_request(text: str) -> bool:
+    return bool(_IMPERATIVE_PATTERN.search(text))
+
+
 def can_bypass(text: str) -> Classification | None:
     """Return a SIMPLE_QA classification if we can prove the LLM classifier adds nothing.
 
@@ -113,6 +127,8 @@ def can_bypass(text: str) -> Classification | None:
     if _has_code(text):
         return None
     if _has_image_keyword(text):
+        return None
+    if _is_imperative_request(text):
         return None
     return Classification(
         intent=Intent.SIMPLE_QA,

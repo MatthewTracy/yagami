@@ -141,8 +141,8 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="flex flex-col flex-1 min-h-0">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {bubbles.length === 0 && (
           <div className="text-zinc-500 text-sm">
             Say hi. Try "what is 2+2", "draw a red sailboat", or paste a long passage.
@@ -175,7 +175,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           );
         })}
       </div>
-      <div className="p-3 border-t border-zinc-800 flex gap-2 items-end">
+      <div className="p-3 border-t border-zinc-800 flex gap-2 items-end shrink-0">
         <div className="flex-1 min-w-0">
           <textarea
             rows={1}
