@@ -11,16 +11,64 @@ from .schema import Classification, Complexity, Intent, Sensitivity
 
 log = logging.getLogger("yagami.classifier")
 
-_SYSTEM_PROMPT = (
-    'Classify the user message. JSON only: {"intent":"simple_qa|complex_reasoning|code|creative|image",'
-    '"sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high"}. '
-    "Choose 'image' when the user asks to generate/create/make/draw/paint/render/show/give/build "
-    "a visual thing (animal, object, scene, character, logo, design) AND does not request text "
-    "output (story, essay, poem, list, recipe, code, description). When ambiguous between image "
-    "and creative writing, prefer image. "
-    "phi/phi_medical for personal health, SSN, address, phone, medical details. "
-    "secret for keys/passwords. high complexity for multi-step or specialized."
-)
+
+_SYSTEM_PROMPT = """You are a routing classifier. Read the user's most recent message and emit ONLY one strict JSON object matching this exact shape:
+
+{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high"}
+
+Field meanings:
+
+- intent.image  => user wants a generated picture/drawing/render/logo (a visual artifact). Pick image for "draw/paint/sketch/render/illustrate/generate a picture of X" and for "create/make/give me a (logo|poster|portrait|illustration|image|picture|drawing|design)". Do NOT pick image if the user wants a story, description, list, or explanation about a visual subject.
+- intent.code  => question about code, debugging, error message, programming concept, or asking to write code.
+- intent.complex_reasoning  => multi-step novel reasoning, design tradeoffs, deep technical synthesis, hard math. NOT triggered by long input alone.
+- intent.creative => write a story, poem, song, fictional dialogue, essay.
+- intent.simple_qa => everything else (factual lookups, summarization, rewrites, chat, casual Q&A).
+
+- sensitivity.phi_medical => any clinical content (patient names, MRN, DOB, labs, meds, diagnoses, vitals, treatment plans).
+- sensitivity.phi => personal health/identity info without clinical depth (SSN alone, home address, phone with personal context).
+- sensitivity.secret => API keys (sk-..., ghp_..., AKIA..., JWTs), passwords, credentials.
+- sensitivity.none => none of the above.
+
+- complexity.high => genuinely hard task that needs careful multi-step reasoning. Long input alone does NOT mean high — summarizing a long email is low complexity.
+- complexity.medium => moderate task.
+- complexity.low => trivial or easy.
+
+Examples:
+
+User: what is 2+2
+Output: {"intent":"simple_qa","sensitivity":"none","complexity":"low"}
+
+User: Generate a unicorn for me
+Output: {"intent":"image","sensitivity":"none","complexity":"low"}
+
+User: draw a red sailboat at sunset
+Output: {"intent":"image","sensitivity":"none","complexity":"low"}
+
+User: write a python function that returns the nth fibonacci number
+Output: {"intent":"code","sensitivity":"none","complexity":"low"}
+
+User: Patient Jane Doe DOB 1962-04-12 has CHF and T2DM. Summarize.
+Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
+
+User: My SSN is 123-45-6789, what should I do about identity theft?
+Output: {"intent":"simple_qa","sensitivity":"phi","complexity":"low"}
+
+User: here is my key sk-NsqqVgaZIcLYxcdjvXdR0nHOQyn08RyUMasFjs93i3UfHuvd, please rotate it
+Output: {"intent":"simple_qa","sensitivity":"secret","complexity":"low"}
+
+User: Walk me through the trade-offs between optimistic and pessimistic concurrency control in distributed databases, with concrete examples and failure modes for each.
+Output: {"intent":"complex_reasoning","sensitivity":"none","complexity":"high"}
+
+User: Design a rate limiter that survives a 10x traffic spike without dropping legitimate requests; cover algorithm, data store, and failure modes.
+Output: {"intent":"complex_reasoning","sensitivity":"none","complexity":"high"}
+
+User: tell me about the picture of Dorian Gray
+Output: {"intent":"simple_qa","sensitivity":"none","complexity":"low"}
+
+User: write a short poem about the ocean
+Output: {"intent":"creative","sensitivity":"none","complexity":"low"}
+
+Now classify the next message. JSON only, no prose."""
 
 
 class ClassifierProtocol(Protocol):

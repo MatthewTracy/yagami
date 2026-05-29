@@ -57,10 +57,12 @@ class RoutingPolicy:
         cls_dict = classification.model_dump(mode="json")
         cls_dict["source"] = source
 
-        if (
-            classification.sensitivity in (Sensitivity.PHI, Sensitivity.PHI_MEDICAL)
-            and self._config.phi_must_be_local
-        ):
+        sensitive = classification.sensitivity in (
+            Sensitivity.PHI,
+            Sensitivity.PHI_MEDICAL,
+            Sensitivity.SECRET,
+        )
+        if sensitive and self._config.phi_must_be_local:
             backend = self._preferred_local()
             sysprompt = (
                 PHI_MEDICAL_SYSTEM_PROMPT

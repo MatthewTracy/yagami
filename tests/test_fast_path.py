@@ -65,8 +65,14 @@ def test_phi_never_bypasses(prompt: str):
 
 
 @pytest.mark.parametrize("prompt", SECRET_FIXTURES)
-def test_secret_never_bypasses(prompt: str):
-    assert can_bypass(prompt) is None, f"Secret prompt slipped past bypass: {prompt[:60]}"
+def test_secret_bypasses_with_secret_sensitivity(prompt: str):
+    # New v0.2.6 behavior: secrets bypass DIRECTLY to sensitivity=SECRET.
+    # The policy's must-be-local guard then forces a local backend.
+    c = can_bypass(prompt)
+    assert c is not None, f"Secret prompt should have bypassed: {prompt[:60]}"
+    assert c.sensitivity == Sensitivity.SECRET, (
+        f"Secret prompt must bypass with sensitivity=SECRET, got {c.sensitivity}: {prompt[:60]}"
+    )
 
 
 @pytest.mark.parametrize("prompt", CODE_FIXTURES)
@@ -75,13 +81,35 @@ def test_code_never_bypasses(prompt: str):
 
 
 @pytest.mark.parametrize("prompt", IMAGE_FIXTURES)
-def test_image_keyword_never_bypasses(prompt: str):
-    assert can_bypass(prompt) is None, f"Image prompt slipped past bypass: {prompt[:60]}"
+def test_image_creation_bypasses_to_image_intent(prompt: str):
+    # New v0.2.6: high-confidence image-creation prompts bypass DIRECTLY
+    # to intent=IMAGE so the policy can route to the image backend without
+    # paying the classifier round-trip.
+    c = can_bypass(prompt)
+    assert c is not None, f"Image creation should have bypassed: {prompt[:60]}"
+    assert c.intent == Intent.IMAGE, f"Expected intent=IMAGE, got {c.intent}: {prompt[:60]}"
 
 
-@pytest.mark.parametrize("prompt", IMPERATIVE_FIXTURES)
-def test_imperative_request_never_bypasses(prompt: str):
-    assert can_bypass(prompt) is None, f"Imperative request slipped past bypass: {prompt[:60]}"
+# Imperatives that are NOT image-creation should still fall through to the
+# classifier so it can disambiguate (recipe, website, story, etc.).
+NON_IMAGE_IMPERATIVE_FIXTURES = [
+    "show me the weather",
+    "make me a recipe",
+    "build me a website outline",
+    "create a logo idea",
+    "generate the next chapter",
+    "find me a quote",
+]
+
+
+@pytest.mark.parametrize("prompt", NON_IMAGE_IMPERATIVE_FIXTURES)
+def test_non_image_imperative_falls_through(prompt: str):
+    # These are ambiguous (recipe = text, website outline = text, story = text)
+    # so they should NOT bypass — the classifier decides.
+    c = can_bypass(prompt)
+    assert c is None or c.intent == Intent.IMAGE, (
+        f"Non-image imperative bypassed to wrong intent {c.intent if c else None}: {prompt[:60]}"
+    )
 
 
 @pytest.mark.parametrize(

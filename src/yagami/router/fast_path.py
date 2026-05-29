@@ -80,6 +80,24 @@ _IMPERATIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# High-confidence image creation: verbs that are inherently visual generation.
+# These bypass the classifier and route directly to the image backend.
+# Bare "picture" is intentionally NOT in this list — "tell me about the picture
+# of Dorian Gray" isn't image gen. We require a creation verb + article/me.
+_IMAGE_CREATION_PATTERN = re.compile(
+    r"\b(draw|paint|sketch|render|illustrate)\s+(?:me\s+)?(?:a|an|the|some)\b",
+    re.IGNORECASE,
+)
+# Also catch the very explicit cases: "image of X", "picture of X", "/image X",
+# "generate an image of X", "create a logo|poster|illustration|portrait|drawing|painting".
+_IMAGE_EXPLICIT_PATTERN = re.compile(
+    r"(?:\bimage of\b|\bpicture of\b|^/image\b|"
+    r"\b(?:generate|create|make|give\s+me)\s+(?:an?\s+)?image\b|"
+    r"\b(?:generate|create|make|give\s+me)\s+(?:an?\s+)?picture\b|"
+    r"\b(?:create|make|design|give\s+me)\s+(?:a|an|the)\s+(?:logo|poster|portrait|illustration|drawing|painting|wallpaper)\b)",
+    re.IGNORECASE,
+)
+
 
 def _has_secret(text: str) -> bool:
     return any(p.search(text) for p in _SECRET_PATTERNS)
@@ -112,17 +130,40 @@ def _is_imperative_request(text: str) -> bool:
 
 
 def can_bypass(text: str) -> Classification | None:
-    """Return a SIMPLE_QA classification if we can prove the LLM classifier adds nothing.
+    """Return a Classification if rules alone are sufficient. None means
+    the LLM classifier needs to run.
 
-    Falls through (returns None) whenever the text:
-    - is long enough to plausibly contain something interesting
-    - matches PHI / secret / code / image keyword regex
+    Three confident bypasses:
+    1. SECRET — regex hit on a credential pattern. Force local, never leaks.
+    2. IMAGE — high-confidence image-creation verb. Route directly to image
+       backend without paying the classifier round-trip.
+    3. SIMPLE_QA — short non-special prompt. The common case.
     """
-    if not text or len(text) >= _MAX_BYPASS_CHARS:
+    if not text:
+        return None
+
+    # Secrets ALWAYS take precedence — the secret regex is high-precision
+    # (API key formats). Force local regardless of message length.
+    if _has_secret(text):
+        return Classification(
+            intent=Intent.SIMPLE_QA,
+            sensitivity=Sensitivity.SECRET,
+            complexity=Complexity.LOW,
+        )
+
+    # Explicit image creation — route to image backend without the LLM call.
+    if _IMAGE_CREATION_PATTERN.search(text) or _IMAGE_EXPLICIT_PATTERN.search(text):
+        return Classification(
+            intent=Intent.IMAGE,
+            sensitivity=Sensitivity.NONE,
+            complexity=Complexity.LOW,
+        )
+
+    # Below: conservative SIMPLE_QA bypass. Anything that might need real
+    # classification falls through to the LLM.
+    if len(text) >= _MAX_BYPASS_CHARS:
         return None
     if _has_phi(text):
-        return None
-    if _has_secret(text):
         return None
     if _has_code(text):
         return None

@@ -14,6 +14,14 @@ async def test_phi_forces_local(make_policy, classified_user_msg):
 
 
 @pytest.mark.asyncio
+async def test_secret_forces_local(make_policy, classified_user_msg):
+    policy = make_policy(Classification(sensitivity=Sensitivity.SECRET, complexity=Complexity.HIGH))
+    decision = await policy.decide(classified_user_msg("anything"))
+    assert decision.backend.is_local is True
+    assert "secret" in decision.reason
+
+
+@pytest.mark.asyncio
 async def test_phi_medical_attaches_clinical_system_prompt(make_policy, classified_user_msg):
     from yagami.router.prompts import PHI_MEDICAL_SYSTEM_PROMPT
     policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL))
