@@ -22,6 +22,11 @@ loras/
 .yagami/
 *.sqlite
 *.sqlite-journal
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+yagami.db
 
 .vscode/
 .idea/

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { connectChat, ServerMsg } from "../lib/ws";
+import { connectChat, sendChat, ServerMsg } from "../lib/ws";
 
 type Bubble =
   | { role: "user"; text: string }
@@ -19,7 +19,12 @@ type Routing = {
   classification: Record<string, unknown>;
 };
 
-type Props = { onRouting: (r: Routing) => void };
+type Props = {
+  onRouting: (r: Routing) => void;
+  onSession: (sessionId: string) => void;
+  onTurnComplete: () => void;
+  loadSessionId: string | null;
+};
 
 const PENDING_HINT: Record<string, string> = {
   ollama: "thinking locally",
@@ -28,7 +33,7 @@ const PENDING_HINT: Record<string, string> = {
   echo: "echoing",
 };
 
-export function Chat({ onRouting }: Props) {
+export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Props) {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
@@ -37,11 +42,27 @@ export function Chat({ onRouting }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const ws = connectChat(handle, () => setConnected(false));
-    ws.onopen = () => setConnected(true);
+    const ws = connectChat(handle, () => setConnected(false), () => setConnected(true));
     wsRef.current = ws;
     return () => ws.close();
   }, []);
+
+  useEffect(() => {
+    if (loadSessionId && wsRef.current?.readyState === WebSocket.OPEN) {
+      setBubbles([]);
+      sendChat(wsRef.current, { type: "load_session", session_id: loadSessionId });
+      fetch(`/api/sessions/${loadSessionId}`)
+        .then((r) => r.json())
+        .then((d) => {
+          const loaded: Bubble[] = (d.messages || []).map((m: { role: string; content: string }) =>
+            m.role === "user"
+              ? { role: "user", text: m.content }
+              : { role: "assistant", text: m.content, pending: false }
+          );
+          setBubbles(loaded);
+        });
+    }
+  }, [loadSessionId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -56,6 +77,10 @@ export function Chat({ onRouting }: Props) {
   }
 
   function handle(m: ServerMsg) {
+    if (m.type === "session") {
+      onSession(m.session_id);
+      return;
+    }
     if (m.type === "routing") {
       onRouting({
         backend: m.backend,
@@ -94,19 +119,24 @@ export function Chat({ onRouting }: Props) {
     if (m.type === "done") {
       updateLastAssistant((last) => ({ ...last, pending: false }));
       setInFlight(false);
+      onTurnComplete();
     }
   }
 
   function send() {
     const text = input.trim();
-    if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || inFlight) return;
+    if (!text || !wsRef.current || inFlight) return;
     setBubbles((b) => [...b, { role: "user", text }]);
-    wsRef.current.send(JSON.stringify({ content: text }));
+    sendChat(wsRef.current, { content: text });
     setInput("");
     setInFlight(true);
   }
 
-  const busy = !connected || inFlight;
+  function stop() {
+    if (wsRef.current && inFlight) {
+      sendChat(wsRef.current, { type: "cancel" });
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -152,15 +182,24 @@ export function Chat({ onRouting }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          disabled={busy}
+          disabled={!connected || inFlight}
         />
-        <button
-          onClick={send}
-          disabled={busy}
-          className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-500 rounded-md text-sm"
-        >
-          {inFlight ? "…" : "Send"}
-        </button>
+        {inFlight ? (
+          <button
+            onClick={stop}
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={send}
+            disabled={!connected}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-500 rounded-md text-sm"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

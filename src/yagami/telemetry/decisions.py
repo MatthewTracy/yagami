@@ -5,6 +5,8 @@ import logging
 import re
 from pathlib import Path
 
+from ..storage.db import get_db, now_ms
+
 log = logging.getLogger("yagami.decisions")
 
 _PHI_PATTERNS = [
@@ -20,6 +22,62 @@ def scrub(text: str) -> str:
     for pat in _PHI_PATTERNS:
         out = pat.sub("[REDACTED]", out)
     return out
+
+
+async def persist_decision(
+    *,
+    session_id: str,
+    user_text: str,
+    decision: dict,
+) -> None:
+    preview = scrub(user_text)[:280]
+    classification = decision.get("classification", {})
+    source = classification.get("source", "unknown") if isinstance(classification, dict) else "unknown"
+    db = get_db()
+    await db.execute(
+        "INSERT INTO decisions("
+        " session_id, created_at, backend, is_local, reason, classification, scrubbed_preview, source"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            now_ms(),
+            decision["backend"],
+            1 if decision["is_local"] else 0,
+            decision["reason"],
+            json.dumps(classification),
+            preview,
+            source,
+        ),
+    )
+    await db.commit()
+
+
+async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> list[dict]:
+    db = get_db()
+    if session_id:
+        sql = (
+            "SELECT id, session_id, created_at, backend, is_local, reason, classification,"
+            " scrubbed_preview, source FROM decisions WHERE session_id=?"
+            " ORDER BY id DESC LIMIT ?"
+        )
+        args = (session_id, limit)
+    else:
+        sql = (
+            "SELECT id, session_id, created_at, backend, is_local, reason, classification,"
+            " scrubbed_preview, source FROM decisions ORDER BY id DESC LIMIT ?"
+        )
+        args = (limit,)
+    async with db.execute(sql, args) as cur:
+        rows = []
+        async for r in cur:
+            d = dict(r)
+            d["is_local"] = bool(d["is_local"])
+            try:
+                d["classification"] = json.loads(d["classification"])
+            except (TypeError, ValueError):
+                pass
+            rows.append(d)
+        return rows
 
 
 def log_decision(

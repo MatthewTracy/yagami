@@ -6,10 +6,20 @@ export type ServerMsg =
   | { type: "error"; content: string; meta: Record<string, unknown> }
   | { type: "done"; content: string; meta: Record<string, unknown> };
 
-export function connectChat(onMsg: (m: ServerMsg) => void, onClose?: () => void): WebSocket {
+export type ClientMsg =
+  | { content: string }
+  | { type: "cancel" }
+  | { type: "load_session"; session_id: string };
+
+export function connectChat(onMsg: (m: ServerMsg) => void, onClose?: () => void, onOpen?: () => void): WebSocket {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${window.location.host}/ws/chat`);
   ws.onmessage = (e) => onMsg(JSON.parse(e.data) as ServerMsg);
   ws.onclose = () => onClose?.();
+  ws.onopen = () => onOpen?.();
   return ws;
+}
+
+export function sendChat(ws: WebSocket, msg: ClientMsg): void {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }

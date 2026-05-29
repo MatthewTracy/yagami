@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+import pytest_asyncio
 
 from yagami.backends.base import Backend, BackendChunk, BackendOptions, Capability, Message
 from yagami.config import RoutingConfig
 from yagami.router.policy import RoutingPolicy
 from yagami.router.schema import Classification, Complexity, Intent, Sensitivity
+from yagami.storage.db import close_db, open_db
 
 
 class FakeBackend:
@@ -59,3 +62,11 @@ def user_msg():
     def _make(text: str) -> list[Message]:
         return [Message(role="user", content=text)]
     return _make
+
+
+@pytest_asyncio.fixture
+async def fresh_db(tmp_path: Path):
+    db_file = tmp_path / "yagami_test.db"
+    conn = await open_db(db_file)
+    yield conn
+    await close_db()

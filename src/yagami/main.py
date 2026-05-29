@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .api import decisions as decisions_api
+from .api import sessions as sessions_api
 from .backends.anthropic import ClaudeBackend
 from .backends.base import Backend
 from .backends.echo import EchoBackend
@@ -17,15 +20,21 @@ from .chat.stream import chat_endpoint
 from .config import get_config, get_settings
 from .router.classifier import OllamaJSONClassifier
 from .router.policy import RoutingPolicy
+from .storage.db import close_db, open_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("yagami")
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def build_app() -> FastAPI:
     cfg = get_config()
     settings = get_settings()
     sessions = SessionStore()
+    db_path = _project_root() / "yagami.db"
 
     backends: dict[str, Backend] = {
         "echo": EchoBackend(),
@@ -43,13 +52,23 @@ def build_app() -> FastAPI:
     classifier = OllamaJSONClassifier(cfg.ollama)
     policy = RoutingPolicy(config=cfg.routing, backends=backends, classifier=classifier)
 
-    app = FastAPI(title="Yagami", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        await open_db(db_path)
+        sessions_api.set_store(sessions)
+        yield
+        await close_db()
+
+    app = FastAPI(title="Yagami", version="0.2.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.include_router(decisions_api.router)
+    app.include_router(sessions_api.router)
 
     @app.get("/api/health")
     async def health() -> dict:
@@ -79,7 +98,7 @@ def build_app() -> FastAPI:
     async def ws_chat(ws: WebSocket) -> None:
         await chat_endpoint(ws, sessions, policy)
 
-    dist = Path(__file__).resolve().parents[2] / "ui" / "dist"
+    dist = _project_root() / "ui" / "dist"
     if dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="ui")
 
