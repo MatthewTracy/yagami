@@ -18,6 +18,7 @@ phi_must_be_local = true
 default_backend = "ollama"
 
 [routing.lora_variants]
-# Uncomment after building the variants with `ollama create <name> -f config/Modelfile.<x>`.
+# PHI-medical now uses a per-request system prompt (router/prompts.py) — no
+# named variant needed. Uncomment after building any future LoRA-backed variants
+# with `ollama create <name> -f config/Modelfile.<x>`.
 # code = "yagami-code"
-phi_medical = "yagami-phi-medical"

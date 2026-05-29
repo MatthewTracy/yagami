@@ -41,7 +41,7 @@ def backends() -> dict[str, Backend]:
 
 
 def fixed_classifier(cls: Classification):
-    async def _classify(_history):
+    async def _classify(_text: str):
         return cls
     return _classify
 
@@ -61,6 +61,16 @@ def make_policy(backends):
 def user_msg():
     def _make(text: str) -> list[Message]:
         return [Message(role="user", content=text)]
+    return _make
+
+
+@pytest.fixture
+def classified_user_msg():
+    """Same as user_msg but forces the prompt past the fast-path bypass threshold
+    (>=200 chars) so the LLM-classifier code path is actually exercised."""
+    def _make(text: str) -> list[Message]:
+        padded = text + " " + ("x " * 110)
+        return [Message(role="user", content=padded)]
     return _make
 
 

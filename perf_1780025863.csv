@@ -1,0 +1,31 @@
+category,prompt,backend,source,route_ms,ttft_ms,total_ms
+short_non_phi,hi,ollama,rules-fast-path,0,311,353
+short_non_phi,hello,ollama,rules-fast-path,0,6424,6581
+short_non_phi,what is 2+2,ollama,rules-fast-path,0,327,370
+short_non_phi,what's the capital of France,ollama,rules-fast-path,0,333,376
+short_non_phi,tell me a joke,ollama,rules-fast-path,0,317,407
+short_non_phi,good morning,ollama,rules-fast-path,0,333,459
+short_non_phi,thanks!,ollama,rules-fast-path,0,327,502
+short_non_phi,lol,ollama,rules-fast-path,0,316,567
+short_non_phi,who wrote hamlet,ollama,rules-fast-path,0,336,2099
+short_non_phi,what's the speed of sound,ollama,rules-fast-path,0,316,1274
+short_non_phi,convert 5 miles to km,ollama,rules-fast-path,0,307,712
+short_non_phi,what year was Apollo 11,ollama,rules-fast-path,0,332,415
+short_non_phi,spell encyclopedia,ollama,rules-fast-path,0,322,399
+short_non_phi,what's a synonym for happy,ollama,rules-fast-path,0,304,748
+short_non_phi,name three primary colors,ollama,rules-fast-path,0,308,408
+short_non_phi,what's pi to 3 places,ollama,rules-fast-path,0,334,381
+short_non_phi,is the sky blue,ollama,rules-fast-path,0,318,1769
+short_non_phi,what's 100 / 4,ollama,rules-fast-path,0,334,388
+short_non_phi,how many continents,ollama,rules-fast-path,0,344,549
+short_non_phi,longest river in the world,ollama,rules-fast-path,0,330,1371
+phi,"Patient Jane Doe DOB 1962-04-12 has HTN, T2DM, prior MI 2019",ollama,fallback-after-error,898,335,3165
+phi,"MRN 00987654, hgb 8.1, transfuse 2 units PRBCs?",ollama,classifier,408,325,1855
+phi,"My SSN is 123-45-6789, please help me file paperwork.",ollama,classifier,97,337,835
+phi,"Pt reports SI with plan, considering 5150 hold.",ollama,classifier,408,321,2376
+phi,Diagnosis: stage II NSCLC. Plan a 6-cycle carbo/paclitaxel r,ollama,classifier,96,324,2432
+phi,"BP 180/115 in clinic today, headache + visual aura.",ollama,classifier,638,346,1661
+code,write a python function that returns the nth fibonacci numbe,ollama,classifier,471,324,4199
+code,what does `await` do in javascript,ollama,classifier,504,327,4116
+code,"fix this bug: def add(a, b): return a - b",ollama,classifier,839,319,1626
+code,explain `console.log` in node,ollama,classifier,910,330,4539

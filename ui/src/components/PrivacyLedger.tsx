@@ -10,7 +10,16 @@ type DecisionRow = {
   classification: Record<string, unknown>;
   scrubbed_preview: string;
   source: string;
+  t_classify_ms: number | null;
+  t_first_token_ms: number | null;
+  t_total_ms: number | null;
 };
+
+function fmtMs(ms: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
 
 type Props = { sessionId: string | null; refreshKey: number };
 
@@ -74,6 +83,20 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
           <div className="mt-1 text-zinc-400 text-[11px]">{r.reason}</div>
           <div className="mt-1 text-[10px] text-zinc-500 italic">
             sent: <span className="text-zinc-400">{r.scrubbed_preview}</span>
+          </div>
+          <div className="mt-1 text-[10px] text-zinc-500 flex gap-3">
+            <span title="classifier + routing">
+              route <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>
+            </span>
+            <span title="time from routing to first token">
+              ttft <span className="text-zinc-300">{fmtMs(r.t_first_token_ms)}</span>
+            </span>
+            <span title="total turn duration">
+              total <span className="text-zinc-300">{fmtMs(r.t_total_ms)}</span>
+            </span>
+            <span className="ml-auto text-zinc-600">
+              {(r.classification?.source as string) ?? ""}
+            </span>
           </div>
         </div>
       ))}

@@ -29,15 +29,18 @@ async def persist_decision(
     session_id: str,
     user_text: str,
     decision: dict,
-) -> None:
+    timings: dict | None = None,
+) -> int:
     preview = scrub(user_text)[:280]
     classification = decision.get("classification", {})
     source = classification.get("source", "unknown") if isinstance(classification, dict) else "unknown"
+    t = timings or {}
     db = get_db()
-    await db.execute(
+    cur = await db.execute(
         "INSERT INTO decisions("
-        " session_id, created_at, backend, is_local, reason, classification, scrubbed_preview, source"
-        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        " session_id, created_at, backend, is_local, reason, classification, scrubbed_preview,"
+        " source, t_classify_ms, t_first_token_ms, t_total_ms"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             now_ms(),
@@ -47,7 +50,23 @@ async def persist_decision(
             json.dumps(classification),
             preview,
             source,
+            t.get("classify_ms"),
+            t.get("first_token_ms"),
+            t.get("total_ms"),
         ),
+    )
+    await db.commit()
+    return cur.lastrowid or 0
+
+
+async def update_decision_timings(decision_id: int, *, first_token_ms: int | None = None, total_ms: int | None = None) -> None:
+    if decision_id <= 0:
+        return
+    db = get_db()
+    await db.execute(
+        "UPDATE decisions SET t_first_token_ms = COALESCE(?, t_first_token_ms),"
+        " t_total_ms = COALESCE(?, t_total_ms) WHERE id = ?",
+        (first_token_ms, total_ms, decision_id),
     )
     await db.commit()
 

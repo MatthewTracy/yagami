@@ -22,9 +22,10 @@ class OllamaBackend(Backend):
         self, messages: list[Message], *, options: BackendOptions
     ) -> AsyncIterator[BackendChunk]:
         model = options.lora_variant or self._config.model
+        wire_msgs = _build_wire_messages(messages, options.system_prompt)
         body = {
             "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": wire_msgs,
             "stream": True,
             "options": {"temperature": options.temperature, "num_predict": options.max_tokens},
         }
@@ -50,3 +51,14 @@ class OllamaBackend(Backend):
             return r.status_code == 200
         except httpx.HTTPError:
             return False
+
+
+def _build_wire_messages(messages: list[Message], system_prompt: str | None) -> list[dict]:
+    if system_prompt is None:
+        return [{"role": m.role, "content": m.content} for m in messages]
+    out: list[dict] = [{"role": "system", "content": system_prompt}]
+    for m in messages:
+        if m.role == "system":
+            continue
+        out.append({"role": m.role, "content": m.content})
+    return out
