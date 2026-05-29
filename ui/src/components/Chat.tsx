@@ -130,6 +130,8 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     sendChat(wsRef.current, { content: text });
     setInput("");
     setInFlight(true);
+    const ta = document.querySelector<HTMLTextAreaElement>("textarea");
+    if (ta) ta.style.height = "auto";
   }
 
   function stop() {
@@ -173,17 +175,40 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           );
         })}
       </div>
-      <div className="p-3 border-t border-zinc-800 flex gap-2">
-        <input
-          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-600 disabled:opacity-50"
-          placeholder={
-            !connected ? "connecting…" : inFlight ? "waiting for reply…" : "Message Yagami…"
-          }
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          disabled={!connected || inFlight}
-        />
+      <div className="p-3 border-t border-zinc-800 flex gap-2 items-end">
+        <div className="flex-1 min-w-0">
+          <textarea
+            rows={1}
+            className="block w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-600 disabled:opacity-50 resize-none max-h-64 overflow-y-auto"
+            placeholder={
+              !connected
+                ? "connecting…"
+                : inFlight
+                  ? "waiting for reply…"
+                  : "Message Yagami… (Shift+Enter for newline; paste a document to discuss it)"
+            }
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 256) + "px";
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            disabled={!connected || inFlight}
+          />
+          {input.length > 200 && (
+            <div className="text-[10px] text-zinc-500 mt-1 px-1">
+              {input.length.toLocaleString()} chars
+              {input.length > 6000 && " · will route to cloud unless flagged sensitive"}
+            </div>
+          )}
+        </div>
         {inFlight ? (
           <button
             onClick={stop}

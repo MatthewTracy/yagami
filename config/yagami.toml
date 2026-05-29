@@ -20,4 +20,4 @@ default_backend = "ollama"
 [routing.lora_variants]
 # Uncomment after building the variants with `ollama create <name> -f config/Modelfile.<x>`.
 # code = "yagami-code"
-# phi_medical = "yagami-phi-medical"
+phi_medical = "yagami-phi-medical"
