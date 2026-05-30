@@ -33,7 +33,9 @@ async def persist_decision(
 ) -> int:
     preview = scrub(user_text)[:280]
     classification = decision.get("classification", {})
-    source = classification.get("source", "unknown") if isinstance(classification, dict) else "unknown"
+    source = (
+        classification.get("source", "unknown") if isinstance(classification, dict) else "unknown"
+    )
     t = timings or {}
     db = get_db()
     cur = await db.execute(
@@ -59,7 +61,9 @@ async def persist_decision(
     return cur.lastrowid or 0
 
 
-async def update_decision_timings(decision_id: int, *, first_token_ms: int | None = None, total_ms: int | None = None) -> None:
+async def update_decision_timings(
+    decision_id: int, *, first_token_ms: int | None = None, total_ms: int | None = None
+) -> None:
     if decision_id <= 0:
         return
     db = get_db()

@@ -24,6 +24,7 @@ async def test_secret_forces_local(make_policy, classified_user_msg):
 @pytest.mark.asyncio
 async def test_phi_medical_attaches_clinical_system_prompt(make_policy, classified_user_msg):
     from yagami.router.prompts import PHI_MEDICAL_SYSTEM_PROMPT
+
     policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL))
     decision = await policy.decide(classified_user_msg("patient note ..."))
     assert decision.backend.is_local is True
@@ -63,6 +64,7 @@ async def test_fallback_classifier_without_classifier(make_policy, classified_us
 @pytest.mark.asyncio
 async def test_code_intent_attaches_code_lora(make_policy, classified_user_msg):
     from yagami.config import RoutingConfig
+
     routing = RoutingConfig(lora_variants={"code": "yagami-code"})
     policy = make_policy(Classification(intent=Intent.CODE), routing=routing)
     decision = await policy.decide(classified_user_msg("write a python sort"))

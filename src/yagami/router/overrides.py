@@ -4,6 +4,7 @@ If the user starts their message with one of the recognized commands, the
 classifier is skipped and the named backend is selected directly. PHI / SECRET
 guard still applies — see policy.py.
 """
+
 from __future__ import annotations
 
 import re
@@ -15,9 +16,9 @@ _PATTERN = re.compile(r"^/(cloud|claude|local|ollama|image|think|code)\b\s*", re
 @dataclass
 class OverrideResult:
     forced_backend: str | None  # one of "anthropic", "ollama", "stability", or None
-    hint_intent: str | None     # "code", "image", or None
-    hint_complex: bool          # True if /think
-    stripped_text: str          # user text with the command prefix removed
+    hint_intent: str | None  # "code", "image", or None
+    hint_complex: bool  # True if /think
+    stripped_text: str  # user text with the command prefix removed
 
 
 def parse(text: str) -> OverrideResult:
@@ -26,7 +27,7 @@ def parse(text: str) -> OverrideResult:
     if not m:
         return OverrideResult(None, None, False, text)
     cmd = m.group(1).lower()
-    remaining = text[m.end():].lstrip()
+    remaining = text[m.end() :].lstrip()
     if cmd in ("cloud", "claude"):
         return OverrideResult("anthropic", None, False, remaining)
     if cmd in ("local", "ollama"):

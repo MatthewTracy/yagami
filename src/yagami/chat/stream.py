@@ -9,11 +9,35 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from ..backends.base import BackendOptions, Message
-from ..router.policy import OverrideRefused, RoutingPolicy
+from ..router.policy import OverrideRefused, RoutingPolicy, stickier
+from ..router.schema import Sensitivity
+from ..storage.db import get_db
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
 
 _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
+
+
+async def _load_sensitivity_floor(session_id: str) -> Sensitivity | None:
+    """Scan past routing decisions for the highest sensitivity ever seen in
+    this session, so a reloaded clinical chat stays elevated."""
+    db = get_db()
+    async with db.execute(
+        "SELECT DISTINCT json_extract(classification, '$.sensitivity') AS s"
+        " FROM decisions WHERE session_id = ?",
+        (session_id,),
+    ) as cur:
+        seen = {row[0] for row in await cur.fetchall() if row[0]}
+    floor: Sensitivity | None = None
+    for raw in seen:
+        try:
+            floor = stickier(floor, Sensitivity(raw))
+        except ValueError:
+            continue
+    if floor == Sensitivity.NONE:
+        return None
+    return floor
+
 
 log = logging.getLogger("yagami.stream")
 
@@ -26,6 +50,7 @@ async def chat_endpoint(
     await ws.accept()
     session_id: str | None = None
     history_cache: list[Message] = []
+    sensitivity_floor: Sensitivity | None = None
     gen_task: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
     inbox: asyncio.Queue = asyncio.Queue()
@@ -60,6 +85,7 @@ async def chat_endpoint(
                 if sid and await sessions.session_exists(sid):
                     session_id = sid
                     history_cache = await sessions.history(session_id)
+                    sensitivity_floor = await _load_sensitivity_floor(session_id)
                     await _send(ws, {"type": "session", "session_id": session_id})
                 continue
 
@@ -74,7 +100,11 @@ async def chat_endpoint(
             t_start = time.perf_counter()
             append_task = asyncio.create_task(sessions.append(session_id, user_msg))
             decide_task = asyncio.create_task(
-                policy.decide(history_cache, force_backend=force_backend)
+                policy.decide(
+                    history_cache,
+                    force_backend=force_backend,
+                    sensitivity_floor=sensitivity_floor,
+                )
             )
             await append_task
             try:
@@ -84,6 +114,16 @@ async def chat_endpoint(
                 await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
                 continue
             t_classify_ms = int((time.perf_counter() - t_start) * 1000)
+
+            # Update the sticky floor after the decision so the next turn
+            # in this session inherits it.
+            try:
+                decided_sens = Sensitivity(decision.classification.get("sensitivity", "none"))
+            except (TypeError, ValueError):
+                decided_sens = Sensitivity.NONE
+            sensitivity_floor = stickier(sensitivity_floor, decided_sens)
+            if sensitivity_floor == Sensitivity.NONE:
+                sensitivity_floor = None
 
             # If the policy stripped a slash command, swap the last user message
             # so the backend sees the cleaned text. History cache stays as-is

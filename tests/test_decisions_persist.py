@@ -14,7 +14,12 @@ async def test_persist_and_list(fresh_db):
         "backend": "ollama",
         "is_local": True,
         "reason": "default (ollama)",
-        "classification": {"intent": "simple_qa", "sensitivity": "none", "complexity": "low", "source": "classifier"},
+        "classification": {
+            "intent": "simple_qa",
+            "sensitivity": "none",
+            "complexity": "low",
+            "source": "classifier",
+        },
     }
     await persist_decision(session_id=sid, user_text="what is 2+2?", decision=decision)
     rows = await list_decisions(session_id=sid)
@@ -33,7 +38,12 @@ async def test_ledger_scrubs_phi(fresh_db):
         "backend": "ollama",
         "is_local": True,
         "reason": "sensitivity=phi_medical; forced local (ollama)",
-        "classification": {"intent": "complex_reasoning", "sensitivity": "phi_medical", "complexity": "high", "source": "classifier"},
+        "classification": {
+            "intent": "complex_reasoning",
+            "sensitivity": "phi_medical",
+            "complexity": "high",
+            "source": "classifier",
+        },
     }
     await persist_decision(session_id=sid, user_text=raw, decision=decision)
     rows = await list_decisions(session_id=sid)
@@ -51,7 +61,12 @@ async def test_phi_ledger_routes_local_only(fresh_db):
         "backend": "ollama",
         "is_local": True,
         "reason": "sensitivity=phi; forced local (ollama)",
-        "classification": {"intent": "complex_reasoning", "sensitivity": "phi", "complexity": "high", "source": "classifier"},
+        "classification": {
+            "intent": "complex_reasoning",
+            "sensitivity": "phi",
+            "complexity": "high",
+            "source": "classifier",
+        },
     }
     await persist_decision(session_id=sid, user_text="patient note", decision=decision)
     rows = await list_decisions(session_id=sid)

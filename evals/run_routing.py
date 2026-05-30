@@ -7,6 +7,7 @@ Usage:
     python -m evals.run_routing --url ws://...
     python -m evals.run_routing --category phi_medical_explicit
 """
+
 from __future__ import annotations
 
 import argparse
@@ -69,21 +70,36 @@ async def one_case(url: str, case: dict) -> Result:
                 elif t in ("done", "error"):
                     break
     except Exception as e:
-        return Result(case=case, actual_backend="", actual_intent="", actual_sensitivity="",
-                      actual_is_local=False, error=str(e), failures=[])
+        return Result(
+            case=case,
+            actual_backend="",
+            actual_intent="",
+            actual_sensitivity="",
+            actual_is_local=False,
+            error=str(e),
+            failures=[],
+        )
 
     if "expected_backend" in case and backend != case["expected_backend"]:
         failures.append(f"backend: expected {case['expected_backend']!r} got {backend!r}")
     if "expected_intent" in case and intent != case["expected_intent"]:
         failures.append(f"intent: expected {case['expected_intent']!r} got {intent!r}")
     if "expected_sensitivity" in case and sensitivity != case["expected_sensitivity"]:
-        failures.append(f"sensitivity: expected {case['expected_sensitivity']!r} got {sensitivity!r}")
+        failures.append(
+            f"sensitivity: expected {case['expected_sensitivity']!r} got {sensitivity!r}"
+        )
     if case.get("must_be_local") and not is_local:
         failures.append(f"must_be_local=true but backend {backend!r} is_local=False")
 
-    return Result(case=case, actual_backend=backend, actual_intent=intent,
-                  actual_sensitivity=sensitivity, actual_is_local=is_local,
-                  error=None, failures=failures)
+    return Result(
+        case=case,
+        actual_backend=backend,
+        actual_intent=intent,
+        actual_sensitivity=sensitivity,
+        actual_is_local=is_local,
+        error=None,
+        failures=failures,
+    )
 
 
 def _color(ok: bool, text: str) -> str:
@@ -92,11 +108,52 @@ def _color(ok: bool, text: str) -> str:
     return ("\033[32m" if ok else "\033[31m") + text + "\033[0m"
 
 
+def _load_baseline(path: Path) -> dict[str, dict]:
+    """Load a previous run JSON. Returns prompt -> {passed, backend, ...}."""
+    if not path.exists():
+        return {}
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    return {r["case"]["prompt"]: r for r in rows}
+
+
+def _print_diff(results: list[Result], baseline: dict[str, dict]) -> tuple[int, int, int]:
+    fixed: list[str] = []
+    regressed: list[tuple[str, str]] = []
+    new: list[str] = []
+    for r in results:
+        prompt = r.case["prompt"]
+        prev = baseline.get(prompt)
+        if prev is None:
+            new.append(prompt)
+            continue
+        if r.passed and not prev["passed"]:
+            fixed.append(prompt)
+        elif not r.passed and prev["passed"]:
+            old_b = prev.get("backend", "?")
+            regressed.append((prompt, f"was {old_b!r}, now {r.actual_backend!r}"))
+
+    if fixed or regressed or new:
+        print()
+        print("--- diff vs baseline ---")
+    for p in fixed:
+        print(_color(True, f"FIXED       {p[:80]}"))
+    for p, why in regressed:
+        print(_color(False, f"REGRESSED   {p[:80]}  ({why})"))
+    for p in new:
+        print(f"NEW         {p[:80]}")
+    return len(fixed), len(regressed), len(new)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="ws://127.0.0.1:8000/ws/chat")
     ap.add_argument("--category", help="Only run cases matching this category")
     ap.add_argument("--out", default=None, help="Optional JSON output path")
+    ap.add_argument(
+        "--baseline",
+        default=None,
+        help="Path to a previous run JSON. Reports FIXED/REGRESSED/NEW per case. Exit 3 if any regression.",
+    )
     args = ap.parse_args()
 
     cases = load_fixtures(FIXTURES)
@@ -111,7 +168,7 @@ async def main() -> int:
         r = await one_case(args.url, c)
         results.append(r)
         mark = _color(r.passed, "PASS" if r.passed else "FAIL")
-        print(f"{mark}  [{c.get('category','-'):22s}] {c['prompt'][:70]}")
+        print(f"{mark}  [{c.get('category', '-'):22s}] {c['prompt'][:70]}")
         if r.error:
             print(f"        ERROR: {r.error}")
         for f in r.failures:
@@ -133,7 +190,12 @@ async def main() -> int:
     total_pass = sum(1 for r in results if r.passed)
     overall_ok = total_pass == len(results)
     print()
-    print(_color(overall_ok, f"OVERALL  {total_pass}/{len(results)}  ({100.0*total_pass/len(results):.1f}%)"))
+    print(
+        _color(
+            overall_ok,
+            f"OVERALL  {total_pass}/{len(results)}  ({100.0 * total_pass / len(results):.1f}%)",
+        )
+    )
 
     if args.out:
         Path(args.out).write_text(
@@ -156,6 +218,16 @@ async def main() -> int:
             encoding="utf-8",
         )
 
+    regressed = 0
+    if args.baseline:
+        baseline = _load_baseline(Path(args.baseline))
+        if baseline:
+            _, regressed, _ = _print_diff(results, baseline)
+        else:
+            print(f"\n(baseline {args.baseline} not found — skipping diff)", file=sys.stderr)
+
+    if regressed > 0:
+        return 3
     return 0 if overall_ok else 2
 
 

@@ -56,10 +56,7 @@ async def _run_migrations(conn: aiosqlite.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS schema_migrations ("
         " version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)"
     )
-    applied = {
-        row[0]
-        async for row in await conn.execute("SELECT version FROM schema_migrations")
-    }
+    applied = {row[0] async for row in await conn.execute("SELECT version FROM schema_migrations")}
     for sql_path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
         version = sql_path.stem
         if version in applied:

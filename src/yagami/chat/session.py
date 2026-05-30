@@ -52,3 +52,20 @@ class SessionStore:
             (limit,),
         ) as cur:
             return [dict(row) async for row in cur]
+
+    async def rename(self, session_id: str, title: str) -> bool:
+        db = get_db()
+        ts = now_ms()
+        cur = await db.execute(
+            "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
+            (title.strip()[:120] or None, ts, session_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+    async def delete(self, session_id: str) -> bool:
+        db = get_db()
+        # FK ON DELETE CASCADE on messages and decisions takes care of children.
+        cur = await db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        await db.commit()
+        return cur.rowcount > 0

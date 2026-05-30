@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { connectChat, sendChat, ServerMsg } from "../lib/ws";
+import { AssistantBubble } from "./AssistantBubble";
 
 type Bubble =
   | { role: "user"; text: string }
@@ -150,6 +151,28 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     }
   }
 
+  function regenerate() {
+    if (!wsRef.current || inFlight) return;
+    // Find the last user message; drop the trailing assistant bubble if any;
+    // resend the same content (the server records a new turn — sticky floor
+    // and force_backend still apply).
+    let userText: string | null = null;
+    setBubbles((b) => {
+      const copy = [...b];
+      while (copy.length && copy[copy.length - 1].role === "assistant") copy.pop();
+      const last = copy[copy.length - 1];
+      if (last && last.role === "user") userText = last.text;
+      return copy;
+    });
+    setTimeout(() => {
+      if (!userText || !wsRef.current) return;
+      const payload: { content: string; force_backend?: string } = { content: userText };
+      if (forceBackend) payload.force_backend = forceBackend;
+      sendChat(wsRef.current, payload);
+      setInFlight(true);
+    }, 0);
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
@@ -159,29 +182,32 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           </div>
         )}
         {bubbles.map((b, i) => {
-          const isAssistant = b.role === "assistant";
-          const pending = isAssistant && b.pending;
+          if (b.role === "user") {
+            return (
+              <div
+                key={i}
+                className="max-w-2xl px-3 py-2 rounded-lg text-sm whitespace-pre-wrap bg-zinc-800 ml-auto"
+              >
+                {b.text}
+              </div>
+            );
+          }
+          const lastAssistantIdx = (() => {
+            for (let j = bubbles.length - 1; j >= 0; j--) {
+              if (bubbles[j].role === "assistant") return j;
+            }
+            return -1;
+          })();
           return (
-            <div
+            <AssistantBubble
               key={i}
-              className={`max-w-2xl px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
-                b.role === "user"
-                  ? "bg-zinc-800 ml-auto"
-                  : "bg-zinc-900 border border-zinc-800"
-              }`}
-            >
-              {pending && !b.text && (
-                <div className="flex items-center gap-2 text-zinc-400">
-                  <ThinkingDots />
-                  <span className="text-xs italic">{b.pendingHint}</span>
-                </div>
-              )}
-              {b.text}
-              {pending && b.text && <span className="inline-block w-2 h-4 ml-0.5 align-text-bottom bg-zinc-500 animate-pulse" />}
-              {isAssistant && b.image && (
-                <img src={b.image} alt="generated" className="mt-2 rounded max-w-full" />
-              )}
-            </div>
+              text={b.text}
+              image={b.image}
+              pending={b.pending}
+              pendingHint={b.pendingHint}
+              isLastAssistant={i === lastAssistantIdx && !inFlight}
+              onRegenerate={regenerate}
+            />
           );
         })}
       </div>
@@ -253,12 +279,3 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   );
 }
 
-function ThinkingDots() {
-  return (
-    <span className="inline-flex gap-1">
-      <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce [animation-delay:-0.3s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce [animation-delay:-0.15s]" />
-      <span className="w-1.5 h-1.5 rounded-full bg-zinc-500 animate-bounce" />
-    </span>
-  );
-}

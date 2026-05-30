@@ -14,7 +14,9 @@ def test_echo_is_backend():
 async def test_echo_streams_text():
     eb = EchoBackend()
     chunks = []
-    async for c in eb.generate([Message(role="user", content="hi there")], options=BackendOptions()):
+    async for c in eb.generate(
+        [Message(role="user", content="hi there")], options=BackendOptions()
+    ):
         chunks.append(c)
     text = "".join(c["content"] for c in chunks if c["type"] == "text")
     assert "echo:" in text

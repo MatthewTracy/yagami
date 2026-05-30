@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from ..chat.session import SessionStore
 
@@ -36,3 +37,25 @@ async def get_one(session_id: str) -> dict:
         "session_id": session_id,
         "messages": [{"role": m.role, "content": m.content} for m in history],
     }
+
+
+class RenameBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+@router.patch("/{session_id}")
+async def rename(session_id: str, body: RenameBody) -> dict:
+    store = _store()
+    if not await store.session_exists(session_id):
+        raise HTTPException(404, "session not found")
+    await store.rename(session_id, body.title)
+    return {"ok": True, "session_id": session_id, "title": body.title}
+
+
+@router.delete("/{session_id}")
+async def delete(session_id: str) -> dict:
+    store = _store()
+    if not await store.session_exists(session_id):
+        raise HTTPException(404, "session not found")
+    await store.delete(session_id)
+    return {"ok": True, "session_id": session_id}

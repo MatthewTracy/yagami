@@ -45,7 +45,9 @@ class Settings(BaseSettings):
     ollama_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_URL"))
     ollama_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_MODEL"))
     claude_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_CLAUDE_MODEL"))
-    config_path: str = Field(default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH"))
+    config_path: str = Field(
+        default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
+    )
 
 
 @lru_cache

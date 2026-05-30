@@ -1,4 +1,5 @@
 """System-prompt constants applied per-request via BackendOptions.system_prompt."""
+
 from __future__ import annotations
 
 PHI_MEDICAL_SYSTEM_PROMPT = """You are Yagami's clinical-documentation assistant operating ENTIRELY on the user's \

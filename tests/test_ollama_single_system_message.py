@@ -22,7 +22,9 @@ def test_system_prompt_strips_existing_and_prepends():
     ]
     wire = _build_wire_messages(msgs, "NEW SYSTEM")
     system_msgs = [m for m in wire if m["role"] == "system"]
-    assert len(system_msgs) == 1, f"expected 1 system message, got {len(system_msgs)}: {system_msgs}"
+    assert len(system_msgs) == 1, (
+        f"expected 1 system message, got {len(system_msgs)}: {system_msgs}"
+    )
     assert system_msgs[0]["content"] == "NEW SYSTEM"
     assert wire[0] == {"role": "system", "content": "NEW SYSTEM"}
     user_assistant_only = [m for m in wire if m["role"] != "system"]

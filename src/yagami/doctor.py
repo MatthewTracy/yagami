@@ -29,7 +29,7 @@ async def _check_ollama(url: str, model: str) -> tuple[bool, str]:
 async def main() -> int:
     cfg = get_config()
     settings = get_settings()
-    print(_line(f"python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
+    print(_line("python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
 
     ok, detail = await _check_ollama(cfg.ollama.url, cfg.ollama.model)
     print(_line(f"Ollama @ {cfg.ollama.url}", ok, detail))

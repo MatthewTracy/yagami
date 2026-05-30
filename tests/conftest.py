@@ -9,12 +9,14 @@ import pytest_asyncio
 from yagami.backends.base import Backend, BackendChunk, BackendOptions, Capability, Message
 from yagami.config import RoutingConfig
 from yagami.router.policy import RoutingPolicy
-from yagami.router.schema import Classification, Complexity, Intent, Sensitivity
+from yagami.router.schema import Classification
 from yagami.storage.db import close_db, open_db
 
 
 class FakeBackend:
-    def __init__(self, name: str, *, is_local: bool, capabilities: set[Capability] | None = None) -> None:
+    def __init__(
+        self, name: str, *, is_local: bool, capabilities: set[Capability] | None = None
+    ) -> None:
         self.name = name
         self.is_local = is_local
         self.capabilities = capabilities or {Capability.TEXT}
@@ -34,8 +36,12 @@ class FakeBackend:
 @pytest.fixture
 def backends() -> dict[str, Backend]:
     return {
-        "ollama": FakeBackend("ollama", is_local=True, capabilities={Capability.TEXT, Capability.CODE}),
-        "anthropic": FakeBackend("anthropic", is_local=False, capabilities={Capability.TEXT, Capability.LONG_CONTEXT}),
+        "ollama": FakeBackend(
+            "ollama", is_local=True, capabilities={Capability.TEXT, Capability.CODE}
+        ),
+        "anthropic": FakeBackend(
+            "anthropic", is_local=False, capabilities={Capability.TEXT, Capability.LONG_CONTEXT}
+        ),
         "stability": FakeBackend("stability", is_local=False, capabilities={Capability.IMAGE}),
     }
 
@@ -43,17 +49,21 @@ def backends() -> dict[str, Backend]:
 def fixed_classifier(cls: Classification):
     async def _classify(_text: str):
         return cls
+
     return _classify
 
 
 @pytest.fixture
 def make_policy(backends):
-    def _make(classification: Classification | None = None, *, routing: RoutingConfig | None = None) -> RoutingPolicy:
+    def _make(
+        classification: Classification | None = None, *, routing: RoutingConfig | None = None
+    ) -> RoutingPolicy:
         return RoutingPolicy(
             config=routing or RoutingConfig(),
             backends=backends,
             classifier=fixed_classifier(classification) if classification else None,
         )
+
     return _make
 
 
@@ -61,6 +71,7 @@ def make_policy(backends):
 def user_msg():
     def _make(text: str) -> list[Message]:
         return [Message(role="user", content=text)]
+
     return _make
 
 
@@ -68,9 +79,11 @@ def user_msg():
 def classified_user_msg():
     """Same as user_msg but forces the prompt past the fast-path bypass threshold
     (>=200 chars) so the LLM-classifier code path is actually exercised."""
+
     def _make(text: str) -> list[Message]:
         padded = text + " " + ("x " * 110)
         return [Message(role="user", content=padded)]
+
     return _make
 
 

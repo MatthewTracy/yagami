@@ -9,6 +9,7 @@ Usage:
     python -m evals.run_refusals
     python -m evals.run_refusals --url ws://...
 """
+
 from __future__ import annotations
 
 import argparse
@@ -94,18 +95,30 @@ async def one_case(url: str, case: dict) -> Result:
                 elif t in ("done", "error"):
                     break
     except Exception as e:
-        return Result(prompt=case["prompt"], reply="", backend=backend, is_local=is_local,
-                      refusal_hits=[], engagement_hits=[],
-                      min_engagement_hits=case.get("min_engagement_hits", 1), error=str(e))
+        return Result(
+            prompt=case["prompt"],
+            reply="",
+            backend=backend,
+            is_local=is_local,
+            refusal_hits=[],
+            engagement_hits=[],
+            min_engagement_hits=case.get("min_engagement_hits", 1),
+            error=str(e),
+        )
 
     reply = "".join(pieces).lower()
     refusal_hits = [p for p in REFUSAL_PHRASES if p in reply]
     expect = [w.lower() for w in case.get("expect_engagement", [])]
     engagement_hits = [w for w in expect if w in reply]
     return Result(
-        prompt=case["prompt"], reply="".join(pieces), backend=backend, is_local=is_local,
-        refusal_hits=refusal_hits, engagement_hits=engagement_hits,
-        min_engagement_hits=case.get("min_engagement_hits", 1), error=None,
+        prompt=case["prompt"],
+        reply="".join(pieces),
+        backend=backend,
+        is_local=is_local,
+        refusal_hits=refusal_hits,
+        engagement_hits=engagement_hits,
+        min_engagement_hits=case.get("min_engagement_hits", 1),
+        error=None,
     )
 
 
@@ -129,9 +142,11 @@ async def main() -> int:
         mark = _color(r.passed, "PASS" if r.passed else "FAIL")
         snippet = (r.reply or "")[:80].replace("\n", " ")
         print(f"{mark}  {c['prompt'][:70]}")
-        print(f"        backend={r.backend} local={r.is_local}  "
-              f"engagement={len(r.engagement_hits)}/{r.min_engagement_hits}  "
-              f"refusals={len(r.refusal_hits)}")
+        print(
+            f"        backend={r.backend} local={r.is_local}  "
+            f"engagement={len(r.engagement_hits)}/{r.min_engagement_hits}  "
+            f"refusals={len(r.refusal_hits)}"
+        )
         print(f"        reply: {snippet}…")
         if r.refusal_hits:
             print(f"        refusal phrases hit: {r.refusal_hits}")
@@ -139,7 +154,11 @@ async def main() -> int:
     passed = sum(1 for r in results if r.passed)
     overall_ok = passed == len(results)
     print()
-    print(_color(overall_ok, f"OVERALL  {passed}/{len(results)}  ({100.0*passed/len(results):.1f}%)"))
+    print(
+        _color(
+            overall_ok, f"OVERALL  {passed}/{len(results)}  ({100.0 * passed / len(results):.1f}%)"
+        )
+    )
 
     if args.out:
         Path(args.out).write_text(

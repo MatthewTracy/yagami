@@ -4,6 +4,7 @@ If `can_bypass()` returns a Classification, the policy can skip the LLM classifi
 entirely. Returns None whenever the prompt MIGHT need real classification — anything
 not provably safe falls through to the LLM.
 """
+
 from __future__ import annotations
 
 import re

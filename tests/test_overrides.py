@@ -87,10 +87,12 @@ async def test_cloud_override_routes_to_anthropic(make_policy, classified_user_m
 @pytest.mark.asyncio
 async def test_cloud_override_refused_on_phi(make_policy):
     policy = make_policy(None)
-    history = [Message(
-        role="user",
-        content="/cloud my SSN is 123-45-6789, help me with identity theft",
-    )]
+    history = [
+        Message(
+            role="user",
+            content="/cloud my SSN is 123-45-6789, help me with identity theft",
+        )
+    ]
     with pytest.raises(OverrideRefused):
         await policy.decide(history)
 
@@ -124,10 +126,12 @@ async def test_force_backend_refused_on_phi(make_policy):
 @pytest.mark.asyncio
 async def test_force_backend_refused_on_secret(make_policy):
     policy = make_policy(None)
-    history = [Message(
-        role="user",
-        content="rotate my key sk-NsqqVgaZIcLYxcdjvXdR0nHOQyn08RyUMasFjs93i3UfHuvd",
-    )]
+    history = [
+        Message(
+            role="user",
+            content="rotate my key sk-NsqqVgaZIcLYxcdjvXdR0nHOQyn08RyUMasFjs93i3UfHuvd",
+        )
+    ]
     with pytest.raises(OverrideRefused):
         await policy.decide(history, force_backend="anthropic")
 

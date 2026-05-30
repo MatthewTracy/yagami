@@ -31,6 +31,7 @@ export default function App() {
           refreshKey={refreshKey}
           onSelect={(id) => setLoadSessionId(id)}
           onNew={newChat}
+          onChange={() => setRefreshKey((k) => k + 1)}
         />
       </aside>
       <div className="border-r border-zinc-800 flex flex-col min-h-0 overflow-hidden">
