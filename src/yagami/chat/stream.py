@@ -8,10 +8,13 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..backends.base import BackendOptions, Message
+from ..backends.base import BackendOptions, ImageAttachment, Message
+from ..backends.retry import generate_with_retry
+from ..config import get_config
 from ..router.policy import OverrideRefused, RoutingPolicy, stickier
 from ..router.schema import Sensitivity
 from ..storage.db import get_db
+from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
 
@@ -90,20 +93,42 @@ async def chat_endpoint(
                 continue
 
             user_text = payload.get("content", "")
-            if not user_text or session_id is None:
+            images_raw = payload.get("images") or []
+            if (not user_text and not images_raw) or session_id is None:
                 continue
 
-            user_msg = Message(role="user", content=user_text)
+            attachments: list[ImageAttachment] = []
+            for img in images_raw:
+                try:
+                    attachments.append(
+                        ImageAttachment(media_type=img["media_type"], data_b64=img["data_b64"])
+                    )
+                except (KeyError, TypeError):
+                    continue
+
+            user_msg = Message(role="user", content=user_text, images=attachments or None)
             history_cache.append(user_msg)
             force_backend = payload.get("force_backend")
+            # Images require a vision-capable backend; only Claude supports vision today.
+            # Force_backend wins for explicit user choice.
+            if attachments and not force_backend:
+                force_backend = "anthropic"
 
             t_start = time.perf_counter()
             append_task = asyncio.create_task(sessions.append(session_id, user_msg))
+
+            cfg = get_config()
+            spend_blocked = False
+            if cfg.routing.daily_spend_cap_usd > 0:
+                today = await spend_today_usd()
+                spend_blocked = today >= cfg.routing.daily_spend_cap_usd
+
             decide_task = asyncio.create_task(
                 policy.decide(
                     history_cache,
                     force_backend=force_backend,
                     sensitivity_floor=sensitivity_floor,
+                    spend_blocked=spend_blocked,
                 )
             )
             await append_task
@@ -160,9 +185,16 @@ async def chat_endpoint(
             )
             t_gen_start = time.perf_counter()
             first_token_ms_holder: list[int | None] = [None]
+            image_count_holder = [0]
             gen_task = asyncio.create_task(
                 _stream_generation(
-                    ws, decision.backend, history_cache, options, t_gen_start, first_token_ms_holder
+                    ws,
+                    decision.backend,
+                    history_cache,
+                    options,
+                    t_gen_start,
+                    first_token_ms_holder,
+                    image_count_holder,
                 )
             )
             try:
@@ -175,10 +207,23 @@ async def chat_endpoint(
                 gen_task = None
 
             t_total_ms = int((time.perf_counter() - t_start) * 1000)
+            tokens_in = sum(
+                rough_token_count(m.content) for m in history_cache[:-1]
+            ) + rough_token_count(history_cache[-1].content)
+            tokens_out = rough_token_count(assistant_text)
+            cost = estimate_cost(
+                decision.backend.name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                images=image_count_holder[0],
+            )
             await update_decision_timings(
                 decision_id,
                 first_token_ms=first_token_ms_holder[0],
                 total_ms=t_total_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost,
             )
 
             if assistant_text:
@@ -198,13 +243,17 @@ async def chat_endpoint(
             gen_task.cancel()
 
 
-async def _stream_generation(ws, backend, history, options, t_gen_start, first_token_holder) -> str:
+async def _stream_generation(
+    ws, backend, history, options, t_gen_start, first_token_holder, image_count_holder
+) -> str:
     pieces: list[str] = []
-    async for chunk in backend.generate(history, options=options):
+    async for chunk in generate_with_retry(backend, history, options):
         if chunk["type"] in ("text", "image_url") and first_token_holder[0] is None:
             first_token_holder[0] = int((time.perf_counter() - t_gen_start) * 1000)
         if chunk["type"] == "text":
             pieces.append(chunk["content"])
+        elif chunk["type"] == "image_url":
+            image_count_holder[0] += 1
         await _send(ws, chunk)
     return "".join(pieces)
 

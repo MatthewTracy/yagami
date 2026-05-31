@@ -14,9 +14,15 @@ class Capability(str, Enum):
     VISION = "vision"
 
 
+class ImageAttachment(BaseModel):
+    media_type: str  # "image/png" / "image/jpeg" / etc.
+    data_b64: str  # raw base64, no data: prefix
+
+
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
+    images: list[ImageAttachment] | None = None
 
 
 class BackendOptions(BaseModel):

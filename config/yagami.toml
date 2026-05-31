@@ -18,6 +18,9 @@ model = "stable-image-core"
 long_message_token_threshold = 1500
 phi_must_be_local = true
 default_backend = "ollama"
+# Daily cap on cloud spend in USD. Cloud routing is refused once exceeded
+# in the last 24h. Set to 0 to disable.
+daily_spend_cap_usd = 5.0
 
 [routing.lora_variants]
 # PHI-medical now uses a per-request system prompt (router/prompts.py) — no

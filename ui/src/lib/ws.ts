@@ -6,8 +6,10 @@ export type ServerMsg =
   | { type: "error"; content: string; meta: Record<string, unknown> }
   | { type: "done"; content: string; meta: Record<string, unknown> };
 
+export type ClientImage = { media_type: string; data_b64: string };
+
 export type ClientMsg =
-  | { content: string; force_backend?: string | null }
+  | { content: string; force_backend?: string | null; images?: ClientImage[] }
   | { type: "cancel" }
   | { type: "load_session"; session_id: string };
 

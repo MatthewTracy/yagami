@@ -62,15 +62,24 @@ async def persist_decision(
 
 
 async def update_decision_timings(
-    decision_id: int, *, first_token_ms: int | None = None, total_ms: int | None = None
+    decision_id: int,
+    *,
+    first_token_ms: int | None = None,
+    total_ms: int | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    cost_usd: float | None = None,
 ) -> None:
     if decision_id <= 0:
         return
     db = get_db()
     await db.execute(
         "UPDATE decisions SET t_first_token_ms = COALESCE(?, t_first_token_ms),"
-        " t_total_ms = COALESCE(?, t_total_ms) WHERE id = ?",
-        (first_token_ms, total_ms, decision_id),
+        " t_total_ms = COALESCE(?, t_total_ms),"
+        " tokens_in = COALESCE(?, tokens_in),"
+        " tokens_out = COALESCE(?, tokens_out),"
+        " cost_usd = COALESCE(?, cost_usd) WHERE id = ?",
+        (first_token_ms, total_ms, tokens_in, tokens_out, cost_usd, decision_id),
     )
     await db.commit()
 

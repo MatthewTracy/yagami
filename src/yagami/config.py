@@ -28,6 +28,7 @@ class RoutingConfig(BaseModel):
     phi_must_be_local: bool = True
     default_backend: str = "ollama"
     lora_variants: dict[str, str] = Field(default_factory=dict)
+    daily_spend_cap_usd: float = 5.0  # 0 = no cap; cloud routes refused over cap
 
 
 class YagamiConfig(BaseModel):

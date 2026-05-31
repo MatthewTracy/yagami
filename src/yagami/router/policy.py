@@ -62,16 +62,25 @@ class RoutingPolicy:
         *,
         force_backend: str | None = None,
         sensitivity_floor: Sensitivity | None = None,
+        spend_blocked: bool = False,
     ) -> RoutingDecision:
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
 
         # 1. Slash-command override at the start of the message.
         override = parse_override(last_text)
         if override.forced_backend:
+            if spend_blocked and override.forced_backend in ("anthropic", "stability"):
+                raise OverrideRefused(
+                    f"override refused: daily spend cap reached; {override.forced_backend!r} blocked"
+                )
             return self._apply_override(override, last_text, sensitivity_floor)
 
         # 2. Programmatic force_backend (WS field).
         if force_backend:
+            if spend_blocked and force_backend in ("anthropic", "stability"):
+                raise OverrideRefused(
+                    f"force_backend refused: daily spend cap reached; {force_backend!r} blocked"
+                )
             return self._apply_force_backend(force_backend, last_text, sensitivity_floor)
 
         # 3. Rule-based fast-path bypass for high-confidence cases.
@@ -97,7 +106,7 @@ class RoutingPolicy:
 
         floored = self._apply_floor(classification, sensitivity_floor)
         source = self._floor_source(source, classification.sensitivity, sensitivity_floor)
-        return self._apply_rules(floored, source, last_text)
+        return self._apply_rules(floored, source, last_text, spend_blocked=spend_blocked)
 
     def _apply_floor(
         self, classification: Classification, floor: Sensitivity | None
@@ -217,7 +226,12 @@ class RoutingPolicy:
         )
 
     def _apply_rules(
-        self, classification: Classification, source: str, original_text: str
+        self,
+        classification: Classification,
+        source: str,
+        original_text: str,
+        *,
+        spend_blocked: bool = False,
     ) -> RoutingDecision:
         cls_dict = classification.model_dump(mode="json")
         cls_dict["source"] = source
@@ -242,21 +256,29 @@ class RoutingPolicy:
             )
 
         if classification.intent == Intent.IMAGE and "stability" in self._backends:
-            return RoutingDecision(
-                backend=self._backends["stability"],
-                reason=f"intent=image [{source}]",
-                classification=cls_dict,
-            )
+            if spend_blocked:
+                # Fall through to the local default — image is unavailable but
+                # we should still respond. Mark the reason.
+                source = source + "+spend-cap"
+            else:
+                return RoutingDecision(
+                    backend=self._backends["stability"],
+                    reason=f"intent=image [{source}]",
+                    classification=cls_dict,
+                )
 
         if (
             classification.complexity == Complexity.HIGH
             or classification.intent == Intent.COMPLEX_REASONING
         ) and "anthropic" in self._backends:
-            return RoutingDecision(
-                backend=self._backends["anthropic"],
-                reason=f"complexity={classification.complexity.value} intent={classification.intent.value} [{source}]",
-                classification=cls_dict,
-            )
+            if spend_blocked:
+                source = source + "+spend-cap"
+            else:
+                return RoutingDecision(
+                    backend=self._backends["anthropic"],
+                    reason=f"complexity={classification.complexity.value} intent={classification.intent.value} [{source}]",
+                    classification=cls_dict,
+                )
 
         lora = (
             self._config.lora_variants.get("code") if classification.intent == Intent.CODE else None

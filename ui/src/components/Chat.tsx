@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { connectChat, sendChat, ServerMsg } from "../lib/ws";
+import { connectChat, ClientImage, sendChat, ServerMsg } from "../lib/ws";
 import { AssistantBubble } from "./AssistantBubble";
 
+type Attachment =
+  | { kind: "image"; filename: string; preview_url: string; media_type: string; data_b64: string }
+  | { kind: "document"; filename: string; text: string; chars: number; truncated: boolean };
+
 type Bubble =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; attachments?: Attachment[] }
   | {
       role: "assistant";
       text: string;
@@ -47,8 +51,72 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   const [connected, setConnected] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [forceBackend, setForceBackend] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function uploadFiles(files: FileList | File[]) {
+    setUploading(true);
+    try {
+      const list = Array.from(files);
+      for (const f of list) {
+        const fd = new FormData();
+        fd.append("file", f);
+        const resp = await fetch("/api/ingest", { method: "POST", body: fd });
+        if (!resp.ok) {
+          alert(`Upload failed: ${await resp.text()}`);
+          continue;
+        }
+        const data = await resp.json();
+        if (data.kind === "image") {
+          setAttachments((a) => [
+            ...a,
+            {
+              kind: "image",
+              filename: data.filename,
+              media_type: data.media_type,
+              data_b64: data.data_b64,
+              preview_url: `data:${data.media_type};base64,${data.data_b64}`,
+            },
+          ]);
+        } else {
+          setAttachments((a) => [
+            ...a,
+            {
+              kind: "document",
+              filename: data.filename,
+              text: data.text,
+              chars: data.chars,
+              truncated: data.truncated,
+            },
+          ]);
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files: File[] = [];
+    for (const it of Array.from(e.clipboardData.items)) {
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault();
+      uploadFiles(files);
+    }
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
+  }
 
   useEffect(() => {
     const ws = connectChat(handle, () => setConnected(false), () => setConnected(true));
@@ -134,12 +202,31 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
 
   function send() {
     const text = input.trim();
-    if (!text || !wsRef.current || inFlight) return;
-    setBubbles((b) => [...b, { role: "user", text }]);
-    const payload: { content: string; force_backend?: string } = { content: text };
+    if ((!text && attachments.length === 0) || !wsRef.current || inFlight) return;
+
+    // Fold document attachments into the message text. Image attachments stay
+    // as proper vision content blocks.
+    let composed = text;
+    const docs = attachments.filter((a) => a.kind === "document");
+    for (const d of docs) {
+      if (d.kind !== "document") continue;
+      composed = `${composed ? composed + "\n\n" : ""}--- attached: ${d.filename} (${d.chars.toLocaleString()} chars${d.truncated ? ", truncated" : ""}) ---\n${d.text}\n--- end ${d.filename} ---`;
+    }
+
+    const images: ClientImage[] = attachments
+      .filter((a) => a.kind === "image")
+      .map((a) => (a.kind === "image" ? { media_type: a.media_type, data_b64: a.data_b64 } : null!))
+      .filter(Boolean);
+
+    setBubbles((b) => [...b, { role: "user", text: text || "(attached files)", attachments }]);
+    const payload: { content: string; force_backend?: string; images?: ClientImage[] } = {
+      content: composed,
+    };
     if (forceBackend) payload.force_backend = forceBackend;
+    if (images.length) payload.images = images;
     sendChat(wsRef.current, payload);
     setInput("");
+    setAttachments([]);
     setInFlight(true);
     const ta = document.querySelector<HTMLTextAreaElement>("textarea");
     if (ta) ta.style.height = "auto";
@@ -174,7 +261,11 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div
+      className="flex flex-col flex-1 min-h-0"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+    >
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {bubbles.length === 0 && (
           <div className="text-zinc-500 text-sm">
@@ -212,7 +303,50 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
         })}
       </div>
       <div className="p-3 border-t border-zinc-800 flex gap-2 items-end shrink-0">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".txt,.md,.markdown,.pdf,.log,.csv,.json,image/*"
+          onChange={(e) => {
+            if (e.target.files?.length) uploadFiles(e.target.files);
+            e.target.value = "";
+          }}
+          className="hidden"
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!connected || inFlight || uploading}
+          title="Attach file (PDF, MD, TXT, image) — or drag-drop / paste"
+          className="px-2 py-2 text-zinc-400 hover:text-zinc-100 text-base disabled:opacity-50"
+        >
+          {uploading ? "…" : "📎"}
+        </button>
         <div className="flex-1 min-w-0">
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1 mb-1">
+              {attachments.map((a, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 text-[11px] text-zinc-300"
+                >
+                  {a.kind === "image" ? (
+                    <img src={a.preview_url} className="h-4 w-4 object-cover rounded-sm" alt="" />
+                  ) : (
+                    <span>📄</span>
+                  )}
+                  <span className="max-w-[180px] truncate">{a.filename}</span>
+                  <button
+                    onClick={() => setAttachments((arr) => arr.filter((_, j) => j !== i))}
+                    className="text-zinc-500 hover:text-red-400"
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             rows={1}
             className="block w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-600 disabled:opacity-50 resize-none max-h-64 overflow-y-auto"
@@ -221,7 +355,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                 ? "connecting…"
                 : inFlight
                   ? "waiting for reply…"
-                  : "Message Yagami… (Shift+Enter newline · /cloud /local /image /think /code to force route)"
+                  : "Message Yagami… (Shift+Enter newline · /cloud /local /image /think /code · 📎/drop/paste files)"
             }
             value={input}
             onChange={(e) => {
@@ -236,6 +370,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                 send();
               }
             }}
+            onPaste={onPaste}
             disabled={!connected || inFlight}
           />
           {input.length > 200 && (

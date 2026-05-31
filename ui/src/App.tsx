@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Chat } from "./components/Chat";
+import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
 import { PrivacyLedger } from "./components/PrivacyLedger";
 import { ConversationsSidebar } from "./components/ConversationsSidebar";
@@ -47,6 +48,10 @@ export default function App() {
         />
       </div>
       <aside className="p-3 space-y-4 overflow-y-auto min-h-0">
+        <section>
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Cost</div>
+          <CostMeter sessionId={sessionId} refreshKey={refreshKey} />
+        </section>
         <section>
           <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Routing (current)</div>
           <DebugPanel

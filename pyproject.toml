@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.2.0"
+version = "0.2.9"
 description = "Local AI orchestrator with intelligent routing between local quantized models and cloud LLMs."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,11 @@ dependencies = [
     "anthropic>=0.39",
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
+    "keyring>=25.4",
+    "pypdf>=5.0",
+    "markdown-it-py>=3.0",
+    "Pillow>=10.4",
+    "python-multipart>=0.0.20",
     "tomli>=2.0; python_version<'3.11'",
 ]
 

@@ -4,11 +4,18 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+# Load .env into os.environ so secrets.get() can fall back to env-vars when
+# the OS keyring doesn't have the value.
+load_dotenv()
+
+from .api import costs as costs_api
 from .api import decisions as decisions_api
+from .api import ingest as ingest_api
 from .api import sessions as sessions_api
 from .backends.anthropic import ClaudeBackend
 from .backends.base import Backend
@@ -17,6 +24,7 @@ from .backends.ollama import OllamaBackend
 from .backends.stability import StabilityImageBackend
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint
+from . import secrets
 from .config import get_config, get_settings
 from .router.classifier import OllamaJSONClassifier
 from .router.policy import RoutingPolicy
@@ -32,22 +40,25 @@ def _project_root() -> Path:
 
 def build_app() -> FastAPI:
     cfg = get_config()
-    settings = get_settings()
+    _ = get_settings()  # still picks up YAGAMI_* env overrides for non-secret config
     sessions = SessionStore()
     db_path = _project_root() / "yagami.db"
+
+    anthropic_key = secrets.get("ANTHROPIC_API_KEY")
+    stability_key = secrets.get("STABILITY_API_KEY")
 
     backends: dict[str, Backend] = {
         "echo": EchoBackend(),
         "ollama": OllamaBackend(cfg.ollama),
     }
-    if settings.anthropic_api_key:
-        backends["anthropic"] = ClaudeBackend(cfg.anthropic, settings.anthropic_api_key)
+    if anthropic_key:
+        backends["anthropic"] = ClaudeBackend(cfg.anthropic, anthropic_key)
     else:
-        log.warning("ANTHROPIC_API_KEY not set; Claude backend disabled")
-    if settings.stability_api_key:
-        backends["stability"] = StabilityImageBackend(cfg.stability, settings.stability_api_key)
+        log.warning("ANTHROPIC_API_KEY not in keyring or env; Claude backend disabled")
+    if stability_key:
+        backends["stability"] = StabilityImageBackend(cfg.stability, stability_key)
     else:
-        log.warning("STABILITY_API_KEY not set; Stability backend disabled")
+        log.warning("STABILITY_API_KEY not in keyring or env; Stability backend disabled")
 
     classifier = OllamaJSONClassifier(cfg.ollama)
     policy = RoutingPolicy(config=cfg.routing, backends=backends, classifier=classifier)
@@ -69,6 +80,8 @@ def build_app() -> FastAPI:
 
     app.include_router(decisions_api.router)
     app.include_router(sessions_api.router)
+    app.include_router(costs_api.router)
+    app.include_router(ingest_api.router)
 
     @app.get("/api/health")
     async def health() -> dict:

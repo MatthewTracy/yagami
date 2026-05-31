@@ -21,11 +21,28 @@ class ClaudeBackend(Backend):
         self, messages: list[Message], *, options: BackendOptions
     ) -> AsyncIterator[BackendChunk]:
         system_parts = [m.content for m in messages if m.role == "system"]
-        chat = [
-            {"role": m.role, "content": m.content}
-            for m in messages
-            if m.role in ("user", "assistant")
-        ]
+        chat: list[dict] = []
+        for m in messages:
+            if m.role not in ("user", "assistant"):
+                continue
+            if m.images:
+                blocks: list[dict] = []
+                for img in m.images:
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.media_type,
+                                "data": img.data_b64,
+                            },
+                        }
+                    )
+                if m.content:
+                    blocks.append({"type": "text", "text": m.content})
+                chat.append({"role": m.role, "content": blocks})
+            else:
+                chat.append({"role": m.role, "content": m.content})
         kwargs: dict = {
             "model": self._config.model,
             "max_tokens": options.max_tokens or self._config.max_tokens,
