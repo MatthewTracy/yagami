@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from yagami import config as config_mod
+from yagami.main import build_app
+
+
+@pytest.fixture
+def tmp_config(tmp_path, monkeypatch):
+    """Point the config module at a throwaway TOML file for each test."""
+    cfg_file = tmp_path / "yagami.toml"
+    src = Path("config/yagami.toml")
+    if src.exists():
+        shutil.copy(src, cfg_file)
+    monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(cfg_file))
+    config_mod.get_settings.cache_clear()
+    config_mod.get_config.cache_clear()
+    yield cfg_file
+    config_mod.get_settings.cache_clear()
+    config_mod.get_config.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_get_config_returns_current_and_defaults(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get("/api/config")
+            assert r.status_code == 200
+            data = r.json()
+            assert "config" in data
+            assert "defaults" in data
+            assert "prompts" in data
+            assert "phi_medical_default" in data["prompts"]
+            assert data["config"]["routing"]["phi_must_be_local"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_config_persists_routing_changes(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={"routing": {"daily_spend_cap_usd": 12.5, "default_backend": "ollama"}},
+            )
+            assert r.status_code == 200
+            data = r.json()
+            assert data["ok"] is True
+            assert data["config"]["routing"]["daily_spend_cap_usd"] == 12.5
+
+            # Reload and confirm it stuck.
+            config_mod.get_config.cache_clear()
+            r = await c.get("/api/config")
+            assert r.json()["config"]["routing"]["daily_spend_cap_usd"] == 12.5
+
+
+@pytest.mark.asyncio
+async def test_put_config_pins_phi_must_be_local_on(tmp_config):
+    """Defense in depth: even if the UI somehow PUTs phi_must_be_local=false,
+    the server pins it on. Disabling would defeat the local-first guarantee."""
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put("/api/config", json={"routing": {"phi_must_be_local": False}})
+            assert r.status_code == 200
+            assert r.json()["config"]["routing"]["phi_must_be_local"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_config_rejects_invalid_types(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={"routing": {"daily_spend_cap_usd": "not-a-number"}},
+            )
+            assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_toml_round_trip_preserves_fields(tmp_config):
+    """Write via the API, read via tomllib, confirm the round-trip values."""
+    import tomllib
+
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={
+                    "anthropic": {"model": "claude-opus-4-8", "max_tokens": 8192},
+                    "routing": {"daily_spend_cap_usd": 7.25},
+                },
+            )
+            assert r.status_code == 200
+
+        # Re-read directly from disk via stdlib.
+        with tmp_config.open("rb") as f:
+            on_disk = tomllib.load(f)
+        assert on_disk["anthropic"]["model"] == "claude-opus-4-8"
+        assert on_disk["anthropic"]["max_tokens"] == 8192
+        assert on_disk["routing"]["daily_spend_cap_usd"] == 7.25
+        assert on_disk["routing"]["phi_must_be_local"] is True

@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .api import config as config_api
 from .api import costs as costs_api
 from .api import decisions as decisions_api
 from .api import ingest as ingest_api
@@ -83,6 +84,7 @@ def build_app() -> FastAPI:
     app.include_router(costs_api.router)
     app.include_router(ingest_api.router)
     app.include_router(stats_api.router)
+    app.include_router(config_api.router)
 
     @app.get("/api/health")
     async def health() -> dict:

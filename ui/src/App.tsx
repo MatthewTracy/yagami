@@ -4,7 +4,9 @@ import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
 import { PrivacyLedger } from "./components/PrivacyLedger";
 import { ConversationsSidebar } from "./components/ConversationsSidebar";
+import { SettingsModal } from "./components/SettingsModal";
 import { ShortcutSheet } from "./components/ShortcutSheet";
+import { StatsDashboard } from "./components/StatsDashboard";
 import { ToastHost } from "./components/Toast";
 
 type Routing = {
@@ -19,6 +21,8 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loadSessionId, setLoadSessionId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   function newChat() {
     setLoadSessionId(null);
@@ -41,6 +45,22 @@ export default function App() {
         <header className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2 shrink-0">
           <span className="font-semibold tracking-tight">Yagami</span>
           <span className="text-xs text-zinc-500">local-first AI orchestrator</span>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setStatsOpen(true)}
+              title="Stats dashboard"
+              className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
+            >
+              📊
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
+            >
+              ⚙
+            </button>
+          </div>
         </header>
         <Chat
           loadSessionId={loadSessionId}
@@ -70,6 +90,8 @@ export default function App() {
       </aside>
       <ToastHost />
       <ShortcutSheet />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <StatsDashboard open={statsOpen} onClose={() => setStatsOpen(false)} />
     </div>
   );
 }
