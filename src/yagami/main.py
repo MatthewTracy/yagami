@@ -9,10 +9,6 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# Load .env into os.environ so secrets.get() can fall back to env-vars when
-# the OS keyring doesn't have the value.
-load_dotenv()
-
 from .api import costs as costs_api
 from .api import decisions as decisions_api
 from .api import ingest as ingest_api
@@ -39,6 +35,9 @@ def _project_root() -> Path:
 
 
 def build_app() -> FastAPI:
+    # Load .env into os.environ so secrets.get() can fall back to env vars
+    # when the OS keyring doesn't have the value.
+    load_dotenv()
     cfg = get_config()
     _ = get_settings()  # still picks up YAGAMI_* env overrides for non-secret config
     sessions = SessionStore()

@@ -12,9 +12,7 @@ from .schema import Classification, Complexity, Intent, Sensitivity
 
 Classifier = Callable[[str], Awaitable[Classification]]
 
-# Order of "stickiness". Once a session is elevated, it never drops back to
-# none — this prevents the bug where a long PHI conversation has a short
-# "summarize" turn classify as none and leak to a cloud backend.
+# Order used when we need to compare two sensitivity labels.
 _SENSITIVITY_ORDER: dict[Sensitivity, int] = {
     Sensitivity.NONE: 0,
     Sensitivity.PHI: 1,
@@ -61,9 +59,18 @@ class RoutingPolicy:
         history: list[Message],
         *,
         force_backend: str | None = None,
-        sensitivity_floor: Sensitivity | None = None,
         spend_blocked: bool = False,
+        history_has_phi: bool = False,
     ) -> RoutingDecision:
+        """Route the current turn.
+
+        `history_has_phi` is the caller's read of whether any earlier message in
+        the conversation contains PHI/secret content. The current turn is
+        classified independently — no sticky floor — but cloud TEXT backends
+        (anthropic) are refused when history_has_phi, because the whole history
+        is sent in those requests. Image gen (stability) ignores history and is
+        always safe to route to.
+        """
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
 
         # 1. Slash-command override at the start of the message.
@@ -73,7 +80,7 @@ class RoutingPolicy:
                 raise OverrideRefused(
                     f"override refused: daily spend cap reached; {override.forced_backend!r} blocked"
                 )
-            return self._apply_override(override, last_text, sensitivity_floor)
+            return self._apply_override(override, last_text, history_has_phi=history_has_phi)
 
         # 2. Programmatic force_backend (WS field).
         if force_backend:
@@ -81,15 +88,15 @@ class RoutingPolicy:
                 raise OverrideRefused(
                     f"force_backend refused: daily spend cap reached; {force_backend!r} blocked"
                 )
-            return self._apply_force_backend(force_backend, last_text, sensitivity_floor)
+            return self._apply_force_backend(
+                force_backend, last_text, history_has_phi=history_has_phi
+            )
 
         # 3. Rule-based fast-path bypass for high-confidence cases.
         bypass = can_bypass(last_text)
         if bypass is not None:
             return self._apply_rules(
-                self._apply_floor(bypass, sensitivity_floor),
-                self._floor_source("rules-fast-path", bypass.sensitivity, sensitivity_floor),
-                last_text,
+                bypass, "rules-fast-path", last_text, history_has_phi=history_has_phi
             )
 
         # 4. LLM classifier.
@@ -104,41 +111,21 @@ class RoutingPolicy:
                 classification = self._fallback_classify(last_text)
                 source = "fallback-after-error"
 
-        floored = self._apply_floor(classification, sensitivity_floor)
-        source = self._floor_source(source, classification.sensitivity, sensitivity_floor)
-        return self._apply_rules(floored, source, last_text, spend_blocked=spend_blocked)
-
-    def _apply_floor(
-        self, classification: Classification, floor: Sensitivity | None
-    ) -> Classification:
-        if floor is None:
-            return classification
-        new_sens = stickier(classification.sensitivity, floor)
-        if new_sens == classification.sensitivity:
-            return classification
-        return Classification(
-            intent=classification.intent,
-            sensitivity=new_sens,
-            complexity=classification.complexity,
+        return self._apply_rules(
+            classification,
+            source,
+            last_text,
+            spend_blocked=spend_blocked,
+            history_has_phi=history_has_phi,
         )
-
-    @staticmethod
-    def _floor_source(base: str, raw: Sensitivity, floor: Sensitivity | None) -> str:
-        if floor is None:
-            return base
-        if stickier(raw, floor) != raw:
-            return f"{base}+floor"
-        return base
 
     def _apply_override(
         self,
         override: OverrideResult,
         original_text: str,
-        sensitivity_floor: Sensitivity | None = None,
+        *,
+        history_has_phi: bool = False,
     ) -> RoutingDecision:
-        # Classify the stripped text so PHI/SECRET guard still bites.
-        # We don't await the LLM classifier here — only run regex/rules to keep
-        # the override fast. The fast-path covers PHI/SECRET via _has_phi/_has_secret.
         from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
 
         sensitive: Sensitivity | None = None
@@ -146,25 +133,28 @@ class RoutingPolicy:
             sensitive = Sensitivity.PHI
         elif _has_secret(override.stripped_text):
             sensitive = Sensitivity.SECRET
-        # Apply session floor so a long PHI session can't be downgraded just
-        # by sending a short non-PHI override.
-        if sensitivity_floor is not None:
-            sensitive = stickier(sensitive, sensitivity_floor)
-            if sensitive == Sensitivity.NONE:
-                sensitive = None
 
         if sensitive and self._config.phi_must_be_local:
-            target_backend_name = override.forced_backend
-            target = self._backends.get(target_backend_name or "")
+            target = self._backends.get(override.forced_backend or "")
             if target is not None and not target.is_local:
                 raise OverrideRefused(
                     f"override ignored: sensitivity={sensitive.value} requires local backend, "
-                    f"requested {target_backend_name!r} is cloud"
+                    f"requested {override.forced_backend!r} is cloud"
                 )
 
         backend = self._backends.get(override.forced_backend or "")
         if backend is None:
             raise OverrideRefused(f"override backend {override.forced_backend!r} not available")
+
+        # Cloud TEXT backends see history. If history has PHI, refuse explicitly
+        # — the user's current prompt may be safe but we'd ship Jenny's note to
+        # Claude alongside it. Image backends only see the current prompt, so
+        # they're safe to route to.
+        if backend.name == "anthropic" and history_has_phi:
+            raise OverrideRefused(
+                "override refused: chat history contains PHI; cloud text backend would "
+                "include it in context. Start a new chat or use /local."
+            )
 
         intent = (
             Intent(override.hint_intent)
@@ -192,7 +182,8 @@ class RoutingPolicy:
         self,
         name: str,
         last_text: str,
-        sensitivity_floor: Sensitivity | None = None,
+        *,
+        history_has_phi: bool = False,
     ) -> RoutingDecision:
         from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
 
@@ -201,10 +192,6 @@ class RoutingPolicy:
             sensitive = Sensitivity.PHI
         elif _has_secret(last_text):
             sensitive = Sensitivity.SECRET
-        if sensitivity_floor is not None:
-            sensitive = stickier(sensitive, sensitivity_floor)
-            if sensitive == Sensitivity.NONE:
-                sensitive = None
 
         backend = self._backends.get(name)
         if backend is None:
@@ -213,6 +200,11 @@ class RoutingPolicy:
             raise OverrideRefused(
                 f"force_backend {name!r} is cloud but content is "
                 f"{sensitive.value}-sensitive; refused"
+            )
+        if backend.name == "anthropic" and history_has_phi:
+            raise OverrideRefused(
+                f"force_backend {name!r} refused: chat history contains PHI; cloud text "
+                "backend would include it in context. Start a new chat or pick Local."
             )
         cls = Classification(sensitivity=sensitive or Sensitivity.NONE)
         cls_dict = cls.model_dump(mode="json")
@@ -232,6 +224,7 @@ class RoutingPolicy:
         original_text: str,
         *,
         spend_blocked: bool = False,
+        history_has_phi: bool = False,
     ) -> RoutingDecision:
         cls_dict = classification.model_dump(mode="json")
         cls_dict["source"] = source
@@ -255,11 +248,12 @@ class RoutingPolicy:
                 system_prompt=sysprompt,
             )
 
+        # Image gen routes to Stability — it only sends the current user prompt
+        # (no history), so history_has_phi doesn't apply to this path.
         if classification.intent == Intent.IMAGE and "stability" in self._backends:
             if spend_blocked:
-                # Fall through to the local default — image is unavailable but
-                # we should still respond. Mark the reason.
                 source = source + "+spend-cap"
+                cls_dict["source"] = source
             else:
                 return RoutingDecision(
                     backend=self._backends["stability"],
@@ -267,12 +261,18 @@ class RoutingPolicy:
                     classification=cls_dict,
                 )
 
+        # Cloud TEXT routing — refused if history has PHI, since we'd ship the
+        # prior conversation (containing PHI) to Claude.
         if (
             classification.complexity == Complexity.HIGH
             or classification.intent == Intent.COMPLEX_REASONING
         ) and "anthropic" in self._backends:
             if spend_blocked:
                 source = source + "+spend-cap"
+                cls_dict["source"] = source
+            elif history_has_phi:
+                source = source + "+history-phi"
+                cls_dict["source"] = source
             else:
                 return RoutingDecision(
                     backend=self._backends["anthropic"],

@@ -11,9 +11,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..backends.base import BackendOptions, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
 from ..config import get_config
-from ..router.policy import OverrideRefused, RoutingPolicy, stickier
-from ..router.schema import Sensitivity
-from ..storage.db import get_db
+from ..router.fast_path import _has_phi, _has_secret
+from ..router.policy import OverrideRefused, RoutingPolicy
+from ..storage.db import get_db  # noqa: F401  (kept for future use)
 from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
@@ -21,25 +21,18 @@ from .session import SessionStore
 _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
 
 
-async def _load_sensitivity_floor(session_id: str) -> Sensitivity | None:
-    """Scan past routing decisions for the highest sensitivity ever seen in
-    this session, so a reloaded clinical chat stays elevated."""
-    db = get_db()
-    async with db.execute(
-        "SELECT DISTINCT json_extract(classification, '$.sensitivity') AS s"
-        " FROM decisions WHERE session_id = ?",
-        (session_id,),
-    ) as cur:
-        seen = {row[0] for row in await cur.fetchall() if row[0]}
-    floor: Sensitivity | None = None
-    for raw in seen:
-        try:
-            floor = stickier(floor, Sensitivity(raw))
-        except ValueError:
-            continue
-    if floor == Sensitivity.NONE:
-        return None
-    return floor
+def _history_has_phi(history: list[Message]) -> bool:
+    """True if any earlier message in the chat contains PHI or secret content.
+
+    Skips the LAST user message — that's the CURRENT turn and is classified
+    on its own merits. Only looks at prior turns.
+    """
+    if len(history) < 2:
+        return False
+    for m in history[:-1]:
+        if _has_phi(m.content) or _has_secret(m.content):
+            return True
+    return False
 
 
 log = logging.getLogger("yagami.stream")
@@ -53,7 +46,6 @@ async def chat_endpoint(
     await ws.accept()
     session_id: str | None = None
     history_cache: list[Message] = []
-    sensitivity_floor: Sensitivity | None = None
     gen_task: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
     inbox: asyncio.Queue = asyncio.Queue()
@@ -88,7 +80,6 @@ async def chat_endpoint(
                 if sid and await sessions.session_exists(sid):
                     session_id = sid
                     history_cache = await sessions.history(session_id)
-                    sensitivity_floor = await _load_sensitivity_floor(session_id)
                     await _send(ws, {"type": "session", "session_id": session_id})
                 continue
 
@@ -123,12 +114,13 @@ async def chat_endpoint(
                 today = await spend_today_usd()
                 spend_blocked = today >= cfg.routing.daily_spend_cap_usd
 
+            history_has_phi = _history_has_phi(history_cache)
             decide_task = asyncio.create_task(
                 policy.decide(
                     history_cache,
                     force_backend=force_backend,
-                    sensitivity_floor=sensitivity_floor,
                     spend_blocked=spend_blocked,
+                    history_has_phi=history_has_phi,
                 )
             )
             await append_task
@@ -139,16 +131,6 @@ async def chat_endpoint(
                 await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
                 continue
             t_classify_ms = int((time.perf_counter() - t_start) * 1000)
-
-            # Update the sticky floor after the decision so the next turn
-            # in this session inherits it.
-            try:
-                decided_sens = Sensitivity(decision.classification.get("sensitivity", "none"))
-            except (TypeError, ValueError):
-                decided_sens = Sensitivity.NONE
-            sensitivity_floor = stickier(sensitivity_floor, decided_sens)
-            if sensitivity_floor == Sensitivity.NONE:
-                sensitivity_floor = None
 
             # If the policy stripped a slash command, swap the last user message
             # so the backend sees the cleaned text. History cache stays as-is
