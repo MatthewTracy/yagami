@@ -1,6 +1,13 @@
 export type ServerMsg =
   | { type: "session"; session_id: string }
-  | { type: "routing"; backend: string; is_local: boolean; reason: string; classification: Record<string, unknown> }
+  | {
+      type: "routing";
+      backend: string;
+      is_local: boolean;
+      reason: string;
+      classification: Record<string, unknown>;
+      decision_id?: number;
+    }
   | { type: "text"; content: string; meta: Record<string, unknown> }
   | { type: "image_url"; content: string; meta: Record<string, unknown> }
   | { type: "error"; content: string; meta: Record<string, unknown> }

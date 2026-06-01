@@ -11,6 +11,7 @@ type Props = {
   pendingHint?: string;
   isLastAssistant: boolean;
   onRegenerate?: () => void;
+  decisionId?: number;
 };
 
 export function AssistantBubble({
@@ -20,8 +21,26 @@ export function AssistantBubble({
   pendingHint,
   isLastAssistant,
   onRegenerate,
+  decisionId,
 }: Props) {
   const [copied, setCopied] = useState(false);
+  const [rating, setRating] = useState<-1 | 0 | 1>(0);
+
+  async function sendFeedback(r: -1 | 1) {
+    if (!decisionId) return;
+    const next = rating === r ? 0 : r; // toggle off if clicked again
+    setRating(next);
+    if (next === 0) return; // nothing to post; we don't have a delete endpoint
+    try {
+      await fetch(`/api/decisions/${decisionId}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating: next }),
+      });
+    } catch {
+      /* fire and forget; user can re-click if they care */
+    }
+  }
 
   async function copy() {
     try {
@@ -59,6 +78,32 @@ export function AssistantBubble({
       )}
       {!pending && (text || image) && (
         <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {decisionId && (
+            <>
+              <button
+                onClick={() => sendFeedback(1)}
+                title="Helpful"
+                className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  rating === 1
+                    ? "bg-emerald-800 text-emerald-100"
+                    : "bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
+                }`}
+              >
+                ▲
+              </button>
+              <button
+                onClick={() => sendFeedback(-1)}
+                title="Not helpful"
+                className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  rating === -1
+                    ? "bg-red-900 text-red-100"
+                    : "bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
+                }`}
+              >
+                ▼
+              </button>
+            </>
+          )}
           {text && (
             <button
               onClick={copy}

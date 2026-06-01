@@ -68,6 +68,12 @@ Output: {"intent":"simple_qa","sensitivity":"none","complexity":"low"}
 User: write a short poem about the ocean
 Output: {"intent":"creative","sensitivity":"none","complexity":"low"}
 
+User: tell me a 2-paragraph story about a lost robot
+Output: {"intent":"creative","sensitivity":"none","complexity":"low"}
+
+User: Prove that the halting problem is undecidable. Cite the diagonalization argument.
+Output: {"intent":"complex_reasoning","sensitivity":"none","complexity":"high"}
+
 Now classify the next message. JSON only, no prose."""
 
 

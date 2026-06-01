@@ -4,6 +4,8 @@ import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
 import { PrivacyLedger } from "./components/PrivacyLedger";
 import { ConversationsSidebar } from "./components/ConversationsSidebar";
+import { ShortcutSheet } from "./components/ShortcutSheet";
+import { ToastHost } from "./components/Toast";
 
 type Routing = {
   backend: string;
@@ -66,6 +68,8 @@ export default function App() {
           <PrivacyLedger sessionId={sessionId} refreshKey={refreshKey} />
         </section>
       </aside>
+      <ToastHost />
+      <ShortcutSheet />
     </div>
   );
 }

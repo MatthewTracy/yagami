@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { connectChat, ClientImage, sendChat, ServerMsg } from "../lib/ws";
 import { AssistantBubble } from "./AssistantBubble";
+import { emitToast } from "./Toast";
+
+const DRAFT_KEY = "yagami:draft";
 
 type Attachment =
   | { kind: "image"; filename: string; preview_url: string; media_type: string; data_b64: string }
@@ -15,6 +18,7 @@ type Bubble =
       pending: boolean;
       pendingHint?: string;
       backend?: string;
+      decisionId?: number;
     };
 
 type Routing = {
@@ -47,7 +51,13 @@ const FORCE_OPTIONS = [
 
 export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Props) {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState<string>(() => {
+    try {
+      return localStorage.getItem(DRAFT_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const [connected, setConnected] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [forceBackend, setForceBackend] = useState("");
@@ -56,6 +66,58 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onReset = () => {
+      setInput((cur) => (cur.startsWith("/reset ") ? cur : "/reset " + cur));
+      const ta = document.querySelector<HTMLTextAreaElement>("textarea");
+      ta?.focus();
+    };
+    window.addEventListener("yagami:reset-phi", onReset);
+    return () => window.removeEventListener("yagami:reset-phi", onReset);
+  }, []);
+
+  // Persist draft to localStorage on every change, restore on mount above.
+  useEffect(() => {
+    try {
+      if (input) localStorage.setItem(DRAFT_KEY, input);
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* localStorage full / disabled; ignore */
+    }
+  }, [input]);
+
+  // Global keyboard shortcuts.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "INPUT" ||
+        target?.getAttribute("contenteditable") === "true";
+
+      if (e.key === "Escape" && inFlight && wsRef.current) {
+        // Cancel in-flight generation.
+        sendChat(wsRef.current, { type: "cancel" });
+        return;
+      }
+      if (mod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        document.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+        return;
+      }
+      if (mod && (e.key === "l" || e.key === "L") && !inField) {
+        // Reload page = fresh session. Avoid in inputs to not trample Ctrl+L
+        // address-bar focus expectations when user is typing.
+        e.preventDefault();
+        window.location.reload();
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inFlight]);
 
   async function uploadFiles(files: FileList | File[]) {
     setUploading(true);
@@ -66,7 +128,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
         fd.append("file", f);
         const resp = await fetch("/api/ingest", { method: "POST", body: fd });
         if (!resp.ok) {
-          alert(`Upload failed: ${await resp.text()}`);
+          emitToast("error", `Upload failed: ${await resp.text()}`);
           continue;
         }
         const data = await resp.json();
@@ -173,6 +235,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           pending: true,
           pendingHint: PENDING_HINT[m.backend] ?? `calling ${m.backend}`,
           backend: m.backend,
+          decisionId: m.decision_id,
         },
       ]);
       return;
@@ -186,11 +249,8 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       return;
     }
     if (m.type === "error") {
-      updateLastAssistant((last) => ({
-        ...last,
-        text: (last.text ? last.text + "\n" : "") + `error: ${m.content}`,
-        pending: false,
-      }));
+      emitToast("error", m.content);
+      updateLastAssistant((last) => ({ ...last, pending: false }));
       return;
     }
     if (m.type === "done") {
@@ -298,6 +358,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
               pendingHint={b.pendingHint}
               isLastAssistant={i === lastAssistantIdx && !inFlight}
               onRegenerate={regenerate}
+              decisionId={b.decisionId}
             />
           );
         })}

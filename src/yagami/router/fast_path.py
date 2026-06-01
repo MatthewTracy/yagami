@@ -69,7 +69,22 @@ _CODE_MARKERS = (
 
 _CODE_REGEX = re.compile(r";\s*$", re.MULTILINE)
 
-_IMAGE_MARKERS = ("draw", "image of", "picture of", "/image", "generate an image", "paint")
+_IMAGE_MARKERS = ("draw", "/image", "generate an image", "paint")
+
+# Prompts that LOOK trivial (short, no PHI/code/image markers) but are actually
+# creative or complex-reasoning. Force the classifier so they get tagged right.
+_CREATIVE_MARKERS = re.compile(
+    r"\b(?:poem|haiku|sonnet|limerick|verse|lyrics|song|"
+    r"short\s+story|2[\s\-]?paragraph\s+story|tell\s+me\s+a\s+story|"
+    r"fictional|monologue|prose|narrative)\b",
+    re.IGNORECASE,
+)
+_COMPLEX_REASONING_MARKERS = re.compile(
+    r"\b(?:prove|proof|derive|undecidable|"
+    r"walk\s+me\s+through|trade[\s\-]?offs?|"
+    r"compare\s+and\s+contrast|in[\s\-]depth\s+analysis)\b",
+    re.IGNORECASE,
+)
 
 # Imperative "give me / show me / create a / generate the / ..." phrasings
 # almost always imply intent worth classifying (image, code, file, fetch).
@@ -89,13 +104,14 @@ _IMAGE_CREATION_PATTERN = re.compile(
     r"\b(draw|paint|sketch|render|illustrate)\s+(?:me\s+)?(?:a|an|the|some)\b",
     re.IGNORECASE,
 )
-# Also catch the very explicit cases: "image of X", "picture of X", "/image X",
-# "generate an image of X", "create a logo|poster|illustration|portrait|drawing|painting".
+# Explicit image creation. Requires a creation verb — bare "picture of X" /
+# "image of X" is NOT enough, because phrases like "tell me about the picture
+# of Dorian Gray" or "the image of America in the 1950s" aren't image-gen.
 _IMAGE_EXPLICIT_PATTERN = re.compile(
-    r"(?:\bimage of\b|\bpicture of\b|^/image\b|"
-    r"\b(?:generate|create|make|give\s+me)\s+(?:an?\s+)?image\b|"
-    r"\b(?:generate|create|make|give\s+me)\s+(?:an?\s+)?picture\b|"
-    r"\b(?:create|make|design|give\s+me)\s+(?:a|an|the)\s+(?:logo|poster|portrait|illustration|drawing|painting|wallpaper)\b)",
+    r"(?:^/image\b|"
+    r"\b(?:generate|create|make|give\s+me|show\s+me)\s+(?:an?\s+)?image(?:\s+of\b|\b)|"
+    r"\b(?:generate|create|make|give\s+me|show\s+me)\s+(?:an?\s+)?picture(?:\s+of\b|\b)|"
+    r"\b(?:create|make|design|give\s+me)\s+(?:a|an|the)\s+(?:logo|poster|portrait|illustration|drawing|painting|wallpaper))",
     re.IGNORECASE,
 )
 
@@ -171,6 +187,13 @@ def can_bypass(text: str) -> Classification | None:
     if _has_image_keyword(text):
         return None
     if _is_imperative_request(text):
+        return None
+    # Creative + complex-reasoning prompts are often SHORT but still need the
+    # classifier to tag them correctly. Without these checks they bypass as
+    # SIMPLE_QA and lose their real intent label.
+    if _CREATIVE_MARKERS.search(text):
+        return None
+    if _COMPLEX_REASONING_MARKERS.search(text):
         return None
     return Classification(
         intent=Intent.SIMPLE_QA,

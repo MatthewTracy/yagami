@@ -52,8 +52,32 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
     return <div className="text-xs text-zinc-500">No routing decisions yet.</div>;
   }
 
+  const sessionHasPhi = rows.some((r) => {
+    const s = r.classification?.sensitivity as string | undefined;
+    return s && s !== "none";
+  });
+
   return (
     <div className="space-y-2">
+      {sessionHasPhi && (
+        <div className="text-[11px] p-2 rounded border border-amber-900/50 bg-amber-900/10 text-amber-200 flex items-start gap-2">
+          <span className="text-base leading-none">🔒</span>
+          <div className="flex-1 min-w-0">
+            <div className="font-medium">Session contains sensitive content</div>
+            <div className="text-amber-200/70 mt-0.5">
+              Cloud text routes are blocked. Image gen still works (only the
+              prompt is sent). Use Reset to bypass for one turn.
+            </div>
+          </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("yagami:reset-phi"))}
+            className="shrink-0 text-amber-100 hover:text-white underline underline-offset-2"
+            title="Prefill input with /reset"
+          >
+            Reset
+          </button>
+        </div>
+      )}
       {rows.map((r) => (
         <div
           key={r.id}

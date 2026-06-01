@@ -12,6 +12,7 @@ from ..backends.base import BackendOptions, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
 from ..config import get_config
 from ..router.fast_path import _has_phi, _has_secret
+from ..router.overrides import parse as parse_override
 from ..router.policy import OverrideRefused, RoutingPolicy
 from ..storage.db import get_db  # noqa: F401  (kept for future use)
 from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
@@ -115,6 +116,17 @@ async def chat_endpoint(
                 spend_blocked = today >= cfg.routing.daily_spend_cap_usd
 
             history_has_phi = _history_has_phi(history_cache)
+            # `/reset` is a one-shot opt-out of the history-PHI gate. It
+            # strips the prefix so the policy's fast-path / classifier sees
+            # the clean prompt. Routing then runs normally — `/reset` alone
+            # doesn't pick a backend.
+            reset_override = parse_override(user_text)
+            if reset_override.bypass_history_phi:
+                history_has_phi = False
+                cleaned = reset_override.stripped_text or ""
+                history_cache[-1] = Message(
+                    role="user", content=cleaned, images=attachments or None
+                )
             decide_task = asyncio.create_task(
                 policy.decide(
                     history_cache,
@@ -159,7 +171,7 @@ async def chat_endpoint(
                 decision=decision_payload,
                 timings={"classify_ms": t_classify_ms},
             )
-            await _send(ws, {"type": "routing", **decision_payload})
+            await _send(ws, {"type": "routing", "decision_id": decision_id, **decision_payload})
 
             options = BackendOptions(
                 lora_variant=decision.lora_variant,

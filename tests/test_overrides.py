@@ -159,3 +159,31 @@ async def test_think_override_routes_to_anthropic(make_policy):
     history = [Message(role="user", content="/think hard problem")]
     decision = await policy.decide(history)
     assert decision.backend.name == "anthropic"
+
+
+# ---- /reset (v0.2.11) ----
+
+
+def test_reset_parses_with_bypass_flag():
+    r = parse("/reset what is 2+2")
+    assert r.forced_backend is None
+    assert r.bypass_history_phi is True
+    assert r.stripped_text == "what is 2+2"
+
+
+def test_reset_alone_strips_to_empty():
+    r = parse("/reset")
+    assert r.bypass_history_phi is True
+    assert r.stripped_text == ""
+
+
+def test_reset_case_insensitive():
+    assert parse("/RESET hi").bypass_history_phi is True
+
+
+def test_non_reset_commands_do_not_set_bypass():
+    assert parse("/cloud hi").bypass_history_phi is False
+    assert parse("/local hi").bypass_history_phi is False
+    assert parse("/image cat").bypass_history_phi is False
+    assert parse("/think x").bypass_history_phi is False
+    assert parse("hello").bypass_history_phi is False

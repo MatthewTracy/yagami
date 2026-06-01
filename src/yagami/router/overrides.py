@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_PATTERN = re.compile(r"^/(cloud|claude|local|ollama|image|think|code)\b\s*", re.IGNORECASE)
+_PATTERN = re.compile(r"^/(cloud|claude|local|ollama|image|think|code|reset)\b\s*", re.IGNORECASE)
 
 
 @dataclass
@@ -19,6 +19,7 @@ class OverrideResult:
     hint_intent: str | None  # "code", "image", or None
     hint_complex: bool  # True if /think
     stripped_text: str  # user text with the command prefix removed
+    bypass_history_phi: bool = False  # /reset — one-shot opt-out of history-PHI gate
 
 
 def parse(text: str) -> OverrideResult:
@@ -38,4 +39,9 @@ def parse(text: str) -> OverrideResult:
         return OverrideResult("anthropic", None, True, remaining)
     if cmd == "code":
         return OverrideResult("ollama", "code", False, remaining)
+    if cmd == "reset":
+        # One-shot bypass of the history-PHI check for THIS turn only. The
+        # next turn re-evaluates. Doesn't force a backend — normal routing
+        # applies to the stripped message.
+        return OverrideResult(None, None, False, remaining, bypass_history_phi=True)
     return OverrideResult(None, None, False, text)

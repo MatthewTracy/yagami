@@ -36,11 +36,20 @@ CODE_FIXTURES = [
 
 IMAGE_FIXTURES = [
     "draw a red sailboat",
-    "image of a forest",
-    "picture of mars",
+    "show me an image of a forest",
+    "generate a picture of mars",
     "/image cat",
     "generate an image of a dog",
     "paint me a sunrise",
+]
+
+# v0.2.11: bare "picture of X" / "image of X" must NOT bypass — they have
+# legitimate non-image uses ("tell me about the picture of Dorian Gray",
+# "the image of America in the 1950s"). The classifier disambiguates.
+IMAGE_REFERENCE_FIXTURES = [
+    "tell me about the picture of Dorian Gray",
+    "what does the image of America in the 1950s say about the time",
+    "the picture above represents what",
 ]
 
 # Imperative requests (including typos) that should always fall through to
@@ -110,6 +119,48 @@ def test_non_image_imperative_falls_through(prompt: str):
     assert c is None or c.intent == Intent.IMAGE, (
         f"Non-image imperative bypassed to wrong intent {c.intent if c else None}: {prompt[:60]}"
     )
+
+
+@pytest.mark.parametrize("prompt", IMAGE_REFERENCE_FIXTURES)
+def test_image_reference_does_not_bypass_to_image(prompt: str):
+    """v0.2.11 regression guard: 'tell me about the picture of X' was
+    wrongly bypassing to image-gen because of the bare 'picture of' marker."""
+    c = can_bypass(prompt)
+    assert c is None or c.intent != Intent.IMAGE, (
+        f"Literary/reference 'picture of' wrongly bypassed to IMAGE: {prompt[:60]}"
+    )
+
+
+CREATIVE_FIXTURES = [
+    "write a short poem about the ocean",
+    "tell me a 2-paragraph story about a lost robot",
+    "compose a haiku for me",
+    "write a sonnet about autumn",
+]
+
+
+@pytest.mark.parametrize("prompt", CREATIVE_FIXTURES)
+def test_creative_falls_through_to_classifier(prompt: str):
+    """v0.2.11: creative prompts must reach the classifier so they get the
+    'creative' intent label, even though they're short and unmarked."""
+    c = can_bypass(prompt)
+    assert c is None, f"Creative prompt wrongly bypassed: {prompt!r} -> {c}"
+
+
+COMPLEX_REASONING_FIXTURES = [
+    "Prove that the halting problem is undecidable.",
+    "Walk me through the trade-offs of CRDTs vs OT.",
+    "Compare and contrast eventual vs strong consistency.",
+    "Derive the closed-form solution.",
+]
+
+
+@pytest.mark.parametrize("prompt", COMPLEX_REASONING_FIXTURES)
+def test_complex_reasoning_falls_through_to_classifier(prompt: str):
+    """v0.2.11: short proof/derivation/trade-off prompts must reach the
+    classifier so they get tagged complex_reasoning, high."""
+    c = can_bypass(prompt)
+    assert c is None, f"Complex-reasoning prompt wrongly bypassed: {prompt!r} -> {c}"
 
 
 @pytest.mark.parametrize(
