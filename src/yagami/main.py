@@ -15,11 +15,7 @@ from .api import decisions as decisions_api
 from .api import ingest as ingest_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
-from .backends.anthropic import ClaudeBackend
-from .backends.base import Backend
-from .backends.echo import EchoBackend
-from .backends.ollama import OllamaBackend
-from .backends.stability import StabilityImageBackend
+from .backends.registry import build_all
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint
 from . import secrets
@@ -45,21 +41,16 @@ def build_app() -> FastAPI:
     sessions = SessionStore()
     db_path = _project_root() / "yagami.db"
 
-    anthropic_key = secrets.get("ANTHROPIC_API_KEY")
-    stability_key = secrets.get("STABILITY_API_KEY")
-
-    backends: dict[str, Backend] = {
-        "echo": EchoBackend(),
-        "ollama": OllamaBackend(cfg.ollama),
-    }
-    if anthropic_key:
-        backends["anthropic"] = ClaudeBackend(cfg.anthropic, anthropic_key)
-    else:
-        log.warning("ANTHROPIC_API_KEY not in keyring or env; Claude backend disabled")
-    if stability_key:
-        backends["stability"] = StabilityImageBackend(cfg.stability, stability_key)
-    else:
-        log.warning("STABILITY_API_KEY not in keyring or env; Stability backend disabled")
+    # Backend registry: discovers every module under yagami.backends/, calls
+    # each one's build(cfg, secrets.get) and keeps the non-None results.
+    # See backends/registry.py — adding a new backend is one new file, no
+    # main.py edit.
+    backends = build_all(cfg, secrets.get)
+    expected = {"ollama", "echo", "anthropic", "stability", "openai", "llama_cpp"}
+    missing = expected - set(backends.keys())
+    if missing:
+        log.info("backends not loaded: %s (missing key or model)", sorted(missing))
+    log.info("backends loaded: %s", sorted(backends.keys()))
 
     classifier = OllamaJSONClassifier(cfg.ollama)
     policy = RoutingPolicy(config=cfg.routing, backends=backends, classifier=classifier)

@@ -4,14 +4,29 @@ from typing import AsyncIterator
 
 from anthropic import AsyncAnthropic, APIError
 
-from ..config import AnthropicConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message
+from ..config import AnthropicConfig, YagamiConfig
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+
+
+def build(cfg: YagamiConfig, secrets_get) -> "ClaudeBackend | None":
+    key = secrets_get("ANTHROPIC_API_KEY")
+    if not key:
+        return None
+    return ClaudeBackend(cfg.anthropic, key)
 
 
 class ClaudeBackend(Backend):
     name = "anthropic"
-    capabilities = {Capability.TEXT, Capability.LONG_CONTEXT, Capability.CODE, Capability.VISION}
+    capabilities = {
+        Capability.TEXT,
+        Capability.LONG_CONTEXT,
+        Capability.CODE,
+        Capability.VISION,
+        Capability.TOOLS,
+    }
     is_local = False
+    # Sonnet 4.6 pricing as of 2026-06. Update when switching to Opus 4.8.
+    pricing = Pricing(input_per_million_tokens=3.0, output_per_million_tokens=15.0)
 
     def __init__(self, config: AnthropicConfig, api_key: str) -> None:
         self._config = config

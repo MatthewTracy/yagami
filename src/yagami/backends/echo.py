@@ -3,13 +3,19 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator
 
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message
+from ..config import YagamiConfig
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+
+
+def build(_cfg: YagamiConfig, _secrets_get) -> "EchoBackend":
+    return EchoBackend()
 
 
 class EchoBackend(Backend):
     name = "echo"
     capabilities = {Capability.TEXT}
     is_local = True
+    pricing = Pricing()
 
     async def generate(
         self, messages: list[Message], *, options: BackendOptions

@@ -18,6 +18,7 @@ dependencies = [
     "markdown-it-py>=3.0",
     "Pillow>=10.4",
     "python-multipart>=0.0.20",
+    "openai>=2.0",
     "tomli>=2.0; python_version<'3.11'",
 ]
 

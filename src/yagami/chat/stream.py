@@ -206,7 +206,7 @@ async def chat_endpoint(
             ) + rough_token_count(history_cache[-1].content)
             tokens_out = rough_token_count(assistant_text)
             cost = estimate_cost(
-                decision.backend.name,
+                decision.backend,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 images=image_count_holder[0],

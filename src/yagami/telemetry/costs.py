@@ -1,50 +1,51 @@
 """Cost accounting for backend calls.
 
-Pricing table is per-million-token for text models, per-image for image gen.
-Local backends are free (Ollama). Numbers are approximate and worth keeping
-in sync with each provider's posted prices.
+Each Backend declares its own Pricing on the class (v0.2.13). This module
+is the SQL aggregation layer + the token-count heuristic; pricing math
+lives on the backend so future plugins price themselves.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+from ..backends.base import Backend, Pricing
 from ..storage.db import get_db
 
 
-@dataclass(frozen=True)
-class Pricing:
-    input_per_mtok: float  # USD per 1M input tokens
-    output_per_mtok: float  # USD per 1M output tokens
-    per_image: float  # USD per image generation
-
-
-# Conservative defaults. Local models = $0.
-_PRICING: dict[str, Pricing] = {
-    "echo": Pricing(0.0, 0.0, 0.0),
-    "ollama": Pricing(0.0, 0.0, 0.0),
-    # Claude Sonnet 4.6 list price as of May 2026.
-    "anthropic": Pricing(input_per_mtok=3.0, output_per_mtok=15.0, per_image=0.0),
-    # Stability AI stable-image-core list price.
-    "stability": Pricing(input_per_mtok=0.0, output_per_mtok=0.0, per_image=0.03),
-}
-
-
 def estimate_cost(
-    backend_name: str,
+    backend: Backend | None,
     *,
     tokens_in: int = 0,
     tokens_out: int = 0,
     images: int = 0,
 ) -> float:
-    p = _PRICING.get(backend_name)
-    if p is None:
+    """Estimate USD cost of a call using `backend.pricing`.
+
+    Accepts the backend instance (preferred) or None for "unknown" (returns 0).
+    The legacy string-name path is supported via the secondary function below
+    for callers that don't have the backend object handy.
+    """
+    if backend is None:
         return 0.0
+    p: Pricing = getattr(backend, "pricing", Pricing())
     return (
-        (tokens_in / 1_000_000) * p.input_per_mtok
-        + (tokens_out / 1_000_000) * p.output_per_mtok
-        + images * p.per_image
+        (tokens_in / 1_000_000) * p.input_per_million_tokens
+        + (tokens_out / 1_000_000) * p.output_per_million_tokens
+        + images * p.per_image_usd
     )
+
+
+def estimate_cost_by_name(
+    backend_name: str,
+    backends: dict[str, Backend],
+    *,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    images: int = 0,
+) -> float:
+    """Look up a backend by name from the registered dict; useful when
+    stream.py only has the name in hand."""
+    b = backends.get(backend_name)
+    return estimate_cost(b, tokens_in=tokens_in, tokens_out=tokens_out, images=images)
 
 
 def rough_token_count(text: str) -> int:

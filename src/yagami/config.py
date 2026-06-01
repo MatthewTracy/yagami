@@ -24,6 +24,21 @@ class StabilityConfig(BaseModel):
     model: str = "stable-image-core"
 
 
+class OpenAIConfig(BaseModel):
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4.1-mini"
+    max_tokens: int = 4096
+
+
+class LlamaCppConfig(BaseModel):
+    model_path: str = ""  # absolute path to a GGUF file; empty = disabled
+    n_ctx: int = 8192
+    n_gpu_layers: int = -1  # -1 = all on GPU if CUDA build, else CPU
+    name: str = "llama_cpp"
+
+    model_config = {"protected_namespaces": ()}
+
+
 class RoutingConfig(BaseModel):
     long_message_token_threshold: int = 1500
     phi_must_be_local: bool = True
@@ -36,6 +51,8 @@ class YagamiConfig(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    llama_cpp: LlamaCppConfig = Field(default_factory=LlamaCppConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
 

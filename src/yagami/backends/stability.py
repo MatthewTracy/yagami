@@ -5,14 +5,23 @@ from typing import AsyncIterator
 
 import httpx
 
-from ..config import StabilityConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message
+from ..config import StabilityConfig, YagamiConfig
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+
+
+def build(cfg: YagamiConfig, secrets_get) -> "StabilityImageBackend | None":
+    key = secrets_get("STABILITY_API_KEY")
+    if not key:
+        return None
+    return StabilityImageBackend(cfg.stability, key)
 
 
 class StabilityImageBackend(Backend):
     name = "stability"
     capabilities = {Capability.IMAGE}
     is_local = False
+    # Stable Image Core: $0.03/image as of 2026-06.
+    pricing = Pricing(per_image_usd=0.03)
 
     def __init__(self, config: StabilityConfig, api_key: str) -> None:
         self._config = config
