@@ -47,6 +47,11 @@ class RoutingConfig(BaseModel):
     daily_spend_cap_usd: float = 5.0  # 0 = no cap; cloud routes refused over cap
 
 
+class MemoryConfig(BaseModel):
+    enabled: bool = True
+    embedding_model: str = "all-minilm"  # Ollama model name (384 dim)
+
+
 class YagamiConfig(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
@@ -54,6 +59,7 @@ class YagamiConfig(BaseModel):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     llama_cpp: LlamaCppConfig = Field(default_factory=LlamaCppConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
 
 class Settings(BaseSettings):

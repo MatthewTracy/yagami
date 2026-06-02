@@ -17,7 +17,9 @@ from .api import sessions as sessions_api
 from .api import stats as stats_api
 from .backends.registry import build_all
 from .chat.session import SessionStore
-from .chat.stream import chat_endpoint
+from .chat.stream import chat_endpoint, set_memory_worker
+from .memory.embedder import Embedder
+from .memory.worker import EmbeddingWorker
 from . import secrets
 from .config import get_config, get_settings
 from .router.classifier import OllamaJSONClassifier
@@ -55,11 +57,22 @@ def build_app() -> FastAPI:
     classifier = OllamaJSONClassifier(cfg.ollama)
     policy = RoutingPolicy(config=cfg.routing, backends=backends, classifier=classifier)
 
+    embedding_worker: EmbeddingWorker | None = None
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        nonlocal embedding_worker
         await open_db(db_path)
         sessions_api.set_store(sessions)
+        if cfg.memory.enabled:
+            embedder = Embedder(url=cfg.ollama.url, model=cfg.memory.embedding_model)
+            embedding_worker = EmbeddingWorker(embedder)
+            embedding_worker.start()
+            set_memory_worker(embedding_worker)
+            log.info("memory worker started (model=%s)", cfg.memory.embedding_model)
         yield
+        if embedding_worker is not None:
+            await embedding_worker.stop()
         await close_db()
 
     app = FastAPI(title="Yagami", version="0.2.0", lifespan=lifespan)

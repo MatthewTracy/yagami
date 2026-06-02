@@ -11,13 +11,26 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..backends.base import BackendOptions, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
 from ..config import get_config
+from ..memory import store as memory_store
 from ..router.fast_path import _has_phi, _has_secret
 from ..router.overrides import parse as parse_override
 from ..router.policy import OverrideRefused, RoutingPolicy
+from ..router.schema import Sensitivity
 from ..storage.db import get_db  # noqa: F401  (kept for future use)
 from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
+
+# Module-level worker handle so main.py can register the embedding worker
+# without needing to thread it through every stream invocation.
+_memory_worker: "object | None" = None
+
+
+def set_memory_worker(worker) -> None:
+    """Called from main.py's lifespan once the worker is up."""
+    global _memory_worker
+    _memory_worker = worker
+
 
 _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
 
@@ -256,6 +269,16 @@ async def chat_endpoint(
                 assistant_msg = Message(role="assistant", content=assistant_text)
                 history_cache.append(assistant_msg)
                 await sessions.append(session_id, assistant_msg)
+
+            # v0.2.15 write gate: queue this turn into cross-session memory.
+            # SECRET sessions never write; SIMPLE_QA + short turns skipped.
+            # Async — never blocks the WS, errors are logged not raised.
+            await _maybe_queue_memory(
+                session_id=session_id,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                classification=decision.classification,
+            )
     except Exception:
         log.exception("stream error")
         try:
@@ -320,3 +343,51 @@ async def _stream_tool_loop(
 
 async def _send(ws: WebSocket, msg: dict[str, Any]) -> None:
     await ws.send_text(json.dumps(msg))
+
+
+async def _maybe_queue_memory(
+    *,
+    session_id: str,
+    user_text: str,
+    assistant_text: str,
+    classification: dict,
+) -> None:
+    """Write gate for cross-session memory.
+
+    Rules:
+    - secret sensitivity: nothing written (defense in depth — store also
+      drops these, but skipping here saves the call).
+    - simple_qa + short user message: skip (greetings, thanks, "lol").
+    - everything else: queue both the user turn AND the assistant response,
+      tagged with the turn's classified sensitivity.
+    """
+    try:
+        sens = Sensitivity(classification.get("sensitivity", "none"))
+    except (TypeError, ValueError):
+        sens = Sensitivity.NONE
+    if sens == Sensitivity.SECRET:
+        return
+
+    intent = classification.get("intent", "simple_qa")
+    skip_user = intent == "simple_qa" and len(user_text.strip()) < memory_store.MIN_REMEMBER_CHARS
+
+    try:
+        if not skip_user and user_text:
+            await memory_store.queue_observation(
+                session_id=session_id,
+                role="user",
+                text=user_text,
+                sensitivity=sens,
+            )
+        if assistant_text:
+            await memory_store.queue_observation(
+                session_id=session_id,
+                role="assistant",
+                text=assistant_text,
+                sensitivity=sens,
+            )
+    except Exception:  # noqa: BLE001 — memory failures NEVER break the chat
+        log.exception("memory write failed; chat continues")
+        return
+    if _memory_worker is not None and hasattr(_memory_worker, "nudge"):
+        _memory_worker.nudge()
