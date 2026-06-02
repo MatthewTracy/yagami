@@ -180,17 +180,49 @@ async def chat_endpoint(
             t_gen_start = time.perf_counter()
             first_token_ms_holder: list[int | None] = [None]
             image_count_holder = [0]
-            gen_task = asyncio.create_task(
-                _stream_generation(
-                    ws,
-                    decision.backend,
-                    history_cache,
-                    options,
-                    t_gen_start,
-                    first_token_ms_holder,
-                    image_count_holder,
-                )
+
+            # v0.2.14: when the policy decided this turn needs tools AND the
+            # chosen backend supports them, drive through tool_loop instead
+            # of the plain generate path.
+            from ..backends.anthropic import ClaudeBackend
+            from ..backends.base import Capability
+            from ..router.schema import Sensitivity as _Sens
+
+            use_tool_loop = (
+                decision.use_tools
+                and isinstance(decision.backend, ClaudeBackend)
+                and Capability.TOOLS in decision.backend.capabilities
             )
+
+            if use_tool_loop:
+                try:
+                    sens = _Sens(decision.classification.get("sensitivity", "none"))
+                except (TypeError, ValueError):
+                    sens = _Sens.NONE
+                gen_task = asyncio.create_task(
+                    _stream_tool_loop(
+                        ws,
+                        decision.backend,
+                        history_cache,
+                        options,
+                        t_gen_start,
+                        first_token_ms_holder,
+                        session_id=session_id,
+                        sensitivity=sens,
+                    )
+                )
+            else:
+                gen_task = asyncio.create_task(
+                    _stream_generation(
+                        ws,
+                        decision.backend,
+                        history_cache,
+                        options,
+                        t_gen_start,
+                        first_token_ms_holder,
+                        image_count_holder,
+                    )
+                )
             try:
                 assistant_text = await gen_task
             except asyncio.CancelledError:
@@ -248,6 +280,40 @@ async def _stream_generation(
             pieces.append(chunk["content"])
         elif chunk["type"] == "image_url":
             image_count_holder[0] += 1
+        await _send(ws, chunk)
+    return "".join(pieces)
+
+
+async def _stream_tool_loop(
+    ws,
+    backend,
+    history,
+    options,
+    t_gen_start,
+    first_token_holder,
+    *,
+    session_id,
+    sensitivity,
+) -> str:
+    """v0.2.14: drive the multi-turn tool loop and forward each chunk to the WS.
+
+    Returns the concatenated assistant text (without tool_call chunks) so
+    spend bookkeeping in the caller can rough-count tokens normally.
+    """
+    from ..router import tool_loop
+
+    pieces: list[str] = []
+    async for chunk in tool_loop.run(
+        backend,
+        history,
+        options,
+        session_id=session_id,
+        session_sensitivity=sensitivity,
+    ):
+        if chunk["type"] in ("text", "tool_call") and first_token_holder[0] is None:
+            first_token_holder[0] = int((time.perf_counter() - t_gen_start) * 1000)
+        if chunk["type"] == "text":
+            pieces.append(chunk["content"])
         await _send(ws, chunk)
     return "".join(pieces)
 

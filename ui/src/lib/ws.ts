@@ -10,6 +10,18 @@ export type ServerMsg =
     }
   | { type: "text"; content: string; meta: Record<string, unknown> }
   | { type: "image_url"; content: string; meta: Record<string, unknown> }
+  | {
+      type: "tool_call";
+      content: string;
+      meta: {
+        name: string;
+        input: Record<string, unknown>;
+        ok: boolean;
+        result?: string | null;
+        error?: string | null;
+        artifacts?: Record<string, unknown>;
+      };
+    }
   | { type: "error"; content: string; meta: Record<string, unknown> }
   | { type: "done"; content: string; meta: Record<string, unknown> };
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { connectChat, ClientImage, sendChat, ServerMsg } from "../lib/ws";
 import { AssistantBubble } from "./AssistantBubble";
 import { emitToast } from "./Toast";
+import { ToolCallInfo } from "./ToolCallCard";
 
 const DRAFT_KEY = "yagami:draft";
 
@@ -19,6 +20,7 @@ type Bubble =
       pendingHint?: string;
       backend?: string;
       decisionId?: number;
+      toolCalls?: ToolCallInfo[];
     };
 
 type Routing = {
@@ -248,6 +250,22 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       updateLastAssistant((last) => ({ ...last, image: m.content, pending: false }));
       return;
     }
+    if (m.type === "tool_call") {
+      const info: ToolCallInfo = {
+        name: m.meta.name,
+        input: m.meta.input,
+        ok: m.meta.ok,
+        result: m.meta.result ?? null,
+        error: m.meta.error ?? null,
+        artifacts: m.meta.artifacts,
+      };
+      updateLastAssistant((last) => ({
+        ...last,
+        toolCalls: [...(last.toolCalls ?? []), info],
+        pendingHint: `using ${info.name}`,
+      }));
+      return;
+    }
     if (m.type === "error") {
       emitToast("error", m.content);
       updateLastAssistant((last) => ({ ...last, pending: false }));
@@ -359,6 +377,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
               isLastAssistant={i === lastAssistantIdx && !inFlight}
               onRegenerate={regenerate}
               decisionId={b.decisionId}
+              toolCalls={b.toolCalls}
             />
           );
         })}

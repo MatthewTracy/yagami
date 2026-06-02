@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
+import { ToolCallCard, ToolCallInfo } from "./ToolCallCard";
 
 type Props = {
   text: string;
@@ -12,6 +13,7 @@ type Props = {
   isLastAssistant: boolean;
   onRegenerate?: () => void;
   decisionId?: number;
+  toolCalls?: ToolCallInfo[];
 };
 
 export function AssistantBubble({
@@ -22,6 +24,7 @@ export function AssistantBubble({
   isLastAssistant,
   onRegenerate,
   decisionId,
+  toolCalls,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [rating, setRating] = useState<-1 | 0 | 1>(0);
@@ -54,6 +57,13 @@ export function AssistantBubble({
 
   return (
     <div className="group max-w-2xl px-3 py-2 rounded-lg text-sm bg-zinc-900 border border-zinc-800 relative">
+      {toolCalls && toolCalls.length > 0 && (
+        <div className="mb-1">
+          {toolCalls.map((c, i) => (
+            <ToolCallCard key={i} call={c} />
+          ))}
+        </div>
+      )}
       {pending && !text && (
         <div className="flex items-center gap-2 text-zinc-400">
           <ThinkingDots />

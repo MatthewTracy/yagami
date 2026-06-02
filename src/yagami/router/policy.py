@@ -40,6 +40,7 @@ class RoutingDecision:
     lora_variant: str | None = None
     system_prompt: str | None = None
     effective_user_text: str | None = None  # set when override stripped a prefix
+    use_tools: bool = False  # v0.2.14: stream branches into tool_loop when True
 
 
 class RoutingPolicy:
@@ -261,12 +262,15 @@ class RoutingPolicy:
                     classification=cls_dict,
                 )
 
-        # Cloud TEXT routing — refused if history has PHI, since we'd ship the
-        # prior conversation (containing PHI) to Claude.
-        if (
+        # v0.2.14: needs_tools forces cloud-text route (Anthropic) when
+        # tools are available — local Ollama doesn't yet have a tool loop.
+        # Honors the same spend / history-PHI gates.
+        wants_anthropic = (
             classification.complexity == Complexity.HIGH
             or classification.intent == Intent.COMPLEX_REASONING
-        ) and "anthropic" in self._backends:
+            or classification.needs_tools
+        )
+        if wants_anthropic and "anthropic" in self._backends:
             if spend_blocked:
                 source = source + "+spend-cap"
                 cls_dict["source"] = source
@@ -278,6 +282,7 @@ class RoutingPolicy:
                     backend=self._backends["anthropic"],
                     reason=f"complexity={classification.complexity.value} intent={classification.intent.value} [{source}]",
                     classification=cls_dict,
+                    use_tools=classification.needs_tools,
                 )
 
         lora = (

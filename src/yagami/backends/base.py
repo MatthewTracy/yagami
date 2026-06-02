@@ -50,7 +50,7 @@ class BackendOptions(BaseModel):
 
 
 class BackendChunk(TypedDict):
-    type: Literal["text", "image_url", "error", "done"]
+    type: Literal["text", "image_url", "tool_call", "error", "done"]
     content: str
     meta: dict
 

@@ -14,7 +14,9 @@ log = logging.getLogger("yagami.classifier")
 
 _SYSTEM_PROMPT = """You are a routing classifier. Read the user's most recent message and emit ONLY one strict JSON object matching this exact shape:
 
-{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high"}
+{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high","needs_tools":true|false}
+
+needs_tools: true ONLY when answering requires CALCULATION (arithmetic the model would otherwise approximate, like "14!" or "sqrt(2)*pi") OR a web FETCH of a specific URL/page the user named. Default false — never set true for opinion, summary, code, or "what does X mean" prompts.
 
 Field meanings:
 
@@ -48,6 +50,9 @@ User: write a python function that returns the nth fibonacci number
 Output: {"intent":"code","sensitivity":"none","complexity":"low"}
 
 User: Patient Jane Doe DOB 1962-04-12 has CHF and T2DM. Summarize.
+Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
+
+User: Diagnosis: stage II NSCLC. Plan a 6-cycle carbo/paclitaxel regimen.
 Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
 
 User: My SSN is 123-45-6789, what should I do about identity theft?
@@ -106,6 +111,7 @@ class OllamaJSONClassifier:
                 intent=Intent(parsed.get("intent", "simple_qa")),
                 sensitivity=Sensitivity(parsed.get("sensitivity", "none")),
                 complexity=Complexity(parsed.get("complexity", "low")),
+                needs_tools=bool(parsed.get("needs_tools", False)),
             )
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("classifier failed (%s); raising so policy falls back", exc)
