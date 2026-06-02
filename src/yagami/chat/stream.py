@@ -12,6 +12,7 @@ from ..backends.base import BackendOptions, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
 from ..config import get_config
 from ..memory import store as memory_store
+from ..memory.retriever import Retriever
 from ..router.fast_path import _has_phi, _has_secret
 from ..router.overrides import parse as parse_override
 from ..router.policy import OverrideRefused, RoutingPolicy
@@ -21,15 +22,22 @@ from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
 from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
 
-# Module-level worker handle so main.py can register the embedding worker
-# without needing to thread it through every stream invocation.
+# Module-level worker + retriever handles so main.py can register them
+# without threading through every invocation.
 _memory_worker: "object | None" = None
+_retriever: Retriever | None = None
 
 
 def set_memory_worker(worker) -> None:
     """Called from main.py's lifespan once the worker is up."""
     global _memory_worker
     _memory_worker = worker
+
+
+def set_retriever(retriever: Retriever) -> None:
+    """Called from main.py's lifespan once the retriever is constructed."""
+    global _retriever
+    _retriever = retriever
 
 
 _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
@@ -186,6 +194,61 @@ async def chat_endpoint(
             )
             await _send(ws, {"type": "routing", "decision_id": decision_id, **decision_payload})
 
+            # v0.2.16: cross-session recall. When the classifier flagged
+            # needs_recall and a retriever is registered, fetch top-K
+            # observations from prior sessions and inject them as a system
+            # message ahead of the live turn. Always-PHI-safe: the
+            # retriever drops PHI hits when the current turn isn't itself
+            # PHI; and we skip retrieval entirely on cloud-text turns
+            # whose history already contains PHI (policy refused anyway).
+            try:
+                recall_sens = Sensitivity(decision.classification.get("sensitivity", "none"))
+            except (TypeError, ValueError):
+                recall_sens = Sensitivity.NONE
+            recall_hits = []
+            if decision.classification.get("needs_recall") and _retriever is not None:
+                try:
+                    recall_hits = await _retriever.fetch(
+                        history_cache[-1].content,
+                        k=5,
+                        exclude_session=session_id,
+                        current_sens=recall_sens,
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("retriever failed; continuing without recall")
+                if recall_hits:
+                    snippet = "\n".join(
+                        f"- ({h.role}, {h.session_id[:8]}): {h.text[:400]}" for h in recall_hits
+                    )
+                    recall_msg = Message(
+                        role="system",
+                        content=(
+                            "Cross-session memory — these are excerpts from "
+                            "earlier conversations the user has had with you. "
+                            "Use them only if directly relevant to the current turn.\n\n" + snippet
+                        ),
+                    )
+                    await _send(
+                        ws,
+                        {
+                            "type": "recall",
+                            "content": "",
+                            "meta": {
+                                "hits": [
+                                    {
+                                        "id": h.id,
+                                        "role": h.role,
+                                        "text": h.text[:200],
+                                        "session_id": h.session_id,
+                                        "source": h.source,
+                                        "distance": h.distance,
+                                    }
+                                    for h in recall_hits
+                                ]
+                            },
+                        },
+                    )
+
             options = BackendOptions(
                 lora_variant=decision.lora_variant,
                 system_prompt=decision.system_prompt,
@@ -193,6 +256,13 @@ async def chat_endpoint(
             t_gen_start = time.perf_counter()
             first_token_ms_holder: list[int | None] = [None]
             image_count_holder = [0]
+
+            # v0.2.16: build the per-turn message list for the backend. Recall
+            # context is prepended HERE so it doesn't pollute the session
+            # history_cache that future turns inherit.
+            messages_for_backend: list[Message] = list(history_cache)
+            if recall_hits:
+                messages_for_backend = [recall_msg, *messages_for_backend]
 
             # v0.2.14: when the policy decided this turn needs tools AND the
             # chosen backend supports them, drive through tool_loop instead
@@ -216,7 +286,7 @@ async def chat_endpoint(
                     _stream_tool_loop(
                         ws,
                         decision.backend,
-                        history_cache,
+                        messages_for_backend,
                         options,
                         t_gen_start,
                         first_token_ms_holder,
@@ -229,7 +299,7 @@ async def chat_endpoint(
                     _stream_generation(
                         ws,
                         decision.backend,
-                        history_cache,
+                        messages_for_backend,
                         options,
                         t_gen_start,
                         first_token_ms_holder,

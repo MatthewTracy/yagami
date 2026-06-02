@@ -34,3 +34,8 @@ class Classification(BaseModel):
     # arithmetic / lookups / "fetch" / "calculate" / etc. Routing then
     # branches into the tool_loop when the chosen backend has TOOLS capability.
     needs_tools: bool = False
+    # v0.2.16: opt-in cross-session recall. Classifier sets True for prompts
+    # that REFER to prior conversations ("what did we discuss", "what was my
+    # dog's name", "remember when I mentioned X"). Retriever then fetches
+    # top-K observations and the policy injects them as system messages.
+    needs_recall: bool = False

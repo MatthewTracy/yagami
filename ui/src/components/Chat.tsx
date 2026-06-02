@@ -10,6 +10,15 @@ type Attachment =
   | { kind: "image"; filename: string; preview_url: string; media_type: string; data_b64: string }
   | { kind: "document"; filename: string; text: string; chars: number; truncated: boolean };
 
+export type RecallHit = {
+  id: number;
+  role: string;
+  text: string;
+  session_id: string;
+  source: string;
+  distance: number | null;
+};
+
 type Bubble =
   | { role: "user"; text: string; attachments?: Attachment[] }
   | {
@@ -21,6 +30,7 @@ type Bubble =
       backend?: string;
       decisionId?: number;
       toolCalls?: ToolCallInfo[];
+      recall?: RecallHit[];
     };
 
 type Routing = {
@@ -250,6 +260,11 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       updateLastAssistant((last) => ({ ...last, image: m.content, pending: false }));
       return;
     }
+    if (m.type === "recall") {
+      const hits = m.meta.hits as RecallHit[];
+      updateLastAssistant((last) => ({ ...last, recall: hits }));
+      return;
+    }
     if (m.type === "tool_call") {
       const info: ToolCallInfo = {
         name: m.meta.name,
@@ -378,6 +393,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
               onRegenerate={regenerate}
               decisionId={b.decisionId}
               toolCalls={b.toolCalls}
+              recall={b.recall}
             />
           );
         })}

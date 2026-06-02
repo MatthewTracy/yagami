@@ -14,9 +14,11 @@ log = logging.getLogger("yagami.classifier")
 
 _SYSTEM_PROMPT = """You are a routing classifier. Read the user's most recent message and emit ONLY one strict JSON object matching this exact shape:
 
-{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high","needs_tools":true|false}
+{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high","needs_tools":true|false,"needs_recall":true|false}
 
 needs_tools: true ONLY when answering requires CALCULATION (arithmetic the model would otherwise approximate, like "14!" or "sqrt(2)*pi") OR a web FETCH of a specific URL/page the user named. Default false — never set true for opinion, summary, code, or "what does X mean" prompts.
+
+needs_recall: true ONLY when the user is asking about something they told the assistant earlier — phrases like "what did we discuss", "what was my X", "remember when I said", "do you recall", "what's my favorite", "did I tell you about". Default false — never set true for general world knowledge questions.
 
 Field meanings:
 
@@ -112,6 +114,7 @@ class OllamaJSONClassifier:
                 sensitivity=Sensitivity(parsed.get("sensitivity", "none")),
                 complexity=Complexity(parsed.get("complexity", "low")),
                 needs_tools=bool(parsed.get("needs_tools", False)),
+                needs_recall=bool(parsed.get("needs_recall", False)),
             )
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("classifier failed (%s); raising so policy falls back", exc)

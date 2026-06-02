@@ -23,6 +23,20 @@ export type ServerMsg =
       };
     }
   | { type: "error"; content: string; meta: Record<string, unknown> }
+  | {
+      type: "recall";
+      content: string;
+      meta: {
+        hits: {
+          id: number;
+          role: string;
+          text: string;
+          session_id: string;
+          source: string;
+          distance: number | null;
+        }[];
+      };
+    }
   | { type: "done"; content: string; meta: Record<string, unknown> };
 
 export type ClientImage = { media_type: string; data_b64: string };

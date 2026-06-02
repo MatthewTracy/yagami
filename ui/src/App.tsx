@@ -4,6 +4,7 @@ import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
 import { PrivacyLedger } from "./components/PrivacyLedger";
 import { ConversationsSidebar } from "./components/ConversationsSidebar";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ShortcutSheet } from "./components/ShortcutSheet";
 import { StatsDashboard } from "./components/StatsDashboard";
@@ -23,6 +24,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   function newChat() {
     setLoadSessionId(null);
@@ -46,6 +48,13 @@ export default function App() {
           <span className="font-semibold tracking-tight">Yagami</span>
           <span className="text-xs text-zinc-500">local-first AI orchestrator</span>
           <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setMemoryOpen(true)}
+              title="Cross-session memory"
+              className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
+            >
+              🧠
+            </button>
             <button
               onClick={() => setStatsOpen(true)}
               title="Stats dashboard"
@@ -92,6 +101,7 @@ export default function App() {
       <ShortcutSheet />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <StatsDashboard open={statsOpen} onClose={() => setStatsOpen(false)} />
+      <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
     </div>
   );
 }

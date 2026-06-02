@@ -13,12 +13,14 @@ from .api import config as config_api
 from .api import costs as costs_api
 from .api import decisions as decisions_api
 from .api import ingest as ingest_api
+from .api import memory as memory_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
 from .backends.registry import build_all
 from .chat.session import SessionStore
-from .chat.stream import chat_endpoint, set_memory_worker
+from .chat.stream import chat_endpoint, set_memory_worker, set_retriever
 from .memory.embedder import Embedder
+from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
 from . import secrets
 from .config import get_config, get_settings
@@ -69,7 +71,11 @@ def build_app() -> FastAPI:
             embedding_worker = EmbeddingWorker(embedder)
             embedding_worker.start()
             set_memory_worker(embedding_worker)
-            log.info("memory worker started (model=%s)", cfg.memory.embedding_model)
+            set_retriever(Retriever(embedder))
+            log.info(
+                "memory worker + retriever started (model=%s)",
+                cfg.memory.embedding_model,
+            )
         yield
         if embedding_worker is not None:
             await embedding_worker.stop()
@@ -89,6 +95,7 @@ def build_app() -> FastAPI:
     app.include_router(ingest_api.router)
     app.include_router(stats_api.router)
     app.include_router(config_api.router)
+    app.include_router(memory_api.router)
 
     @app.get("/api/health")
     async def health() -> dict:

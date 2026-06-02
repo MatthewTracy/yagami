@@ -5,6 +5,15 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
 import { ToolCallCard, ToolCallInfo } from "./ToolCallCard";
 
+export type RecallHit = {
+  id: number;
+  role: string;
+  text: string;
+  session_id: string;
+  source: string;
+  distance: number | null;
+};
+
 type Props = {
   text: string;
   image?: string;
@@ -14,6 +23,7 @@ type Props = {
   onRegenerate?: () => void;
   decisionId?: number;
   toolCalls?: ToolCallInfo[];
+  recall?: RecallHit[];
 };
 
 export function AssistantBubble({
@@ -25,9 +35,11 @@ export function AssistantBubble({
   onRegenerate,
   decisionId,
   toolCalls,
+  recall,
 }: Props) {
   const [copied, setCopied] = useState(false);
   const [rating, setRating] = useState<-1 | 0 | 1>(0);
+  const [recallOpen, setRecallOpen] = useState(false);
 
   async function sendFeedback(r: -1 | 1) {
     if (!decisionId) return;
@@ -57,6 +69,36 @@ export function AssistantBubble({
 
   return (
     <div className="group max-w-2xl px-3 py-2 rounded-lg text-sm bg-zinc-900 border border-zinc-800 relative">
+      {recall && recall.length > 0 && (
+        <div className="mb-1">
+          <button
+            onClick={() => setRecallOpen((v) => !v)}
+            className="text-[10px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
+          >
+            <span>🧠</span>
+            <span>
+              recalled {recall.length} from prior session{recall.length === 1 ? "" : "s"}
+            </span>
+            <span className="text-zinc-600">{recallOpen ? "▾" : "▸"}</span>
+          </button>
+          {recallOpen && (
+            <div className="mt-1 space-y-1">
+              {recall.map((h) => (
+                <div
+                  key={h.id}
+                  className="text-[10px] p-1.5 rounded border border-zinc-800 bg-zinc-950/40"
+                >
+                  <div className="text-zinc-500 mb-0.5">
+                    {h.role} · {h.session_id.slice(0, 8)} · {h.source}
+                    {h.distance != null ? ` · d=${h.distance.toFixed(3)}` : ""}
+                  </div>
+                  <div className="text-zinc-300 break-words">{h.text}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {toolCalls && toolCalls.length > 0 && (
         <div className="mb-1">
           {toolCalls.map((c, i) => (

@@ -22,6 +22,10 @@ log = logging.getLogger("yagami.memory.worker")
 
 POLL_INTERVAL_S = 2.0
 BATCH_SIZE = 16
+# Run the TTL vacuum every Nth poll iteration. With POLL_INTERVAL_S=2,
+# 10800 iterations ≈ 6 hours. Cheap (one DELETE), but no reason to do
+# it constantly.
+VACUUM_EVERY_N_TICKS = 10800
 
 
 class EmbeddingWorker:
@@ -54,9 +58,18 @@ class EmbeddingWorker:
 
     async def _loop(self) -> None:
         log.info("memory worker started (model=%s)", self._embedder.model)
+        tick = 0
         while not self._stopping:
             try:
                 processed = await self._drain_once()
+                tick += 1
+                if tick % VACUUM_EVERY_N_TICKS == 0:
+                    try:
+                        n = await store.delete_expired()
+                        if n:
+                            log.info("vacuum: deleted %d expired observations", n)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("vacuum failed: %s", exc)
                 if processed == 0:
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=POLL_INTERVAL_S)
