@@ -13,7 +13,7 @@ Two eval runners, both hit a running Yagami WS endpoint and grade the actual beh
 Server running, Ollama loaded, both API keys set if you want to test cloud routes.
 
 ```powershell
-cd C:\Users\matth\yagami
+cd path\to\yagami
 .venv\Scripts\Activate.ps1
 uvicorn yagami.main:app --host 127.0.0.1 --port 8000
 ```
