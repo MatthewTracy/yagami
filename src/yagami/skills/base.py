@@ -1,12 +1,12 @@
-"""Skill protocol — tools the LLM can call mid-turn.
+"""Skill protocol - tools the LLM can call mid-turn.
 
 Parallels Backend. A Skill describes:
 - name (e.g. "calc.eval")
 - description (shown to the LLM in the tool list)
 - input_schema (JSON Schema; what args the LLM must produce)
-- requires_network (boolean — Skills that hit the network can be gated)
-- sensitivity_ceiling (Sensitivity — if session sensitivity > this, skill refuses)
-- async run(args, ctx) -> SkillResult — MUST NOT raise; surface errors via SkillResult.error
+- requires_network (boolean - Skills that hit the network can be gated)
+- sensitivity_ceiling (Sensitivity - if session sensitivity > this, skill refuses)
+- async run(args, ctx) -> SkillResult - MUST NOT raise; surface errors via SkillResult.error
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class SkillContext:
 
 @dataclass
 class SkillResult:
-    """Always returned — even on error. Skills must NOT raise."""
+    """Always returned - even on error. Skills must NOT raise."""
 
     ok: bool
     content: str = ""  # the value passed back to the LLM as the tool result

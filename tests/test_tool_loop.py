@@ -147,7 +147,7 @@ async def test_one_tool_call_then_final_text():
     assert chunks[0]["meta"]["ok"] is True
     assert chunks[0]["meta"]["result"] == "echoed: hi"
     assert chunks[1]["content"] == "done: echoed: hi"
-    # Two SDK calls — initial + post-tool-result.
+    # Two SDK calls - initial + post-tool-result.
     assert len(client.calls) == 2
 
 

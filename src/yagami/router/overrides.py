@@ -2,7 +2,7 @@
 
 If the user starts their message with one of the recognized commands, the
 classifier is skipped and the named backend is selected directly. PHI / SECRET
-guard still applies — see policy.py.
+guard still applies - see policy.py.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ class OverrideResult:
     hint_intent: str | None  # "code", "image", or None
     hint_complex: bool  # True if /think
     stripped_text: str  # user text with the command prefix removed
-    bypass_history_phi: bool = False  # /reset — one-shot opt-out of history-PHI gate
+    bypass_history_phi: bool = False  # /reset - one-shot opt-out of history-PHI gate
 
 
 def parse(text: str) -> OverrideResult:
@@ -41,7 +41,7 @@ def parse(text: str) -> OverrideResult:
         return OverrideResult("ollama", "code", False, remaining)
     if cmd == "reset":
         # One-shot bypass of the history-PHI check for THIS turn only. The
-        # next turn re-evaluates. Doesn't force a backend — normal routing
+        # next turn re-evaluates. Doesn't force a backend - normal routing
         # applies to the stripped message.
         return OverrideResult(None, None, False, remaining, bypass_history_phi=True)
     return OverrideResult(None, None, False, text)

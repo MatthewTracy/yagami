@@ -18,7 +18,7 @@ def test_anthropic_backend_constructs_vision_content_blocks():
     from yagami.backends.anthropic import ClaudeBackend
     from yagami.config import AnthropicConfig
 
-    # Minimal stub — we won't actually call .messages.stream.
+    # Minimal stub - we won't actually call .messages.stream.
     backend = ClaudeBackend(AnthropicConfig(), api_key="sk-ant-test")
     assert isinstance(backend._client, AsyncAnthropic)
 

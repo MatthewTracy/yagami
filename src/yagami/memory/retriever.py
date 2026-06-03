@@ -4,7 +4,7 @@ Default path: vector search via sqlite-vec over `observations_vec`.
 Fallback path: FTS5 over `observations_fts` for rows whose embeddings
 aren't ready yet (or failed).
 
-PHI quarantine — defense in depth (the source of truth is policy.py, but
+PHI quarantine - defense in depth (the source of truth is policy.py, but
 the retriever ALSO refuses to surface PHI/secret observations when the
 current turn isn't itself PHI). This stops a clinical aside from leaking
 into an unrelated cloud-text turn via injection.
@@ -50,7 +50,7 @@ def _phi_safe_filter(hits: list[Hit], current_sens: Sensitivity) -> list[Hit]:
 
     If the current turn is itself PHI, surfacing prior PHI is fine (the
     chat is staying local). If it isn't, we never want PHI to ride along
-    into a cloud-text call as injected context — the policy enforces
+    into a cloud-text call as injected context - the policy enforces
     cloud-block on history-PHI anyway, but retrieval shouldn't even
     return the rows.
     """
@@ -78,7 +78,7 @@ class Retriever:
         """Return up to `k` observations ranked by vector distance, with
         an FTS5 backfill if the vec table has fewer than k hits.
 
-        `exclude_session` skips rows from the named session — we don't
+        `exclude_session` skips rows from the named session - we don't
         want retrieval to inject *this same session's* messages back at
         the model, since they're already in the chat history.
         """
@@ -125,7 +125,7 @@ class Retriever:
                 (*params, k),
             ) as cur:
                 rows = await cur.fetchall()
-        except Exception as exc:  # noqa: BLE001 — vec query failure shouldn't break retrieval
+        except Exception as exc:  # noqa: BLE001 - vec query failure shouldn't break retrieval
             log.warning("vec search failed: %s; falling back to FTS only", exc)
             return []
         return [
@@ -172,7 +172,7 @@ class Retriever:
                 (*params, k),
             ) as cur:
                 rows = await cur.fetchall()
-        except Exception as exc:  # noqa: BLE001 — FTS MATCH can throw on weird tokens
+        except Exception as exc:  # noqa: BLE001 - FTS MATCH can throw on weird tokens
             log.warning("fts search failed: %s", exc)
             return []
         return [

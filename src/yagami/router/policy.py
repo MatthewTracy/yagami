@@ -67,7 +67,7 @@ class RoutingPolicy:
 
         `history_has_phi` is the caller's read of whether any earlier message in
         the conversation contains PHI/secret content. The current turn is
-        classified independently — no sticky floor — but cloud TEXT backends
+        classified independently - no sticky floor - but cloud TEXT backends
         (anthropic) are refused when history_has_phi, because the whole history
         is sent in those requests. Image gen (stability) ignores history and is
         always safe to route to.
@@ -148,7 +148,7 @@ class RoutingPolicy:
             raise OverrideRefused(f"override backend {override.forced_backend!r} not available")
 
         # Cloud TEXT backends see history. If history has PHI, refuse explicitly
-        # — the user's current prompt may be safe but we'd ship Jenny's note to
+        # - the user's current prompt may be safe but we'd ship Jenny's note to
         # Claude alongside it. Image backends only see the current prompt, so
         # they're safe to route to.
         if backend.name == "anthropic" and history_has_phi:
@@ -249,7 +249,7 @@ class RoutingPolicy:
                 system_prompt=sysprompt,
             )
 
-        # Image gen routes to Stability — it only sends the current user prompt
+        # Image gen routes to Stability - it only sends the current user prompt
         # (no history), so history_has_phi doesn't apply to this path.
         if classification.intent == Intent.IMAGE and "stability" in self._backends:
             if spend_blocked:
@@ -263,7 +263,7 @@ class RoutingPolicy:
                 )
 
         # v0.2.14: needs_tools forces cloud-text route (Anthropic) when
-        # tools are available — local Ollama doesn't yet have a tool loop.
+        # tools are available - local Ollama doesn't yet have a tool loop.
         # Honors the same spend / history-PHI gates.
         wants_anthropic = (
             classification.complexity == Complexity.HIGH

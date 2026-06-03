@@ -21,7 +21,7 @@ PHI_FIXTURES = [
     "G3P2, currently 32w4d, blood pressure trending up.",
     "Address 742 Evergreen Terrace; deliver supplies next Tue.",
     "Hx of prostate ca with PSA 12.4 last draw.",
-    "DEA# AB1234567 — please escribe oxycodone 5mg.",
+    "DEA# AB1234567 - please escribe oxycodone 5mg.",
     "Family hx significant for BRCA1 mutation; counsel re testing?",
     "ICD-10 F33.2 with recent psychiatric hospitalization.",
     "PHN 123456789, 02/12/1980, female, presenting with chest pain.",

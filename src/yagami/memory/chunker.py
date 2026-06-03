@@ -2,11 +2,11 @@
 
 Strategy:
 - Target ~800 tokens per chunk with 100-token overlap.
-- Cap at 8 chunks per message — anything longer probably belongs in a doc
+- Cap at 8 chunks per message - anything longer probably belongs in a doc
   store, not the chat memory. The cap stops one runaway turn from
   monopolizing the embedding worker.
 - Use 4 chars/token from `telemetry.costs.rough_token_count` as the size
-  proxy — same heuristic the cost meter uses, so the budgets line up.
+  proxy - same heuristic the cost meter uses, so the budgets line up.
 - Break on paragraph (\\n\\n) then on sentence (`. ` / `? ` / `! `) when
   possible, else hard-cut at the target boundary.
 """
@@ -57,7 +57,7 @@ def chunk(text: str) -> list[str]:
     for u in units:
         u_len = len(u)
         if u_len > _TARGET_CHARS:
-            # Single unit too big — hard-cut.
+            # Single unit too big - hard-cut.
             if buf:
                 chunks.append(" ".join(buf))
                 buf, buf_len = [], 0

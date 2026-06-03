@@ -7,7 +7,7 @@ from yagami.config import YagamiConfig
 
 def test_discover_finds_all_real_backends():
     builders = registry.discover_builders()
-    # Every backend we ship should expose a build() — the registry can't
+    # Every backend we ship should expose a build() - the registry can't
     # see helpers (base/registry/retry), so they shouldn't appear.
     assert "echo" in builders
     assert "ollama" in builders

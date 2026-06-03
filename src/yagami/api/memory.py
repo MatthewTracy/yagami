@@ -1,11 +1,11 @@
 """Browser-facing endpoints for the cross-session memory store.
 
-GET  /api/memory                — list recent observations, paginated
-GET  /api/memory/search?q=...   — keyword search via FTS5 (no embed call needed)
-DELETE /api/memory/{id}         — remove a single observation + its vec row
-GET  /api/memory/stats          — counts by status, total bytes
+GET  /api/memory                - list recent observations, paginated
+GET  /api/memory/search?q=...   - keyword search via FTS5 (no embed call needed)
+DELETE /api/memory/{id}         - remove a single observation + its vec row
+GET  /api/memory/stats          - counts by status, total bytes
 
-PHI rows are NOT redacted in this endpoint — the user is reviewing their
+PHI rows are NOT redacted in this endpoint - the user is reviewing their
 OWN memory in their OWN browser, on-device. Surfacing PHI to the user
 is correct; surfacing it to a cloud-text turn is not (the retriever's
 PHI quarantine handles that).
@@ -78,7 +78,7 @@ async def search(
             (cleaned, limit),
         ) as cur:
             rows = await cur.fetchall()
-    except Exception as exc:  # noqa: BLE001 — FTS MATCH parser is picky
+    except Exception as exc:  # noqa: BLE001 - FTS MATCH parser is picky
         raise HTTPException(400, f"search failed: {exc}")
     return {
         "observations": [

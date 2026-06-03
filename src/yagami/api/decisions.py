@@ -32,7 +32,7 @@ async def post_feedback(decision_id: int, payload: FeedbackPayload) -> dict:
     async with db.execute("SELECT 1 FROM decisions WHERE id = ?", (decision_id,)) as cur:
         if await cur.fetchone() is None:
             raise HTTPException(404, f"decision {decision_id} not found")
-    # Latest feedback for a decision wins — overwrite any prior row so the
+    # Latest feedback for a decision wins - overwrite any prior row so the
     # user can flip their vote without leaving stale rating data.
     await db.execute("DELETE FROM feedback WHERE decision_id = ?", (decision_id,))
     await db.execute(

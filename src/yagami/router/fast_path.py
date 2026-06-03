@@ -1,7 +1,7 @@
 """Rule-based classifier bypass for the common-case short prompts.
 
 If `can_bypass()` returns a Classification, the policy can skip the LLM classifier
-entirely. Returns None whenever the prompt MIGHT need real classification — anything
+entirely. Returns None whenever the prompt MIGHT need real classification - anything
 not provably safe falls through to the LLM.
 """
 
@@ -89,7 +89,7 @@ _COMPLEX_REASONING_MARKERS = re.compile(
 # Imperative "give me / show me / create a / generate the / ..." phrasings
 # almost always imply intent worth classifying (image, code, file, fetch).
 # Falling through to the LLM also handles typos in image keywords (e.g.
-# "give me a piocture" — fast-path can't fix that, but classifier can).
+# "give me a piocture" - fast-path can't fix that, but classifier can).
 _IMPERATIVE_PATTERN = re.compile(
     r"\b(give|show|make|build|create|generate|fetch|find|render|design|paint|draw|sketch)\s+"
     r"(?:me\s+)?(?:a|an|the|some|me)\b",
@@ -98,13 +98,13 @@ _IMPERATIVE_PATTERN = re.compile(
 
 # High-confidence image creation: verbs that are inherently visual generation.
 # These bypass the classifier and route directly to the image backend.
-# Bare "picture" is intentionally NOT in this list — "tell me about the picture
+# Bare "picture" is intentionally NOT in this list - "tell me about the picture
 # of Dorian Gray" isn't image gen. We require a creation verb + article/me.
 _IMAGE_CREATION_PATTERN = re.compile(
     r"\b(draw|paint|sketch|render|illustrate)\s+(?:me\s+)?(?:a|an|the|some)\b",
     re.IGNORECASE,
 )
-# Explicit image creation. Requires a creation verb — bare "picture of X" /
+# Explicit image creation. Requires a creation verb - bare "picture of X" /
 # "image of X" is NOT enough, because phrases like "tell me about the picture
 # of Dorian Gray" or "the image of America in the 1950s" aren't image-gen.
 _IMAGE_EXPLICIT_PATTERN = re.compile(
@@ -151,15 +151,15 @@ def can_bypass(text: str) -> Classification | None:
     the LLM classifier needs to run.
 
     Three confident bypasses:
-    1. SECRET — regex hit on a credential pattern. Force local, never leaks.
-    2. IMAGE — high-confidence image-creation verb. Route directly to image
+    1. SECRET - regex hit on a credential pattern. Force local, never leaks.
+    2. IMAGE - high-confidence image-creation verb. Route directly to image
        backend without paying the classifier round-trip.
-    3. SIMPLE_QA — short non-special prompt. The common case.
+    3. SIMPLE_QA - short non-special prompt. The common case.
     """
     if not text:
         return None
 
-    # Secrets ALWAYS take precedence — the secret regex is high-precision
+    # Secrets ALWAYS take precedence - the secret regex is high-precision
     # (API key formats). Force local regardless of message length.
     if _has_secret(text):
         return Classification(
@@ -168,7 +168,7 @@ def can_bypass(text: str) -> Classification | None:
             complexity=Complexity.LOW,
         )
 
-    # Explicit image creation — route to image backend without the LLM call.
+    # Explicit image creation - route to image backend without the LLM call.
     if _IMAGE_CREATION_PATTERN.search(text) or _IMAGE_EXPLICIT_PATTERN.search(text):
         return Classification(
             intent=Intent.IMAGE,

@@ -29,7 +29,7 @@ function fmtUsd(n: number): string {
 }
 
 function fmtMs(n: number | null): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   if (n < 1000) return `${n}ms`;
   return `${(n / 1000).toFixed(1)}s`;
 }

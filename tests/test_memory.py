@@ -63,7 +63,7 @@ async def test_queue_skips_secret_sessions(memdb):
     ids = await store.queue_observation(
         session_id="s1",
         role="user",
-        text="here is sk-abcdefghijklmnopqrstuvwx — please rotate",
+        text="here is sk-abcdefghijklmnopqrstuvwx - please rotate",
         sensitivity=Sensitivity.SECRET,
     )
     assert ids == []
@@ -235,7 +235,7 @@ async def test_worker_drain_is_idempotent_on_empty(memdb):
 @pytest.mark.asyncio
 async def test_worker_nudge_does_not_raise(memdb):
     w = EmbeddingWorker(FakeEmbedder())
-    # No background task running — nudge should set the event without crashing.
+    # No background task running - nudge should set the event without crashing.
     w.nudge()
     assert w._wake.is_set()
 

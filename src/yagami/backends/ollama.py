@@ -17,7 +17,7 @@ class OllamaBackend(Backend):
     name = "ollama"
     capabilities = {Capability.TEXT, Capability.CODE}
     is_local = True
-    pricing = Pricing()  # local — free
+    pricing = Pricing()  # local - free
 
     def __init__(self, config: OllamaConfig) -> None:
         self._config = config

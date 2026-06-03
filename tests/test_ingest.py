@@ -33,7 +33,7 @@ def test_extract_unsupported_returns_error():
 
 
 def test_extract_pdf_handles_garbage_gracefully():
-    # Not a real PDF — pypdf should raise, we should return an error doc.
+    # Not a real PDF - pypdf should raise, we should return an error doc.
     doc = extract(filename="broken.pdf", mime="application/pdf", blob=b"not really a pdf")
     assert doc.error is not None
     assert doc.text == ""

@@ -5,7 +5,7 @@ URL. Works against api.openai.com out of the box; can also target OpenRouter,
 Groq, Together, Fireworks, etc. by overriding `[openai] base_url` in
 yagami.toml.
 
-Requires OPENAI_API_KEY in the OS keyring (or .env) — see secrets.py.
+Requires OPENAI_API_KEY in the OS keyring (or .env) - see secrets.py.
 """
 
 from __future__ import annotations

@@ -31,7 +31,7 @@ CODE_FIXTURES = [
     "show me the cargo build output",
     "git rebase keeps failing",
     "function add(a, b) { return a + b; } what does this return",
-    "class Foo extends Bar — what's the syntax",
+    "class Foo extends Bar - what's the syntax",
 ]
 
 IMAGE_FIXTURES = [
@@ -43,7 +43,7 @@ IMAGE_FIXTURES = [
     "paint me a sunrise",
 ]
 
-# v0.2.11: bare "picture of X" / "image of X" must NOT bypass — they have
+# v0.2.11: bare "picture of X" / "image of X" must NOT bypass - they have
 # legitimate non-image uses ("tell me about the picture of Dorian Gray",
 # "the image of America in the 1950s"). The classifier disambiguates.
 IMAGE_REFERENCE_FIXTURES = [
@@ -53,9 +53,9 @@ IMAGE_REFERENCE_FIXTURES = [
 ]
 
 # Imperative requests (including typos) that should always fall through to
-# the classifier — fast-path can't tell what the user wants generated.
+# the classifier - fast-path can't tell what the user wants generated.
 IMPERATIVE_FIXTURES = [
-    "Give me a piocture of a boat",  # typo on purpose — was the real-user bug
+    "Give me a piocture of a boat",  # typo on purpose - was the real-user bug
     "give me a picture of a boat",
     "show me the weather",
     "make me a recipe",
@@ -114,7 +114,7 @@ NON_IMAGE_IMPERATIVE_FIXTURES = [
 @pytest.mark.parametrize("prompt", NON_IMAGE_IMPERATIVE_FIXTURES)
 def test_non_image_imperative_falls_through(prompt: str):
     # These are ambiguous (recipe = text, website outline = text, story = text)
-    # so they should NOT bypass — the classifier decides.
+    # so they should NOT bypass - the classifier decides.
     c = can_bypass(prompt)
     assert c is None or c.intent == Intent.IMAGE, (
         f"Non-image imperative bypassed to wrong intent {c.intent if c else None}: {prompt[:60]}"

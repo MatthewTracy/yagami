@@ -224,7 +224,7 @@ async def main() -> int:
         if baseline:
             _, regressed, _ = _print_diff(results, baseline)
         else:
-            print(f"\n(baseline {args.baseline} not found — skipping diff)", file=sys.stderr)
+            print(f"\n(baseline {args.baseline} not found - skipping diff)", file=sys.stderr)
 
     if regressed > 0:
         return 3

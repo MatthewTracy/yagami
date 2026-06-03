@@ -34,3 +34,15 @@ perf_*.csv
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local-only artifacts that should never be committed.
+*.log
+.claude/
+.plans/
+ui/tsconfig.tsbuildinfo
+
+# Python build / coverage artifacts.
+*.egg
+.tox/
+.coverage
+htmlcov/

@@ -47,7 +47,7 @@ def build_app() -> FastAPI:
 
     # Backend registry: discovers every module under yagami.backends/, calls
     # each one's build(cfg, secrets.get) and keeps the non-None results.
-    # See backends/registry.py — adding a new backend is one new file, no
+    # See backends/registry.py - adding a new backend is one new file, no
     # main.py edit.
     backends = build_all(cfg, secrets.get)
     expected = {"ollama", "echo", "anthropic", "stability", "openai", "llama_cpp"}

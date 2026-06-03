@@ -5,7 +5,7 @@ local-first tool. The user opts into specific hosts they trust by editing
 yagami.toml. Default allowlist is empty + Wikipedia (safe encyclopedic
 read-only) so the skill demos out of the box.
 
-PHI-gated: in any session with sensitivity != NONE, web.fetch refuses —
+PHI-gated: in any session with sensitivity != NONE, web.fetch refuses -
 fetching pages can leak the URL (with PHI in the query string) to the
 remote host's logs.
 """
@@ -29,7 +29,7 @@ _MAX_BYTES = 200_000  # truncate response to keep tool result LLM-friendly
 
 
 def _strip_html(html: str) -> str:
-    """Very lightweight HTML → text. Not a parser — drops tags and
+    """Very lightweight HTML → text. Not a parser - drops tags and
     collapses whitespace. Good enough for tool results that the LLM will
     summarize. For richer extraction, swap to readability-lxml later."""
     text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.S | re.I)

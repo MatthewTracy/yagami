@@ -3,7 +3,7 @@ ACTUAL reply for engagement vs refusal. Catches regressions in the PHI system
 prompt (e.g. the model that "describes a unicorn" when asked to generate one,
 or refuses to summarize a clinical note).
 
-Slower than run_routing.py — actually generates tokens. ~30-120 sec/case.
+Slower than run_routing.py - actually generates tokens. ~30-120 sec/case.
 
 Usage:
     python -m evals.run_refusals

@@ -1,6 +1,6 @@
 """Local GGUF backend via llama-cpp-python.
 
-Heavy optional dep — installing llama-cpp-python on Windows with CUDA wants
+Heavy optional dep - installing llama-cpp-python on Windows with CUDA wants
 VS Build Tools + CMake + a CUDA toolkit, and the prebuilt wheels are
 platform-specific. This module lazy-imports so an absent install doesn't
 break uvicorn startup; the backend just reports unhealthy and the registry
@@ -35,7 +35,7 @@ class LlamaCppBackend(Backend):
     name = "llama_cpp"
     capabilities = {Capability.TEXT, Capability.CODE}
     is_local = True
-    pricing = Pricing()  # local — free
+    pricing = Pricing()  # local - free
 
     def __init__(self, config: LlamaCppConfig) -> None:
         self._config = config
@@ -94,11 +94,11 @@ class LlamaCppBackend(Backend):
                 if txt:
                     yield {"type": "text", "content": txt, "meta": {}}
             yield {"type": "done", "content": "", "meta": {}}
-        except Exception as exc:  # noqa: BLE001 — surface ANY llama-cpp error
+        except Exception as exc:  # noqa: BLE001 - surface ANY llama-cpp error
             yield {"type": "error", "content": f"llama_cpp error: {exc}", "meta": {}}
             yield {"type": "done", "content": "", "meta": {}}
 
     async def health(self) -> bool:
         # Only reports healthy when the model file is present. Don't try to
-        # actually load — that allocates VRAM and takes seconds.
+        # actually load - that allocates VRAM and takes seconds.
         return bool(self._config.model_path and Path(self._config.model_path).exists())

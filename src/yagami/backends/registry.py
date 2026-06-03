@@ -2,14 +2,14 @@
 
 Each backend module under `yagami.backends.` declares a `BUILDER` constant
 that the registry calls with (config, secrets-getter) to build the backend
-instance — or returns None if the backend isn't configured (missing API
+instance - or returns None if the backend isn't configured (missing API
 key, missing model file, etc.). main.py loops over the registry instead
 of hardcoding instantiations.
 
 Adding a new backend is two files:
-1. `yagami/backends/<name>.py` — implement the Backend protocol + a
+1. `yagami/backends/<name>.py` - implement the Backend protocol + a
     `build(cfg, secrets_get) -> Backend | None` function.
-2. `config.py` — add a TOML section if the backend needs config.
+2. `config.py` - add a TOML section if the backend needs config.
 
 No edit to main.py or this registry needed.
 """
@@ -42,7 +42,7 @@ _NON_BACKEND_MODULES = {"base", "registry", "retry"}
 def discover_builders() -> dict[str, BackendBuilder]:
     """Find every module under yagami.backends and pick up its `build` fn.
 
-    Modules without a `build` function are silently ignored — they're either
+    Modules without a `build` function are silently ignored - they're either
     helpers (base, registry, retry) or in-progress.
     """
     import yagami.backends as pkg
@@ -67,7 +67,7 @@ def build_all(cfg: YagamiConfig, secrets_get: SecretsGetter) -> dict[str, Backen
     """Discover + instantiate every available backend.
 
     Each builder may return None to indicate "configured to be off" (e.g. no
-    API key). Builders that raise are logged + skipped — never crash startup
+    API key). Builders that raise are logged + skipped - never crash startup
     over one broken backend.
     """
     builders = discover_builders()
@@ -75,12 +75,12 @@ def build_all(cfg: YagamiConfig, secrets_get: SecretsGetter) -> dict[str, Backen
     for mod_name, builder in builders.items():
         try:
             b = builder(cfg, secrets_get)
-        except Exception as exc:  # noqa: BLE001 — never let a backend crash boot
+        except Exception as exc:  # noqa: BLE001 - never let a backend crash boot
             log.warning("backend %s build() raised %s; skipping", mod_name, exc)
             continue
         if b is None:
             continue
-        # Don't trust the module name — use the backend's own .name as the
+        # Don't trust the module name - use the backend's own .name as the
         # registry key. Lets us have e.g. multiple anthropic instances later.
         out[b.name] = b
     return out

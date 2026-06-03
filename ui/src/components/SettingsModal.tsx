@@ -219,7 +219,7 @@ export function SettingsModal({ open, onClose }: Props) {
               <p className="text-[10px] text-zinc-500">
                 Sent to local Ollama whenever a turn is classified as
                 <code className="ml-1 mr-1 px-1 bg-zinc-800">phi_medical</code>.
-                Read-only here — edit{" "}
+                Read-only here - edit{" "}
                 <code className="px-1 bg-zinc-800">src/yagami/router/prompts.py</code>{" "}
                 to change.
               </p>

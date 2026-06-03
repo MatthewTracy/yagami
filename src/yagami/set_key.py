@@ -24,7 +24,7 @@ def main() -> int:
     name = sys.argv[1]
     value = getpass.getpass(f"Paste value for {name} (hidden): ").strip()
     if not value:
-        print("(empty value — aborted)", file=sys.stderr)
+        print("(empty value - aborted)", file=sys.stderr)
         return 1
     secrets.set_(name, value)
     print(f"stored {name} in OS keyring under service 'yagami'")

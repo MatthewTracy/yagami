@@ -25,7 +25,7 @@ _DAY_MS = 24 * 60 * 60 * 1000
 TTL_PHI_MS = 7 * _DAY_MS
 TTL_DEFAULT_MS = 90 * _DAY_MS
 
-# Don't store anything shorter than this — captures "thanks", "lol", "ok"
+# Don't store anything shorter than this - captures "thanks", "lol", "ok"
 # without paying a row + embedding for them.
 MIN_REMEMBER_CHARS = 20
 
@@ -127,7 +127,7 @@ async def write_embeddings(rows: Iterable[tuple[int, list[float] | None]]) -> No
                 "UPDATE observations SET embedding_status='ready' WHERE id=?",
                 (obs_id,),
             )
-        except Exception as exc:  # noqa: BLE001 — vec insert failure shouldn't crash
+        except Exception as exc:  # noqa: BLE001 - vec insert failure shouldn't crash
             log.warning("vec insert failed for obs %s: %s", obs_id, exc)
             await db.execute(
                 "UPDATE observations SET embedding_status='failed' WHERE id=?",
@@ -137,7 +137,7 @@ async def write_embeddings(rows: Iterable[tuple[int, list[float] | None]]) -> No
 
 
 async def count_by_status() -> dict[str, int]:
-    """Diagnostic — how many rows in each embedding state."""
+    """Diagnostic - how many rows in each embedding state."""
     db = get_db()
     out: dict[str, int] = {}
     async with db.execute(

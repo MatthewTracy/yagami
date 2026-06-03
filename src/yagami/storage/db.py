@@ -27,7 +27,7 @@ async def open_db(path: Path) -> aiosqlite.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = await aiosqlite.connect(str(path))
     conn.row_factory = aiosqlite.Row
-    # Load sqlite-vec extension before migrations — they create vec0 virtual
+    # Load sqlite-vec extension before migrations - they create vec0 virtual
     # tables. Silently no-op if the package isn't installed (memory features
     # degrade to FTS5 / disabled).
     await _load_sqlite_vec(conn)
@@ -46,7 +46,7 @@ async def _load_sqlite_vec(conn: aiosqlite.Connection) -> None:
 
     aiosqlite runs the underlying sqlite3.Connection on its own worker
     thread; we must call into it via aiosqlite's async wrappers (or
-    `_execute`) — touching `._conn` from another thread raises
+    `_execute`) - touching `._conn` from another thread raises
     "SQLite objects created in a thread can only be used in that same thread".
     """
     try:
@@ -58,7 +58,7 @@ async def _load_sqlite_vec(conn: aiosqlite.Connection) -> None:
         await conn.enable_load_extension(True)
         await conn.load_extension(sqlite_vec.loadable_path())
         await conn.enable_load_extension(False)
-    except Exception as exc:  # noqa: BLE001 — extension load can fail many ways
+    except Exception as exc:  # noqa: BLE001 - extension load can fail many ways
         log.warning("failed to load sqlite-vec: %s; vector memory disabled", exc)
 
 

@@ -7,7 +7,7 @@ skill, append the assistant's tool_use turn + a user turn carrying the
 tool_results, then iterate. Hard cap at MAX_TURNS so a confused model
 can't infinite-loop.
 
-Skill execution is concurrent within a single turn — multiple tool_use
+Skill execution is concurrent within a single turn - multiple tool_use
 blocks in one response run in parallel via asyncio.gather. Each tool's
 result yields its own `tool_call` chunk on the WebSocket so the UI can
 render an inline card before the next text turn arrives.
@@ -46,7 +46,7 @@ async def _run_skill(skill: Skill, args: dict, ctx: SkillContext) -> SkillResult
         )
     try:
         return await skill.run(args, ctx)
-    except Exception as exc:  # noqa: BLE001 — skills must never raise; defense in depth
+    except Exception as exc:  # noqa: BLE001 - skills must never raise; defense in depth
         log.warning("skill %s raised %s; treating as error", skill.name, exc)
         return SkillResult(ok=False, error=f"unexpected: {exc}")
 
@@ -75,7 +75,7 @@ async def run(
     skills_map = skills if skills is not None else discover_skills()
     tools = to_anthropic_tools(list(skills_map.values()))
     if not tools:
-        # Nothing to do — degrade to plain generate.
+        # Nothing to do - degrade to plain generate.
         async for chunk in backend.generate(messages, options=options):
             yield chunk
         return
@@ -122,7 +122,7 @@ async def run(
 
         # We don't stream tool-use turns because we need the complete tool_use
         # block before we can run the skill. Streaming the FINAL text turn
-        # would be nicer; punt on that for now — non-streaming Messages.create
+        # would be nicer; punt on that for now - non-streaming Messages.create
         # still returns within seconds for the small payloads tools produce.
         try:
             resp = await backend._client.messages.create(**kwargs)

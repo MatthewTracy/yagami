@@ -1,9 +1,9 @@
-"""Safe math evaluator — handles arithmetic without spawning Python's full eval.
+"""Safe math evaluator - handles arithmetic without spawning Python's full eval.
 
 Uses Python's `ast.parse` to walk a literal expression tree, allowing only
 numbers, basic operators, and a small whitelist of math functions. Refuses
 attribute access, function calls outside the whitelist, names, comprehensions,
-generators — anything that could escape into the wider runtime.
+generators - anything that could escape into the wider runtime.
 """
 
 from __future__ import annotations

@@ -2,13 +2,13 @@
 
 GET returns the current config plus a `defaults` snapshot so the UI can
 show "reset to default" affordances. Secrets are never in this file (they
-live in the OS keyring) — there is nothing to redact, but if the config
+live in the OS keyring) - there is nothing to redact, but if the config
 schema ever grows a secret-like field, redact it here before returning.
 
 PUT accepts a partial JSON patch (any subset of YagamiConfig fields).
 Validates against the full pydantic schema after merging. On success,
 writes the file, invalidates the get_config LRU cache, and returns the
-new config. Live FastAPI does NOT auto-reload the backends — the next
+new config. Live FastAPI does NOT auto-reload the backends - the next
 turn picks up routing.* settings; model URL / API key changes need a
 process restart.
 """
@@ -35,7 +35,7 @@ def _config_payload() -> dict:
         "notes": {
             "phi_must_be_local": (
                 "Locked on. Disabling would let PHI prompts reach cloud "
-                "backends — defeats the local-first guarantee."
+                "backends - defeats the local-first guarantee."
             ),
             "live_reload": (
                 "Routing settings (default_backend, daily_spend_cap_usd, "
@@ -52,7 +52,7 @@ async def get_config_endpoint() -> dict:
 
 
 class ConfigPatch(BaseModel):
-    """Loose patch shape — any field is optional. The server merges and
+    """Loose patch shape - any field is optional. The server merges and
     re-validates against the full YagamiConfig pydantic model before
     persisting."""
 
@@ -69,7 +69,7 @@ async def put_config(patch: ConfigPatch) -> dict:
     for section, body in patch.model_dump(exclude_none=True).items():
         merged.setdefault(section, {}).update(body)
 
-    # Always pin phi_must_be_local on — defense in depth in case the UI
+    # Always pin phi_must_be_local on - defense in depth in case the UI
     # somehow PUTs it false despite the locked toggle.
     merged.setdefault("routing", {})["phi_must_be_local"] = True
 

@@ -1,6 +1,6 @@
 """Aggregate stats over the decisions table.
 
-Pure SQL — no LLM calls, no per-turn cost. Lets the user (and future
+Pure SQL - no LLM calls, no per-turn cost. Lets the user (and future
 dashboard) see "where did my money go?" / "which backend do I actually use?"
 without reading raw rows.
 """

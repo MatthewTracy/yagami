@@ -1,11 +1,11 @@
 """Embedding client backed by Ollama's `/api/embeddings` endpoint.
 
-Reuses the already-hot Ollama daemon — no torch dep, no second model server.
+Reuses the already-hot Ollama daemon - no torch dep, no second model server.
 Default model is `all-minilm` (384 dim, ~45MB), picked because it fits in
 constrained disk and is one of Ollama's smallest decent embedding models.
 
 Swap the model via [memory] embedding_model in yagami.toml. Vector schema
-(observations_vec) is float[384] — changing the dim requires a migration.
+(observations_vec) is float[384] - changing the dim requires a migration.
 """
 
 from __future__ import annotations

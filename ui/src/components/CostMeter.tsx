@@ -52,7 +52,7 @@ export function CostMeter({ sessionId, refreshKey }: Props) {
           <span>cap</span>
           <span>
             {fmtUsd(c.daily_cap_usd)}
-            {c.cap_exceeded ? " — cloud blocked" : ""}
+            {c.cap_exceeded ? " - cloud blocked" : ""}
           </span>
         </div>
       )}

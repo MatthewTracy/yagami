@@ -32,11 +32,11 @@
 {"category": "phi_acronym_only", "prompt": "Can you review this PHI", "expected_backend": "ollama", "expected_sensitivity": "none"}
 {"category": "phi_acronym_only", "prompt": "What does PHI stand for", "expected_backend": "ollama", "expected_sensitivity": "none"}
 
-# Long input but a TRIVIAL task — should stay local. Quality envelope rule:
+# Long input but a TRIVIAL task - should stay local. Quality envelope rule:
 # Ollama can summarize and answer factual Qs from long context just fine.
 {"category": "long_simple_task", "prompt": "Please summarize this email and answer: what's the action item?\n\nFrom: Alex\nTo: team\nSubject: Q2 status\n\nHi all, attached are the Q2 numbers. We hit 92% of plan on the consumer line; enterprise dragged at 78% mostly because the EMEA region had two large deals slip into Q3 (Acme and Globex, both committed for July). Net revenue $14.2M, gross margin 67%, opex $6.1M which is +4% YoY because of the two new hires in platform. Cash position is healthy at 14 months runway. Next quarter's board meeting is July 23, please review the materials by July 18 and send your one-page region summaries to Pat by July 15. Note: I'm out July 1-7 (Sara is acting CFO). - Alex", "expected_backend": "ollama", "expected_sensitivity": "none"}
 
-# Genuinely hard reasoning — short input, but needs Claude.
+# Genuinely hard reasoning - short input, but needs Claude.
 {"category": "complex_reasoning", "prompt": "Walk me through the trade-offs between optimistic and pessimistic concurrency control in distributed databases, with concrete failure modes for each.", "expected_backend": "anthropic", "expected_sensitivity": "none"}
 {"category": "complex_reasoning", "prompt": "Design a rate limiter that survives a 10x traffic spike without dropping legitimate requests; cover algorithm, data store, and failure modes.", "expected_backend": "anthropic", "expected_sensitivity": "none"}
 {"category": "complex_reasoning", "prompt": "Prove that the halting problem is undecidable. Cite the diagonalization argument.", "expected_backend": "anthropic", "expected_sensitivity": "none"}
@@ -53,7 +53,7 @@
 {"category": "creative", "prompt": "write a short poem about the ocean", "expected_intent": "creative", "expected_sensitivity": "none"}
 {"category": "creative", "prompt": "tell me a 2-paragraph story about a lost robot", "expected_intent": "creative", "expected_sensitivity": "none"}
 
-# User overrides via leading slash command — these MUST route as the user demanded.
+# User overrides via leading slash command - these MUST route as the user demanded.
 {"category": "slash_override", "prompt": "/cloud explain quantum entanglement in 100 words", "expected_backend": "anthropic"}
 {"category": "slash_override", "prompt": "/claude what's the time complexity of quicksort", "expected_backend": "anthropic"}
 {"category": "slash_override", "prompt": "/local what is 2+2", "expected_backend": "ollama"}

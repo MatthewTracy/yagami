@@ -16,9 +16,9 @@ _SYSTEM_PROMPT = """You are a routing classifier. Read the user's most recent me
 
 {"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high","needs_tools":true|false,"needs_recall":true|false}
 
-needs_tools: true ONLY when answering requires CALCULATION (arithmetic the model would otherwise approximate, like "14!" or "sqrt(2)*pi") OR a web FETCH of a specific URL/page the user named. Default false — never set true for opinion, summary, code, or "what does X mean" prompts.
+needs_tools: true ONLY when answering requires CALCULATION (arithmetic the model would otherwise approximate, like "14!" or "sqrt(2)*pi") OR a web FETCH of a specific URL/page the user named. Default false - never set true for opinion, summary, code, or "what does X mean" prompts.
 
-needs_recall: true ONLY when the user is asking about something they told the assistant earlier — phrases like "what did we discuss", "what was my X", "remember when I said", "do you recall", "what's my favorite", "did I tell you about". Default false — never set true for general world knowledge questions.
+needs_recall: true ONLY when the user is asking about something they told the assistant earlier - phrases like "what did we discuss", "what was my X", "remember when I said", "do you recall", "what's my favorite", "did I tell you about". Default false - never set true for general world knowledge questions.
 
 Field meanings:
 
@@ -33,7 +33,7 @@ Field meanings:
 - sensitivity.secret => API keys (sk-..., ghp_..., AKIA..., JWTs), passwords, credentials.
 - sensitivity.none => none of the above.
 
-- complexity.high => genuinely hard task that needs careful multi-step reasoning. Long input alone does NOT mean high — summarizing a long email is low complexity.
+- complexity.high => genuinely hard task that needs careful multi-step reasoning. Long input alone does NOT mean high - summarizing a long email is low complexity.
 - complexity.medium => moderate task.
 - complexity.low => trivial or easy.
 

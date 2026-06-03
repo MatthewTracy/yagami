@@ -2,8 +2,8 @@
 
 Currently supports:
 - text/plain (.txt, .log, .csv, ...)
-- text/markdown (.md) — rendered to plain text
-- application/pdf (.pdf) — pypdf text extraction
+- text/markdown (.md) - rendered to plain text
+- application/pdf (.pdf) - pypdf text extraction
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _extract_pdf(blob: bytes) -> str:
 def _extract_markdown(blob: bytes) -> str:
     # Render the markdown to plain by stripping markup. For chat-context
     # purposes the raw markdown source is actually more useful than rendered
-    # text — preserves structure (headings, lists, links). Just decode.
+    # text - preserves structure (headings, lists, links). Just decode.
     return blob.decode("utf-8", errors="replace")
 
 

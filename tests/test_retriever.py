@@ -16,7 +16,7 @@ def _vec_blob(vec: list[float]) -> bytes:
 
 
 class _FakeEmbedder:
-    """Returns a fixed embedding per text — same text → same vector → distance 0.
+    """Returns a fixed embedding per text - same text → same vector → distance 0.
     Different texts → orthogonal-ish vectors so distance differs."""
 
     def __init__(self) -> None:
@@ -93,7 +93,7 @@ async def test_vec_search_returns_closest(memdb):
     vec_dog = await emb.embed("my dog is mango")
     vec_other = await emb.embed("today the weather is fine")
     await _insert("s1", "user", "my dog is mango", embedding=vec_dog)
-    await _insert("s1", "assistant", "ok, noted — Mango", embedding=vec_other)
+    await _insert("s1", "assistant", "ok, noted - Mango", embedding=vec_other)
 
     r = Retriever(emb)
     hits = await r.fetch("my dog is mango", k=5, exclude_session="s2")
@@ -152,7 +152,7 @@ async def test_phi_quarantine_allows_phi_in_phi_session(memdb):
 @pytest.mark.asyncio
 async def test_fts_fallback_for_pending_rows(memdb):
     emb = _FakeEmbedder()
-    # Insert a row WITHOUT an embedding — it should still appear via FTS.
+    # Insert a row WITHOUT an embedding - it should still appear via FTS.
     await _insert("s1", "user", "I love writing haiku about mango trees", embedding=None)
 
     r = Retriever(emb)
@@ -168,5 +168,5 @@ async def test_fts_handles_quotes_safely(memdb):
     r = Retriever(emb)
     # Double quote in query MUST NOT crash FTS5 MATCH parser.
     hits = await r.fetch('look for "quoted" stuff', k=5, exclude_session="other")
-    # The exact result doesn't matter — just that it didn't throw.
+    # The exact result doesn't matter - just that it didn't throw.
     assert isinstance(hits, list)

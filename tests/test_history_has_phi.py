@@ -22,7 +22,7 @@ def _conv(prior: str, current: str, *, force_classifier: bool = False) -> list[M
 @pytest.mark.asyncio
 async def test_image_route_after_phi_allowed(make_policy):
     """The defining v0.2.10 behavior: PHI in turn 1, image request in turn 3.
-    Stability only sees the current prompt — never history — so it's safe."""
+    Stability only sees the current prompt - never history - so it's safe."""
     policy = make_policy(Classification(intent=Intent.IMAGE, sensitivity=Sensitivity.NONE))
     history = _conv("Patient Jenny DOB 1962-04-12 has CHF", "draw a red sailboat")
     decision = await policy.decide(history, history_has_phi=True)
@@ -103,7 +103,7 @@ async def test_slash_cloud_refused_on_phi_history(make_policy):
 
 @pytest.mark.asyncio
 async def test_slash_image_allowed_on_phi_history(make_policy):
-    """/image works even after PHI — only the prompt is sent to Stability."""
+    """/image works even after PHI - only the prompt is sent to Stability."""
     policy = make_policy(None)
     history = [
         Message(role="user", content="Patient Jenny has BP 158/94, BNP 612"),
@@ -122,6 +122,6 @@ async def test_per_turn_classification_no_floor(make_policy):
     policy = make_policy(Classification(intent=Intent.IMAGE, sensitivity=Sensitivity.NONE))
     history = _conv("Patient Jenny has CHF", "draw a sailboat")
     # Caller passes history_has_phi=False to simulate the "let me decide
-    # per-turn" stance — image gen is always allowed regardless.
+    # per-turn" stance - image gen is always allowed regardless.
     decision = await policy.decide(history, history_has_phi=False)
     assert decision.backend.name == "stability"

@@ -50,7 +50,7 @@ END;
 
 -- sqlite-vec vector store. 384 dim matches all-minilm (v0.2.15 embed model).
 -- If the extension fails to load, this CREATE will error and the whole
--- migration aborts — surfacing the problem at startup instead of silent
+-- migration aborts - surfacing the problem at startup instead of silent
 -- write-path failures later.
 CREATE VIRTUAL TABLE IF NOT EXISTS observations_vec USING vec0(
     embedding float[384]

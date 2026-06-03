@@ -118,7 +118,7 @@ def _serialize_config(cfg: YagamiConfig) -> str:
     """Tiny hand-rolled TOML writer scoped to this config's shape.
 
     We use `tomli_w` indirectly via stdlib `tomllib` for reading; the stdlib
-    has no writer. Adding a dep just for one round-trip isn't worth it —
+    has no writer. Adding a dep just for one round-trip isn't worth it -
     the YagamiConfig shape is fixed and small.
     """
     out: list[str] = []
@@ -129,7 +129,7 @@ def _serialize_config(cfg: YagamiConfig) -> str:
         out.append(f"[{section}]")
         for key, val in body.items():
             if isinstance(val, dict):
-                # Nested table — emit as `[section.key]` block of its own.
+                # Nested table - emit as `[section.key]` block of its own.
                 continue
             out.append(f"{key} = {_format_toml_value(val)}")
         out.append("")

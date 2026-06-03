@@ -6,7 +6,7 @@ batches via the Embedder, and writes back via store.write_embeddings.
 
 Why polling instead of a real queue: the same SQLite DB is the queue.
 Restart-safe (pending survives reboot), no second process, no Redis. The
-trade-off is poll latency — currently every 2s; the write gate also nudges
+trade-off is poll latency - currently every 2s; the write gate also nudges
 the worker after each turn so fresh observations land within ~50ms.
 """
 
@@ -52,7 +52,7 @@ class EmbeddingWorker:
             self._task = None
 
     def nudge(self) -> None:
-        """Hint to the loop that new pending rows exist — wakes it before
+        """Hint to the loop that new pending rows exist - wakes it before
         the next poll. Safe to call from any coroutine."""
         self._wake.set()
 
@@ -78,7 +78,7 @@ class EmbeddingWorker:
                     self._wake.clear()
             except asyncio.CancelledError:
                 break
-            except Exception as exc:  # noqa: BLE001 — never let one bad row kill the loop
+            except Exception as exc:  # noqa: BLE001 - never let one bad row kill the loop
                 log.warning("worker loop iteration raised %s; sleeping", exc)
                 await asyncio.sleep(POLL_INTERVAL_S)
 

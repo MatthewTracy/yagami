@@ -46,7 +46,7 @@ _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
 def _history_has_phi(history: list[Message]) -> bool:
     """True if any earlier message in the chat contains PHI or secret content.
 
-    Skips the LAST user message — that's the CURRENT turn and is classified
+    Skips the LAST user message - that's the CURRENT turn and is classified
     on its own merits. Only looks at prior turns.
     """
     if len(history) < 2:
@@ -139,7 +139,7 @@ async def chat_endpoint(
             history_has_phi = _history_has_phi(history_cache)
             # `/reset` is a one-shot opt-out of the history-PHI gate. It
             # strips the prefix so the policy's fast-path / classifier sees
-            # the clean prompt. Routing then runs normally — `/reset` alone
+            # the clean prompt. Routing then runs normally - `/reset` alone
             # doesn't pick a backend.
             reset_override = parse_override(user_text)
             if reset_override.bypass_history_phi:
@@ -223,7 +223,7 @@ async def chat_endpoint(
                     recall_msg = Message(
                         role="system",
                         content=(
-                            "Cross-session memory — these are excerpts from "
+                            "Cross-session memory - these are excerpts from "
                             "earlier conversations the user has had with you. "
                             "Use them only if directly relevant to the current turn.\n\n" + snippet
                         ),
@@ -342,7 +342,7 @@ async def chat_endpoint(
 
             # v0.2.15 write gate: queue this turn into cross-session memory.
             # SECRET sessions never write; SIMPLE_QA + short turns skipped.
-            # Async — never blocks the WS, errors are logged not raised.
+            # Async - never blocks the WS, errors are logged not raised.
             await _maybe_queue_memory(
                 session_id=session_id,
                 user_text=user_text,
@@ -425,7 +425,7 @@ async def _maybe_queue_memory(
     """Write gate for cross-session memory.
 
     Rules:
-    - secret sensitivity: nothing written (defense in depth — store also
+    - secret sensitivity: nothing written (defense in depth - store also
       drops these, but skipping here saves the call).
     - simple_qa + short user message: skip (greetings, thanks, "lol").
     - everything else: queue both the user turn AND the assistant response,
@@ -456,7 +456,7 @@ async def _maybe_queue_memory(
                 text=assistant_text,
                 sensitivity=sens,
             )
-    except Exception:  # noqa: BLE001 — memory failures NEVER break the chat
+    except Exception:  # noqa: BLE001 - memory failures NEVER break the chat
         log.exception("memory write failed; chat continues")
         return
     if _memory_worker is not None and hasattr(_memory_worker, "nudge"):

@@ -3,7 +3,7 @@
 [ollama]
 url = "http://localhost:11434"
 model = "llama3.2:3b-instruct-q4_K_M"
-# Dedicated classifier — phi4-mini is purpose-trained for structured (JSON)
+# Dedicated classifier - phi4-mini is purpose-trained for structured (JSON)
 # output and consistently outperforms llama3.2:3b on the routing eval.
 classifier_model = "phi4-mini"
 
@@ -23,7 +23,7 @@ default_backend = "ollama"
 daily_spend_cap_usd = 5.0
 
 [routing.lora_variants]
-# PHI-medical now uses a per-request system prompt (router/prompts.py) — no
+# PHI-medical now uses a per-request system prompt (router/prompts.py) - no
 # named variant needed. Uncomment after building any future LoRA-backed variants
 # with `ollama create <name> -f config/Modelfile.<x>`.
 # code = "yagami-code"

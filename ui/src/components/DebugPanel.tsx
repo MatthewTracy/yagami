@@ -9,7 +9,7 @@ export function DebugPanel({ backend, isLocal, reason, classification }: Props) 
   if (!backend) {
     return (
       <div className="text-xs text-zinc-500 p-3 border border-zinc-800 rounded-md">
-        No routing decision yet — send a message.
+        No routing decision yet - send a message.
       </div>
     );
   }

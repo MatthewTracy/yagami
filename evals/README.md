@@ -6,7 +6,7 @@ Two eval runners, both hit a running Yagami WS endpoint and grade the actual beh
 
 - **After any change to** `router/classifier.py`, `router/policy.py`, `router/fast_path.py`, `router/prompts.py`, `config/Modelfile.*`, or the `[routing]` block in `config/yagami.toml`.
 - Before tagging a release.
-- Whenever you find a bad routing decision or a refusal in real use — add the prompt as a fixture, then run.
+- Whenever you find a bad routing decision or a refusal in real use - add the prompt as a fixture, then run.
 
 ## Prereqs
 
@@ -20,9 +20,9 @@ uvicorn yagami.main:app --host 127.0.0.1 --port 8000
 
 In a separate terminal.
 
-## run_routing — fast, routing-decision only
+## run_routing - fast, routing-decision only
 
-Fires every prompt in [fixtures/routing.jsonl](fixtures/routing.jsonl), captures the `routing` chunk (then cancels — no full generation), and asserts:
+Fires every prompt in [fixtures/routing.jsonl](fixtures/routing.jsonl), captures the `routing` chunk (then cancels - no full generation), and asserts:
 
 - `expected_backend` matches.
 - `expected_intent` / `expected_sensitivity` match (if present).
@@ -36,14 +36,14 @@ python -m evals.run_routing --out routing_baseline.json
 
 Exit code 0 = all pass, 2 = at least one failure. Takes ~30s for the full set.
 
-## run_refusals — slow, full generation grader
+## run_refusals - slow, full generation grader
 
 For each prompt in [fixtures/refusals.jsonl](fixtures/refusals.jsonl):
 
 1. Send PHI prompt, capture the full streamed reply.
 2. Assert `is_local: true` (PHI guard).
 3. Assert reply contains **none** of the canned refusal phrases ("I can't provide medical advice", "consult a healthcare professional", etc.).
-4. Assert reply contains **at least N** keywords from `expect_engagement` — proves the model actually engaged with the clinical content instead of dodging.
+4. Assert reply contains **at least N** keywords from `expect_engagement` - proves the model actually engaged with the clinical content instead of dodging.
 
 ```powershell
 python -m evals.run_refusals

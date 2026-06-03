@@ -160,7 +160,7 @@ export function MemoryPanel({ open, onClose }: Props) {
           <div className="text-zinc-400 text-sm py-6 text-center">Loading…</div>
         ) : items.length === 0 ? (
           <div className="text-zinc-400 text-sm py-6 text-center">
-            No observations yet. Have a few conversations and check back —
+            No observations yet. Have a few conversations and check back -
             non-trivial turns are embedded asynchronously.
           </div>
         ) : (

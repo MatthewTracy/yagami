@@ -3,7 +3,7 @@
 Yields the same chunk stream as the underlying backend. If the first chunk(s)
 indicate a known-transient failure (5xx, timeout, rate-limited) before any
 content has been delivered, we silently retry up to N times. Once a `text` or
-`image_url` chunk has been emitted, retries are off — we can't resume.
+`image_url` chunk has been emitted, retries are off - we can't resume.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ async def generate_with_retry(
                         error_chunk = chunk
                 elif chunk["type"] == "done":
                     if error_chunk and not produced_real_content:
-                        # Defer the done — we may retry.
+                        # Defer the done - we may retry.
                         break
                     yield chunk
                     return

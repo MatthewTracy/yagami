@@ -334,7 +334,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   function regenerate() {
     if (!wsRef.current || inFlight) return;
     // Find the last user message; drop the trailing assistant bubble if any;
-    // resend the same content (the server records a new turn — sticky floor
+    // resend the same content (the server records a new turn - sticky floor
     // and force_backend still apply).
     let userText: string | null = null;
     setBubbles((b) => {
@@ -413,7 +413,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={!connected || inFlight || uploading}
-          title="Attach file (PDF, MD, TXT, image) — or drag-drop / paste"
+          title="Attach file (PDF, MD, TXT, image) - or drag-drop / paste"
           className="px-2 py-2 text-zinc-400 hover:text-zinc-100 text-base disabled:opacity-50"
         >
           {uploading ? "…" : "📎"}
