@@ -2,12 +2,12 @@
 
 Usage: python scripts/strip_emdashes.py
 
-Touches: *.py, *.md, *.toml, *.ts, *.tsx, *.sql, *.yml, *.yaml, *.jsonl
-Skips: .venv/, node_modules/, dist/, .git/, ui/dist/
+Touches: *.py, *.md, *.toml, *.ts, *.tsx, *.sql, *.yml, *.yaml, *.jsonl, *.txt
+Skips: .venv/, node_modules/, dist/, .git/, build/, .pytest_cache/
 
 Replacement rules (preserves spacing intent):
-  " - " (space emdash space) -> " - "
-  "-" (emdash with no spaces)   -> "-"
+  ' <U+2014> ' (space em-dash space) -> ' - ' (space hyphen space)
+  '<U+2014>'   (em-dash alone)        -> '-'  (hyphen alone)
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {".venv", "venv", "node_modules", "dist", ".git", "build", ".pytest_cache"}
 EXTS = {".py", ".md", ".toml", ".ts", ".tsx", ".sql", ".yml", ".yaml", ".jsonl", ".txt"}
 
-EM = "-"  # em-dash
+# Escape form for U+2014 so an autoformatter can't quietly collapse a literal
+# em-dash in source back to a plain hyphen and defeat the script.
+EM = "-"
 
 
 def should_skip(p: Path) -> bool:
