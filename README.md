@@ -12,6 +12,10 @@ Most chat UIs assume you've already picked a model. Yagami doesn't. Every turn p
 
 If you've ever wished your chat would just route a "what's 2+2" to your laptop and a "design a rate limiter" to Claude, without you flipping a switch, this is that.
 
+## Demo
+
+https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2
+
 ---
 
 ## What a turn looks like
@@ -41,8 +45,6 @@ You: /image a red sailboat at sunset
 ```
 
 Every routing decision lands in a Privacy Ledger panel with the reasoning and timing. Cloud rows highlight amber. The user prompt is scrubbed of SSN / credit card / email / phone patterns before it touches the ledger DB.
-
-> Screenshot placeholder: a `docs/screenshot.png` is the natural next add. Showing the chat with the Privacy Ledger panel open is the strongest single image.
 
 ---
 
