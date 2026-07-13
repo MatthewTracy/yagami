@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a new backend, skill, or capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [Roadmap](https://github.com/MatthewTracy/yagami#roadmap)
+        in the README first — your idea may already be planned. For a new
+        backend or skill specifically, the README's "Adding your own
+        backend/skill" sections show the pattern; a working PR is often
+        faster than a proposal.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that Yagami doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >
+        A new backend? A new skill? A change to routing policy? Sketch it
+        out as far as you can — even a rough shape helps.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New backend
+        - New skill
+        - Routing / classifier
+        - Memory
+        - UI
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you be willing to open a PR for this?
+      options:
+        - label: Yes, I'd like to implement it myself
+        - label: No, just proposing the idea
