@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.2.16"
+version = "0.3.0"
 description = "Local-first AI orchestrator with intelligent routing between local quantized models and cloud LLMs."
 readme = "README.md"
 license = { text = "MIT" }

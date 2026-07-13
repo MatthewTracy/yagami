@@ -6,7 +6,7 @@ below `0.3.0` were backfilled from commit history — see the README's
 [Roadmap](README.md#roadmap) for what's planned next rather than what's
 shipped.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-13
 
 - OSS project hygiene: CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, issue/PR
   templates.

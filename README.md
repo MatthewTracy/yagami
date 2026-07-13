@@ -541,7 +541,7 @@ Model and URL changes need a uvicorn restart. Routing changes (default backend, 
 
 ## Roadmap
 
-Shipped through v0.2.16 (see [CHANGELOG.md](CHANGELOG.md) for what each version added). Planned:
+Shipped through v0.3.0 (see [CHANGELOG.md](CHANGELOG.md) for what each version added). Planned:
 
 - **v0.5a (partial)** - `kb.recall` shipped, but for a folder-indexed document corpus ([`memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index`), not cross-session chat memory - that's still classifier-driven via `needs_recall`. A `kb.remember` skill (and a `kb.recall` variant over chat memory itself) is still open, so the LLM can choose when to fetch either, not just documents.
 - **v0.5b (partial)** - MCP *client* shipped ([MCP client support](#mcp-client-support)). MCP *server* mount (Yagami exposing itself to other MCP clients) + OAuth for Gmail / Calendar are still open.
