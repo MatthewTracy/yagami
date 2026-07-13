@@ -6,6 +6,34 @@ below `0.3.0` were backfilled from commit history — see the README's
 [Roadmap](README.md#roadmap) for what's planned next rather than what's
 shipped.
 
+## [Unreleased]
+
+### Fixed
+- **PHI-history gate now covers every cloud text backend.** It previously
+  matched `backend.name == "anthropic"` literally, so `/mistral`, `/groq`,
+  `/openrouter`, `/gemini`, and `/openai` (slash or `force_backend`) could
+  ship PHI-containing chat history to those clouds. The gate is now
+  capability-based (cloud + TEXT); image gen stays exempt as before.
+- **Daily spend cap now covers every cloud backend** (same name-list bug),
+  including the fast-path and the default route - a cloud `default_backend`
+  previously bypassed both gates entirely and now falls back to local with
+  an explanatory reason instead.
+- **Profile overrides now affect the live spend gate** - it read the base
+  `[routing]` config instead of the profile-adjusted one.
+- Vision attachments pick the first configured vision-capable backend
+  (anthropic, then gemini/openai/openrouter) instead of hard-requiring
+  anthropic; a clear error is returned when none is configured.
+
+### Added
+- `block_cloud` flag on `[routing]` and per-profile - refuse ALL cloud
+  routes unconditionally. This is the correct way to express a zero-cloud
+  profile; `daily_spend_cap_usd = 0` means *no cap* (the README previously
+  mis-documented it as "no cloud spend").
+
+### Hardened
+- MCP tool calls carry a 60s read timeout so a hung server can't hang a turn.
+- Folder indexing serializes concurrent `POST /api/kb/index` runs.
+
 ## [0.3.0] - 2026-07-13
 
 - OSS project hygiene: CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, issue/PR

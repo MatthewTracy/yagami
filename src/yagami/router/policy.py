@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from ..backends.base import Backend, Message
+from ..backends.base import Backend, Capability, Message
 from ..config import RoutingConfig
 from .fast_path import can_bypass
 from .overrides import OverrideResult, parse as parse_override
@@ -30,6 +30,17 @@ def stickier(a: Sensitivity | None, b: Sensitivity | None) -> Sensitivity:
 
 class OverrideRefused(Exception):
     """User asked for a backend that the policy refuses (e.g. /cloud on PHI)."""
+
+
+def _is_cloud_text(backend: Backend) -> bool:
+    """True for backends that are BOTH cloud-hosted AND receive the chat
+    history (TEXT capability). This is the set the history-PHI gate applies
+    to. Image gen (stability) is cloud but only ever sees the current
+    prompt, so it's deliberately excluded - same behavior the gate has
+    always had, just no longer expressed as `name == "anthropic"`, which
+    silently exempted every OTHER cloud text backend (openai, mistral,
+    groq, openrouter, gemini)."""
+    return not backend.is_local and Capability.TEXT in backend.capabilities
 
 
 @dataclass
@@ -77,26 +88,35 @@ class RoutingPolicy:
         `history_has_phi` is the caller's read of whether any earlier message in
         the conversation contains PHI/secret content. The current turn is
         classified independently - no sticky floor - but cloud TEXT backends
-        (anthropic) are refused when history_has_phi, because the whole history
-        is sent in those requests. Image gen (stability) ignores history and is
-        always safe to route to.
+        (all of them, not just anthropic - see _is_cloud_text) are refused
+        when history_has_phi, because the whole history is sent in those
+        requests. Image gen (stability) ignores history and is always safe
+        to route to.
+
+        `spend_blocked` gates EVERY cloud backend by is_local, regardless of
+        name - it's set by the caller when the daily cap is exceeded or the
+        active profile has block_cloud on.
         """
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
 
         # 1. Slash-command override at the start of the message.
         override = parse_override(last_text, self._backends.keys())
         if override.forced_backend:
-            if spend_blocked and override.forced_backend in ("anthropic", "stability"):
+            target = self._backends.get(override.forced_backend)
+            if spend_blocked and target is not None and not target.is_local:
                 raise OverrideRefused(
-                    f"override refused: daily spend cap reached; {override.forced_backend!r} blocked"
+                    "override refused: cloud routes blocked (daily spend cap reached or "
+                    f"block_cloud active); {override.forced_backend!r} is cloud"
                 )
             return self._apply_override(override, last_text, history_has_phi=history_has_phi)
 
         # 2. Programmatic force_backend (WS field).
         if force_backend:
-            if spend_blocked and force_backend in ("anthropic", "stability"):
+            target = self._backends.get(force_backend)
+            if spend_blocked and target is not None and not target.is_local:
                 raise OverrideRefused(
-                    f"force_backend refused: daily spend cap reached; {force_backend!r} blocked"
+                    "force_backend refused: cloud routes blocked (daily spend cap reached "
+                    f"or block_cloud active); {force_backend!r} is cloud"
                 )
             return self._apply_force_backend(
                 force_backend, last_text, history_has_phi=history_has_phi
@@ -106,7 +126,11 @@ class RoutingPolicy:
         bypass = can_bypass(last_text)
         if bypass is not None:
             return self._apply_rules(
-                bypass, "rules-fast-path", last_text, history_has_phi=history_has_phi
+                bypass,
+                "rules-fast-path",
+                last_text,
+                spend_blocked=spend_blocked,
+                history_has_phi=history_has_phi,
             )
 
         # 4. LLM classifier.
@@ -158,12 +182,13 @@ class RoutingPolicy:
 
         # Cloud TEXT backends see history. If history has PHI, refuse explicitly
         # - the user's current prompt may be safe but we'd ship Jenny's note to
-        # Claude alongside it. Image backends only see the current prompt, so
-        # they're safe to route to.
-        if backend.name == "anthropic" and history_has_phi:
+        # the cloud alongside it. Applies to EVERY cloud text backend, not a
+        # named one. Image backends only see the current prompt, so they're
+        # safe to route to.
+        if _is_cloud_text(backend) and history_has_phi:
             raise OverrideRefused(
-                "override refused: chat history contains PHI; cloud text backend would "
-                "include it in context. Start a new chat or use /local."
+                f"override refused: chat history contains PHI; cloud text backend "
+                f"{backend.name!r} would include it in context. Start a new chat or use /local."
             )
 
         intent = (
@@ -211,7 +236,7 @@ class RoutingPolicy:
                 f"force_backend {name!r} is cloud but content is "
                 f"{sensitive.value}-sensitive; refused"
             )
-        if backend.name == "anthropic" and history_has_phi:
+        if _is_cloud_text(backend) and history_has_phi:
             raise OverrideRefused(
                 f"force_backend {name!r} refused: chat history contains PHI; cloud text "
                 "backend would include it in context. Start a new chat or pick Local."
@@ -298,6 +323,33 @@ class RoutingPolicy:
             self._config.lora_variants.get("code") if classification.intent == Intent.CODE else None
         )
         default = self._backends.get(self._config.default_backend) or self._first_local()
+
+        # The default backend can be cloud (Settings / profiles allow it).
+        # The same gates that protect the explicit-override and escalation
+        # paths apply here too: PHI-tainted history must not ship to a cloud
+        # text backend, and a blocked spend cap must not be billable via the
+        # default route. Degrade to local rather than erroring - the user
+        # didn't ask for cloud by name, so a silent-but-visible fallback
+        # (reason string says why) beats a refusal.
+        if _is_cloud_text(default) and (history_has_phi or spend_blocked):
+            gates = []
+            if history_has_phi:
+                gates.append("history-phi")
+            if spend_blocked:
+                gates.append("spend-cap")
+            fallback = self._preferred_local()
+            cls_dict["source"] = source + "+" + "+".join(g + "-fallback" for g in gates)
+            return RoutingDecision(
+                backend=fallback,
+                reason=(
+                    f"default ({self._config.default_backend}) is cloud but "
+                    f"{'+'.join(gates)} gate active; fell back to local ({fallback.name}) "
+                    f"[{source}]"
+                ),
+                classification=cls_dict,
+                lora_variant=lora,
+            )
+
         why = f"default ({self._config.default_backend}) [{source}"
         if source == "rules-fast-path":
             why += "; short non-PHI non-image non-code"
@@ -324,6 +376,18 @@ class RoutingPolicy:
             else Complexity.LOW
         )
         return Classification(intent=intent, sensitivity=Sensitivity.NONE, complexity=complexity)
+
+    def first_vision_backend(self) -> str | None:
+        """Name of the preferred configured backend that can accept image
+        attachments, or None if none is. Anthropic first for continuity with
+        the old hardcoded behavior, then the other cloud vision backends in
+        a stable order. Used by chat/stream.py when a message carries images
+        and the user didn't force a backend."""
+        for name in ("anthropic", "gemini", "openai", "openrouter"):
+            b = self._backends.get(name)
+            if b is not None and Capability.VISION in b.capabilities:
+                return name
+        return None
 
     def _preferred_local(self) -> Backend:
         default = self._backends.get(self._config.default_backend)

@@ -10,7 +10,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from ..backends.base import BackendOptions, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
-from ..config import get_config
+from ..config import effective_routing, get_config
 from ..memory import store as memory_store
 from ..memory.retriever import Retriever
 from ..router.fast_path import _has_phi, _has_secret
@@ -122,19 +122,40 @@ async def chat_endpoint(
             user_msg = Message(role="user", content=user_text, images=attachments or None)
             history_cache.append(user_msg)
             force_backend = payload.get("force_backend")
-            # Images require a vision-capable backend; only Claude supports vision today.
-            # Force_backend wins for explicit user choice.
+            # Images require a vision-capable backend. Force_backend wins for
+            # explicit user choice; otherwise pick the first configured
+            # vision backend (anthropic preferred, then gemini/openai/
+            # openrouter - see RoutingPolicy.first_vision_backend).
             if attachments and not force_backend:
-                force_backend = "anthropic"
+                force_backend = policy.first_vision_backend()
+                if force_backend is None:
+                    history_cache.pop()  # not persisted; keep cache/DB consistent
+                    await _send(
+                        ws,
+                        {
+                            "type": "error",
+                            "content": (
+                                "no vision-capable backend configured - set an API key for "
+                                "Anthropic, Gemini, OpenAI, or OpenRouter to send images"
+                            ),
+                            "meta": {"refused": True},
+                        },
+                    )
+                    await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
+                    continue
 
             t_start = time.perf_counter()
             append_task = asyncio.create_task(sessions.append(session_id, user_msg))
 
             cfg = get_config()
-            spend_blocked = False
-            if cfg.routing.daily_spend_cap_usd > 0:
+            # The gate reads the EFFECTIVE routing config - [routing] with the
+            # active profile's overrides applied - so a profile's spend-cap
+            # override or block_cloud flag actually bites.
+            eff = effective_routing(cfg)
+            spend_blocked = eff.block_cloud
+            if not spend_blocked and eff.daily_spend_cap_usd > 0:
                 today = await spend_today_usd()
-                spend_blocked = today >= cfg.routing.daily_spend_cap_usd
+                spend_blocked = today >= eff.daily_spend_cap_usd
 
             history_has_phi = _history_has_phi(history_cache)
             # `/reset` is a one-shot opt-out of the history-PHI gate. It

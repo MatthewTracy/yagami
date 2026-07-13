@@ -20,6 +20,7 @@ request latency, not a silent background failure.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
 import time
@@ -31,6 +32,13 @@ from .chunker import chunk
 from .embedder import Embedder
 
 log = logging.getLogger("yagami.memory.documents")
+
+# Serializes whole-folder index runs. Two concurrent POST /api/kb/index
+# calls would otherwise interleave _replace_document's delete-then-insert
+# sequences (every await is a yield point on the shared connection),
+# leaving a file half-old half-new. Indexing is an explicit, infrequent
+# action - queuing the second caller is the right behavior.
+_index_lock = asyncio.Lock()
 
 _SUPPORTED_SUFFIXES = {".pdf", ".md", ".markdown", ".txt", ".log"}
 _MAX_CHARS_PER_FILE = 5_000_000
@@ -97,31 +105,33 @@ async def _replace_document(source_path: str, chunks: list[str], *, embedder: Em
 async def index_folder(folder: Path, *, embedder: Embedder) -> dict:
     """Index every supported file (.pdf/.md/.txt/.log) under `folder`,
     recursively. Re-running is idempotent per file - existing chunks for a
-    source_path are replaced, not duplicated. Returns a summary dict."""
-    files = _iter_files(folder)
-    files_indexed = 0
-    files_skipped = 0
-    chunks_written = 0
-    for path in files:
-        try:
-            blob = path.read_bytes()
-        except OSError as exc:
-            log.warning("failed to read %s: %s", path, exc)
-            files_skipped += 1
-            continue
-        doc = extract(filename=path.name, mime="", blob=blob, max_chars=_MAX_CHARS_PER_FILE)
-        if doc.error or not doc.text:
-            files_skipped += 1
-            continue
-        chunks = chunk(doc.text, max_chunks=_MAX_CHUNKS_PER_FILE)
-        n = await _replace_document(str(path), chunks, embedder=embedder)
-        files_indexed += 1
-        chunks_written += n
-    return {
-        "files_indexed": files_indexed,
-        "files_skipped": files_skipped,
-        "chunks_written": chunks_written,
-    }
+    source_path are replaced, not duplicated. Concurrent calls are
+    serialized by _index_lock. Returns a summary dict."""
+    async with _index_lock:
+        files = _iter_files(folder)
+        files_indexed = 0
+        files_skipped = 0
+        chunks_written = 0
+        for path in files:
+            try:
+                blob = path.read_bytes()
+            except OSError as exc:
+                log.warning("failed to read %s: %s", path, exc)
+                files_skipped += 1
+                continue
+            doc = extract(filename=path.name, mime="", blob=blob, max_chars=_MAX_CHARS_PER_FILE)
+            if doc.error or not doc.text:
+                files_skipped += 1
+                continue
+            chunks = chunk(doc.text, max_chunks=_MAX_CHUNKS_PER_FILE)
+            n = await _replace_document(str(path), chunks, embedder=embedder)
+            files_indexed += 1
+            chunks_written += n
+        return {
+            "files_indexed": files_indexed,
+            "files_skipped": files_skipped,
+            "chunks_written": chunks_written,
+        }
 
 
 async def list_sources() -> list[dict]:

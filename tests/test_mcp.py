@@ -32,9 +32,13 @@ class _FakeSession:
         self._result = result
         self._raise_exc = raise_exc
         self.calls: list[tuple[str, dict]] = []
+        self.last_timeout = None
 
-    async def call_tool(self, name: str, arguments: dict) -> CallToolResult:
+    async def call_tool(
+        self, name: str, arguments: dict, read_timeout_seconds=None
+    ) -> CallToolResult:
         self.calls.append((name, arguments))
+        self.last_timeout = read_timeout_seconds
         if self._raise_exc is not None:
             raise self._raise_exc
         assert self._result is not None
@@ -75,6 +79,10 @@ async def test_adapter_run_returns_text_content():
     assert res.content == "HELLO"
     assert res.artifacts["mcp_server"] == "testserver"
     assert session.calls == [("echo", {"text": "hello"})]
+    # A hung MCP server must not hang the chat turn - every call carries a
+    # bounded read timeout.
+    assert session.last_timeout is not None
+    assert session.last_timeout.total_seconds() > 0
 
 
 @pytest.mark.asyncio
