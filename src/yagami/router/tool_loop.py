@@ -1,16 +1,17 @@
-"""Multi-turn tool-use driver. Anthropic-only for v0.2.14.
+"""Multi-turn tool-use driver for every tools-capable cloud backend.
 
-The shape: each loop iteration calls the Anthropic Messages API with the
-running conversation. If the response is plain text, we stream it and stop.
-If the response includes tool_use content blocks, we run each requested
-skill, append the assistant's tool_use turn + a user turn carrying the
-tool_results, then iterate. Hard cap at MAX_TURNS so a confused model
-can't infinite-loop.
+run() dispatches on wire format: Anthropic gets the Messages-API loop
+(_run_anthropic, the original v0.2.14 implementation), OpenAI-compatible
+backends get the chat-completions loop (_run_openai). Both share the same
+shape: each iteration sends the running conversation; plain text ends the
+loop, tool calls execute the requested skills, append the results, and
+iterate. Hard cap at MAX_TURNS so a confused model can't infinite-loop.
 
-Skill execution is concurrent within a single turn - multiple tool_use
-blocks in one response run in parallel via asyncio.gather. Each tool's
-result yields its own `tool_call` chunk on the WebSocket so the UI can
-render an inline card before the next text turn arrives.
+Skill execution is concurrent within a single turn - multiple tool calls
+in one response run in parallel via asyncio.gather. Each tool's result
+yields its own `tool_call` chunk on the WebSocket so the UI can render an
+inline card before the next text turn arrives. _run_skill (sensitivity
+ceiling + never-raise) is shared by both loops.
 """
 
 from __future__ import annotations
@@ -362,7 +363,12 @@ async def _run_openai(
             except ValueError:
                 return tc, real_name, {}, SkillResult(ok=False, error="malformed tool arguments")
             if skill is None:
-                return tc, real_name, args, SkillResult(ok=False, error=f"unknown skill {real_name!r}")
+                return (
+                    tc,
+                    real_name,
+                    args,
+                    SkillResult(ok=False, error=f"unknown skill {real_name!r}"),
+                )
             return tc, real_name, args, await _run_skill(skill, args, ctx)
 
         results = await asyncio.gather(*[_exec(tc) for tc in tool_calls])

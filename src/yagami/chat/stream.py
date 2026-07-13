@@ -294,9 +294,7 @@ async def chat_endpoint(
             from ..backends.base import Capability
             from ..router.schema import Sensitivity as _Sens
 
-            use_tool_loop = (
-                decision.use_tools and Capability.TOOLS in decision.backend.capabilities
-            )
+            use_tool_loop = decision.use_tools and Capability.TOOLS in decision.backend.capabilities
 
             if use_tool_loop:
                 try:

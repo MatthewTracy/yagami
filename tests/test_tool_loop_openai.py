@@ -180,7 +180,9 @@ async def test_unknown_tool_surfaces_error_result():
                     _Choice(
                         _Msg(
                             tool_calls=[
-                                _ToolCall(id="c1", function=_Fn(name="nope__missing", arguments="{}"))
+                                _ToolCall(
+                                    id="c1", function=_Fn(name="nope__missing", arguments="{}")
+                                )
                             ]
                         )
                     )
@@ -205,7 +207,9 @@ async def test_malformed_arguments_surface_error_not_crash():
                     _Choice(
                         _Msg(
                             tool_calls=[
-                                _ToolCall(id="c1", function=_Fn(name="test__echo", arguments="{not json"))
+                                _ToolCall(
+                                    id="c1", function=_Fn(name="test__echo", arguments="{not json")
+                                )
                             ]
                         )
                     )
@@ -268,7 +272,9 @@ async def test_sensitivity_ceiling_enforced_same_as_anthropic_loop():
                     _Choice(
                         _Msg(
                             tool_calls=[
-                                _ToolCall(id="c1", function=_Fn(name="test__network", arguments="{}"))
+                                _ToolCall(
+                                    id="c1", function=_Fn(name="test__network", arguments="{}")
+                                )
                             ]
                         )
                     )

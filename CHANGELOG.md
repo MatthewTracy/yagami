@@ -6,7 +6,22 @@ below `0.3.0` were backfilled from commit history — see the README's
 [Roadmap](README.md#roadmap) for what's planned next rather than what's
 shipped.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-13
+
+### Added
+- **Tool loop on every OpenAI-compatible cloud backend** - mistral, groq,
+  openrouter, gemini, and openai now run calc.eval / web.fetch / kb.recall /
+  MCP tools, not just Anthropic. Skill names are sanitized for OpenAI's
+  function-name rules ('.' -> '__') and mapped back transparently. The
+  complexity/needs_tools escalation falls back to the first TOOLS-capable
+  cloud backend when Anthropic isn't configured.
+- **memory.remember / memory.recall skills** (completes roadmap v0.5a) -
+  the LLM chooses when to save to and search cross-session chat memory,
+  with the same write gate and PHI quarantine as the automatic paths.
+- **UI catch-up**: Knowledge-base panel (index/list/remove folders from the
+  browser), read-only MCP status tab in Settings, Settings coverage for all
+  five OpenAI-format backends, and backend dropdowns fed by `GET
+  /api/models` instead of a hardcoded list.
 
 ### Fixed
 - **PHI-history gate now covers every cloud text backend.** It previously
