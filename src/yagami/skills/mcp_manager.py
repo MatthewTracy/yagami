@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from datetime import timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -31,6 +32,11 @@ from ..router.schema import Sensitivity
 from .base import Skill, SkillContext, SkillResult
 
 log = logging.getLogger("yagami.skills.mcp")
+
+# Per-call ceiling for remote tool execution. Generous enough for slow tools
+# (a web search, a big file read), small enough that a wedged server can't
+# hold a chat turn hostage.
+CALL_TIMEOUT_S = 60.0
 
 
 @dataclass
@@ -62,7 +68,15 @@ class McpSkillAdapter:
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
         try:
-            result = await self._tool.session.call_tool(self._tool.tool_name, args)
+            # Bounded read timeout: an MCP server that hangs (or a tool that
+            # never returns) must not hang the chat turn forever - the
+            # timeout surfaces as SkillResult(ok=False) like any other
+            # failure, and the tool loop carries on.
+            result = await self._tool.session.call_tool(
+                self._tool.tool_name,
+                args,
+                read_timeout_seconds=timedelta(seconds=CALL_TIMEOUT_S),
+            )
         except Exception as exc:  # noqa: BLE001 - skills must never raise
             return SkillResult(ok=False, error=f"mcp call failed: {exc}")
         text_parts = [
