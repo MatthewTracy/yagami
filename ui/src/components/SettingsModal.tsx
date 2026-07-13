@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { emitToast } from "./Toast";
 
-type Section = "models" | "routing" | "profiles" | "prompts";
+type Section = "models" | "routing" | "profiles" | "mcp" | "prompts";
 
 type ProfileOverrides = {
   daily_spend_cap_usd?: number;
@@ -10,11 +10,18 @@ type ProfileOverrides = {
   block_cloud?: boolean;
 };
 
+type ModelCfg = { model: string; max_tokens: number };
+
 type Cfg = {
   config: {
     ollama: { url: string; model: string; classifier_model: string };
-    anthropic: { model: string; max_tokens: number };
+    anthropic: ModelCfg;
     stability: { model: string };
+    openai: ModelCfg & { base_url: string };
+    mistral: ModelCfg;
+    groq: ModelCfg;
+    openrouter: ModelCfg;
+    gemini: ModelCfg;
     routing: {
       long_message_token_threshold: number;
       phi_must_be_local: boolean;
@@ -31,6 +38,21 @@ type Cfg = {
   notes: { phi_must_be_local: string; live_reload: string };
 };
 
+type McpTool = { server: string; tool: string; description: string };
+
+// Fallback when /api/models is unreachable - matches the shipped backends.
+const FALLBACK_BACKENDS = [
+  "ollama",
+  "anthropic",
+  "openai",
+  "mistral",
+  "groq",
+  "openrouter",
+  "gemini",
+  "stability",
+  "echo",
+];
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -42,6 +64,8 @@ export function SettingsModal({ open, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+  const [availableBackends, setAvailableBackends] = useState<string[]>(FALLBACK_BACKENDS);
+  const [mcpTools, setMcpTools] = useState<McpTool[] | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -52,6 +76,19 @@ export function SettingsModal({ open, onClose }: Props) {
         setDirty(false);
       })
       .catch(() => emitToast("error", "Failed to load /api/config"));
+    // Backend dropdowns reflect what's ACTUALLY registered (keys present,
+    // models configured), not a hardcoded list; fall back if unreachable.
+    fetch("/api/models")
+      .then((r) => r.json())
+      .then((d) => {
+        const names = (d.backends || []).map((b: { name: string }) => b.name);
+        if (names.length) setAvailableBackends(names);
+      })
+      .catch(() => {});
+    fetch("/api/mcp")
+      .then((r) => r.json())
+      .then((d) => setMcpTools(d.tools || []))
+      .catch(() => setMcpTools([]));
   }, [open]);
 
   useEffect(() => {
@@ -133,6 +170,11 @@ export function SettingsModal({ open, onClose }: Props) {
           ollama: data.config.ollama,
           anthropic: data.config.anthropic,
           stability: data.config.stability,
+          openai: data.config.openai,
+          mistral: data.config.mistral,
+          groq: data.config.groq,
+          openrouter: data.config.openrouter,
+          gemini: data.config.gemini,
           routing: data.config.routing,
           profiles: data.config.profiles,
         }),
@@ -164,7 +206,7 @@ export function SettingsModal({ open, onClose }: Props) {
         </button>
       </div>
       <div className="flex gap-1 mb-3 border-b border-zinc-800">
-        {(["models", "routing", "profiles", "prompts"] as Section[]).map((s) => (
+        {(["models", "routing", "profiles", "mcp", "prompts"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => setTab(s)}
@@ -211,6 +253,71 @@ export function SettingsModal({ open, onClose }: Props) {
                 onChange={(v) => update("anthropic", { max_tokens: v })}
               />
             </Group>
+            <Group title="OpenAI">
+              <Field
+                label="Base URL"
+                value={c.openai.base_url}
+                onChange={(v) => update("openai", { base_url: v })}
+              />
+              <Field
+                label="Model"
+                value={c.openai.model}
+                onChange={(v) => update("openai", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.openai.max_tokens}
+                onChange={(v) => update("openai", { max_tokens: v })}
+              />
+            </Group>
+            <Group title="Mistral">
+              <Field
+                label="Model"
+                value={c.mistral.model}
+                onChange={(v) => update("mistral", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.mistral.max_tokens}
+                onChange={(v) => update("mistral", { max_tokens: v })}
+              />
+            </Group>
+            <Group title="Groq">
+              <Field
+                label="Model"
+                value={c.groq.model}
+                onChange={(v) => update("groq", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.groq.max_tokens}
+                onChange={(v) => update("groq", { max_tokens: v })}
+              />
+            </Group>
+            <Group title="OpenRouter">
+              <Field
+                label="Model (vendor/model)"
+                value={c.openrouter.model}
+                onChange={(v) => update("openrouter", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.openrouter.max_tokens}
+                onChange={(v) => update("openrouter", { max_tokens: v })}
+              />
+            </Group>
+            <Group title="Gemini">
+              <Field
+                label="Model"
+                value={c.gemini.model}
+                onChange={(v) => update("gemini", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.gemini.max_tokens}
+                onChange={(v) => update("gemini", { max_tokens: v })}
+              />
+            </Group>
             <Group title="Stability (image)">
               <Field
                 label="Model"
@@ -219,7 +326,9 @@ export function SettingsModal({ open, onClose }: Props) {
               />
             </Group>
             <p className="text-[10px] text-zinc-500 italic mt-2">
-              Note: model URL or name changes need a uvicorn restart to fully take effect.
+              Note: model URL or name changes need a uvicorn restart to fully
+              take effect. Cloud backends only appear once their API key is
+              set (python -m yagami.set_key &lt;NAME&gt;_API_KEY).
             </p>
           </>
         )}
@@ -230,17 +339,7 @@ export function SettingsModal({ open, onClose }: Props) {
               <SelectField
                 label="Default backend"
                 value={c.routing.default_backend}
-                options={[
-                  "ollama",
-                  "anthropic",
-                  "openai",
-                  "mistral",
-                  "groq",
-                  "openrouter",
-                  "gemini",
-                  "stability",
-                  "echo",
-                ]}
+                options={availableBackends}
                 onChange={(v) => update("routing", { default_backend: v })}
               />
               <NumField
@@ -325,17 +424,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 <SelectField
                   label="Default backend"
                   value={p.default_backend ?? c.routing.default_backend}
-                  options={[
-                  "ollama",
-                  "anthropic",
-                  "openai",
-                  "mistral",
-                  "groq",
-                  "openrouter",
-                  "gemini",
-                  "stability",
-                  "echo",
-                ]}
+                  options={availableBackends}
                   onChange={(v) => updateProfile(name, { default_backend: v })}
                 />
                 <NumField
@@ -380,6 +469,44 @@ export function SettingsModal({ open, onClose }: Props) {
                 </button>
               </label>
             </Group>
+          </>
+        )}
+
+        {tab === "mcp" && (
+          <>
+            <Group title="Connected MCP tools">
+              {mcpTools === null ? (
+                <p className="text-[10px] text-zinc-500">Loading…</p>
+              ) : mcpTools.length === 0 ? (
+                <p className="text-[10px] text-zinc-500">
+                  No MCP tools connected. Configure servers under
+                  <code className="mx-1 px-1 bg-zinc-800">[mcp_servers.*]</code>
+                  in config/yagami.toml and restart. A configured server that
+                  fails to connect is logged and skipped - if you expected
+                  tools here, check the server console output.
+                </p>
+              ) : (
+                <div className="space-y-1 max-h-[45vh] overflow-y-auto pr-1">
+                  {mcpTools.map((t) => (
+                    <div
+                      key={`${t.server}.${t.tool}`}
+                      className="p-1.5 rounded border border-zinc-800 bg-zinc-950/40"
+                    >
+                      <div className="font-mono text-zinc-200 text-[11px]">
+                        mcp.{t.server}.{t.tool}
+                      </div>
+                      {t.description && (
+                        <div className="text-[10px] text-zinc-500 mt-0.5">{t.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Group>
+            <p className="text-[10px] text-zinc-500 italic">
+              Read-only. Every connected tool is available to the model as a
+              skill, gated by the same sensitivity ceiling as web.fetch.
+            </p>
           </>
         )}
 
