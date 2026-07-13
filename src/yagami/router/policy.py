@@ -75,7 +75,7 @@ class RoutingPolicy:
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
 
         # 1. Slash-command override at the start of the message.
-        override = parse_override(last_text)
+        override = parse_override(last_text, self._backends.keys())
         if override.forced_backend:
             if spend_blocked and override.forced_backend in ("anthropic", "stability"):
                 raise OverrideRefused(

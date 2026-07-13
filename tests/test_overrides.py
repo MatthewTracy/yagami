@@ -72,6 +72,30 @@ def test_command_without_arg_strips_to_empty():
     assert r.stripped_text == ""
 
 
+def test_generic_backend_name_resolves_when_registered():
+    r = parse("/mistral write a haiku", backend_names=["ollama", "mistral", "anthropic"])
+    assert r.forced_backend == "mistral"
+    assert r.stripped_text == "write a haiku"
+
+
+def test_generic_backend_name_case_insensitive():
+    r = parse("/Mistral hi", backend_names=["mistral"])
+    assert r.forced_backend == "mistral"
+
+
+def test_generic_backend_name_ignored_when_not_registered():
+    r = parse("/mistral hi", backend_names=["ollama", "anthropic"])
+    assert r.forced_backend is None
+    assert r.stripped_text == "/mistral hi"
+
+
+def test_openai_alias_resolves_when_registered():
+    """/openai was documented in the README but had no matching alias or
+    generic fallback before the generic backend-name match was added."""
+    r = parse("/openai hi", backend_names=["ollama", "anthropic", "openai"])
+    assert r.forced_backend == "openai"
+
+
 # ---- Policy-level integration ----
 
 

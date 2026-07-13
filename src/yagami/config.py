@@ -30,6 +30,29 @@ class OpenAIConfig(BaseModel):
     max_tokens: int = 4096
 
 
+class MistralConfig(BaseModel):
+    model: str = "mistral-large-latest"
+    max_tokens: int = 4096
+
+
+class GroqConfig(BaseModel):
+    model: str = "llama-3.3-70b-versatile"
+    max_tokens: int = 4096
+
+
+class OpenRouterConfig(BaseModel):
+    # OpenRouter model ids are "vendor/model" - this default is a cheap,
+    # widely-available one. Override freely; OpenRouter's whole pitch is
+    # routing to whatever you name here.
+    model: str = "openai/gpt-4o-mini"
+    max_tokens: int = 4096
+
+
+class GeminiConfig(BaseModel):
+    model: str = "gemini-2.5-flash"
+    max_tokens: int = 8192
+
+
 class LlamaCppConfig(BaseModel):
     model_path: str = ""  # absolute path to a GGUF file; empty = disabled
     n_ctx: int = 8192
@@ -57,6 +80,10 @@ class YagamiConfig(BaseModel):
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    mistral: MistralConfig = Field(default_factory=MistralConfig)
+    groq: GroqConfig = Field(default_factory=GroqConfig)
+    openrouter: OpenRouterConfig = Field(default_factory=OpenRouterConfig)
+    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     llama_cpp: LlamaCppConfig = Field(default_factory=LlamaCppConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
