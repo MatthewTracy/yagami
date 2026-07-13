@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     config_path: str = Field(
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
     )
+    db_path: str = Field(default="yagami.db", validation_alias=AliasChoices("YAGAMI_DB_PATH"))
 
 
 @lru_cache

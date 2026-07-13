@@ -33,8 +33,14 @@ def _split_sentences(text: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
-def chunk(text: str) -> list[str]:
-    """Return a list of 1..MAX_CHUNKS chunks. Empty input → []."""
+def chunk(text: str, *, max_chunks: int = MAX_CHUNKS) -> list[str]:
+    """Return a list of 1..max_chunks chunks. Empty input → [].
+
+    `max_chunks` defaults to the chat-turn cap (8). Bulk document indexing
+    (memory/documents.py) passes a much larger value - the 8-chunk cap
+    exists to stop one runaway chat turn from monopolizing the embedding
+    worker, not because chunking itself has a hard limit.
+    """
     text = text.strip()
     if not text:
         return []
@@ -63,13 +69,13 @@ def chunk(text: str) -> list[str]:
                 buf, buf_len = [], 0
             for i in range(0, u_len, _TARGET_CHARS):
                 chunks.append(u[i : i + _TARGET_CHARS])
-                if len(chunks) >= MAX_CHUNKS:
+                if len(chunks) >= max_chunks:
                     return chunks
             continue
         if buf_len + u_len + 1 > _TARGET_CHARS:
             chunks.append(" ".join(buf))
             buf, buf_len = [], 0
-            if len(chunks) >= MAX_CHUNKS:
+            if len(chunks) >= max_chunks:
                 return chunks
         buf.append(u)
         buf_len += u_len + 1
@@ -84,4 +90,4 @@ def chunk(text: str) -> list[str]:
             overlapped.append(tail + " " + chunks[i])
         chunks = overlapped
 
-    return chunks[:MAX_CHUNKS]
+    return chunks[:max_chunks]

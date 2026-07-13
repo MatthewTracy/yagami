@@ -18,6 +18,7 @@ def tmp_config(tmp_path, monkeypatch):
     if src.exists():
         shutil.copy(src, cfg_file)
     monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(cfg_file))
+    monkeypatch.setenv("YAGAMI_DB_PATH", str(tmp_path / "yagami.db"))
     config_mod.get_settings.cache_clear()
     config_mod.get_config.cache_clear()
     yield cfg_file
