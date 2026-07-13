@@ -4,6 +4,7 @@ import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
 import { PrivacyLedger } from "./components/PrivacyLedger";
 import { ConversationsSidebar } from "./components/ConversationsSidebar";
+import { KbPanel } from "./components/KbPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { ShortcutSheet } from "./components/ShortcutSheet";
@@ -25,6 +26,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [kbOpen, setKbOpen] = useState(false);
 
   function newChat() {
     setLoadSessionId(null);
@@ -54,6 +56,13 @@ export default function App() {
               className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
             >
               🧠
+            </button>
+            <button
+              onClick={() => setKbOpen(true)}
+              title="Knowledge base (indexed documents)"
+              className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
+            >
+              📚
             </button>
             <button
               onClick={() => setStatsOpen(true)}
@@ -102,6 +111,7 @@ export default function App() {
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <StatsDashboard open={statsOpen} onClose={() => setStatsOpen(false)} />
       <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <KbPanel open={kbOpen} onClose={() => setKbOpen(false)} />
     </div>
   );
 }

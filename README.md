@@ -211,8 +211,8 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 | Fast-path bypass with PHI / secret / image regexes | [`src/yagami/router/fast_path.py`](src/yagami/router/fast_path.py) |
 | Backend registry (drop-in plugins) | [`src/yagami/backends/registry.py`](src/yagami/backends/registry.py) |
 | 8 backends out of the box (Ollama, llama.cpp local; Anthropic, OpenAI, Mistral, Groq, OpenRouter, Gemini, Stability cloud) | [`src/yagami/backends/`](src/yagami/backends) |
-| Multi-turn tool-use loop (Anthropic) | [`src/yagami/router/tool_loop.py`](src/yagami/router/tool_loop.py) |
-| First-party skills (`calc.eval`, `web.fetch`) | [`src/yagami/skills/`](src/yagami/skills) |
+| Multi-turn tool-use loop (Anthropic + every OpenAI-compatible cloud backend) | [`src/yagami/router/tool_loop.py`](src/yagami/router/tool_loop.py) |
+| First-party skills (`calc.eval`, `web.fetch`, `kb.recall`, `memory.recall`, `memory.remember`) | [`src/yagami/skills/`](src/yagami/skills) |
 | Cross-session memory with sqlite-vec + FTS5 fallback | [`src/yagami/memory/`](src/yagami/memory) |
 | Folder-indexed document knowledge base (`kb.recall` skill) | [`src/yagami/memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index` |
 | MCP client (external MCP servers as skills) | [`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py), `GET /api/mcp` |
@@ -260,7 +260,7 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
         |  Mistral · Groq · OpenRouter · Gemini · llama-cpp     |
         +-------------------------+------------------------+---+
                                    |
-                                   v  (Anthropic only, today)
+                                   v  (Anthropic + OpenAI-compatible clouds)
                      +----------+----------+
                      |  tool_loop:         |
                      |  calc.eval,         |
@@ -381,11 +381,11 @@ curl http://localhost:8000/api/kb
 curl -X DELETE "http://localhost:8000/api/kb/source?path=C:\Users\you\Documents\project-docs\readme.md"
 ```
 
-No UI panel for this yet - it's API/curl-only for now. A couple of things worth knowing:
+Manage it from the UI (book icon in the header) or via the API above. A couple of things worth knowing:
 
 - **This is API-first, not queryable through the UI yet.** Indexing is a deliberate, occasional action, not a hot path - it embeds synchronously within the request rather than queuing for the background worker, so a large folder means a slow request, not a silent background failure.
 - **Anyone who can reach the local API can make the server read arbitrary files it has OS permission to.** Same trust model as `PUT /api/config` (arbitrary TOML rewrite) already has - this app is single-user, local-first, and assumes you're not exposing the port beyond `127.0.0.1`.
-- **Indexed content can reach a cloud backend.** `kb.recall` results flow into the conversation like any tool result - today that means Anthropic specifically, since the tool loop is Anthropic-only (see [Architecture](#architecture)). The classifier only ever evaluates what *you* type, not what's inside indexed documents, so don't index anything you wouldn't want sent to whatever backend handles your tool-use turns.
+- **Indexed content can reach a cloud backend.** `kb.recall` results flow into the conversation like any tool result, to whichever cloud backend is driving the tool-use turn. The classifier only ever evaluates what *you* type, not what's inside indexed documents, so don't index anything you wouldn't want sent to whatever backend handles your tool-use turns.
 
 ---
 
@@ -413,7 +413,7 @@ curl http://localhost:8000/api/mcp
 
 A few things worth knowing:
 
-- **Conservative sensitivity ceiling.** MCP servers are arbitrary, user-configured third-party processes; their tool results flow into the conversation like any tool result (Anthropic-only tool loop today). Every MCP-derived skill gets `sensitivity_ceiling = NONE` - the same floor as `web.fetch` - so it refuses whenever the current turn is flagged sensitive at all.
+- **Conservative sensitivity ceiling.** MCP servers are arbitrary, user-configured third-party processes; their tool results flow into the conversation like any tool result, to whichever cloud backend drives the tool-use turn. Every MCP-derived skill gets `sensitivity_ceiling = NONE` - the same floor as `web.fetch` - so it refuses whenever the current turn is flagged sensitive at all.
 - **Client only, not server.** Yagami connects *out* to MCP servers; it doesn't expose itself as one yet (a natural follow-up, lower priority since fewer people run Yagami as infrastructure for another tool at this stage).
 - **stdio transport only.** No SSE/HTTP MCP servers yet - stdio covers the common case (`npx`/`uvx`-launched local servers) with the least new attack surface.
 
@@ -543,9 +543,9 @@ Model and URL changes need a uvicorn restart. Routing changes (default backend, 
 
 ## Roadmap
 
-Shipped through v0.3.0 (see [CHANGELOG.md](CHANGELOG.md) for what each version added). Planned:
+Shipped through v0.4.0 (see [CHANGELOG.md](CHANGELOG.md) for what each version added). Planned:
 
-- **v0.5a (partial)** - `kb.recall` shipped, but for a folder-indexed document corpus ([`memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index`), not cross-session chat memory - that's still classifier-driven via `needs_recall`. A `kb.remember` skill (and a `kb.recall` variant over chat memory itself) is still open, so the LLM can choose when to fetch either, not just documents.
+- **v0.5a (done)** - `kb.recall` searches the folder-indexed document corpus; `memory.recall` / `memory.remember` give the LLM explicit control over cross-session chat memory (`memory.*` = chat memory, `kb.*` = documents).
 - **v0.5b (partial)** - MCP *client* shipped ([MCP client support](#mcp-client-support)). MCP *server* mount (Yagami exposing itself to other MCP clients) + OAuth for Gmail / Calendar are still open.
 - **v0.6** - user-authored automation routines (cron triggers, content triggers, dry-run-by-default).
 - **v0.7** - ambient inputs: global hotkey (Ctrl+Alt+Y) for clipboard / screenshot context, voice in / out via whisper-cpp + piper.

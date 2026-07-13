@@ -107,7 +107,9 @@ def test_adapters_emit_correct_shape():
 
     assert len(oai) == 2
     assert oai[0]["type"] == "function"
-    assert oai[0]["function"]["name"] == "calc.eval"
+    # OpenAI function names disallow dots - sanitized on the way out; the
+    # tool loop maps them back (see test_tool_loop_openai.py).
+    assert oai[0]["function"]["name"] == "calc__eval"
     assert "parameters" in oai[0]["function"]
 
 
@@ -119,6 +121,8 @@ def test_registry_finds_first_party_skills():
     assert "calc.eval" in skills
     assert "web.fetch" in skills
     assert "kb.recall" in skills
+    assert "memory.remember" in skills
+    assert "memory.recall" in skills
     # Helpers aren't skills.
     assert "base" not in skills
     assert "registry" not in skills
@@ -159,6 +163,102 @@ def test_kb_recall_sensitivity_ceiling_matches_web_fetch():
     from yagami.skills.kb_recall import KbRecall
 
     assert KbRecall().sensitivity_ceiling == WebFetch().sensitivity_ceiling
+
+
+# ---- memory.remember / memory.recall ----
+
+
+@pytest.mark.asyncio
+async def test_memory_remember_writes_observation(tmp_path):
+    from yagami.skills.memory_remember import MemoryRemember
+    from yagami.storage.db import close_db, get_db, open_db
+
+    await open_db(tmp_path / "mem.db")
+    try:
+        res = await MemoryRemember().run(
+            {"text": "The user's dog is named Mango and loves the beach."}, _ctx()
+        )
+        assert res.ok is True
+        db = get_db()
+        async with db.execute(
+            "SELECT text, source_app FROM observations ORDER BY id DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        assert row is not None
+        assert "Mango" in row[0]
+        assert row[1] == "skill"
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
+async def test_memory_remember_secret_session_refused(tmp_path):
+    """SECRET outranks the PHI_MEDICAL ceiling in the tool loop, but even a
+    direct call must not write - the store's own gate rejects SECRET."""
+    from yagami.skills.memory_remember import MemoryRemember
+    from yagami.storage.db import close_db, open_db
+
+    await open_db(tmp_path / "mem.db")
+    try:
+        res = await MemoryRemember().run(
+            {"text": "api key is sk-super-secret-value-here"}, _ctx(Sensitivity.SECRET)
+        )
+        assert res.ok is False
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
+async def test_memory_remember_missing_text():
+    from yagami.skills.memory_remember import MemoryRemember
+
+    res = await MemoryRemember().run({}, _ctx())
+    assert res.ok is False
+    assert "text" in res.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_finds_other_sessions_via_fts(tmp_path):
+    """No live Ollama here - the embedder fails, retrieval falls back to
+    FTS5 (same path test_retriever.py exercises). The current session's own
+    rows are excluded."""
+    from yagami.skills.memory_recall import MemoryRecall
+    from yagami.skills.memory_remember import MemoryRemember
+    from yagami.storage.db import close_db, open_db
+
+    await open_db(tmp_path / "mem.db")
+    try:
+        # Write from session "other" so recall from session "s1" can see it.
+        other_ctx = SkillContext(session_id="other", session_sensitivity=Sensitivity.NONE)
+        await MemoryRemember().run(
+            {"text": "I love writing haiku about mango trees in spring."}, other_ctx
+        )
+        res = await MemoryRecall().run({"query": "haiku mango"}, _ctx())
+        assert res.ok is True
+        assert "mango" in res.content.lower()
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_no_matches(tmp_path):
+    from yagami.skills.memory_recall import MemoryRecall
+    from yagami.storage.db import close_db, open_db
+
+    await open_db(tmp_path / "mem.db")
+    try:
+        res = await MemoryRecall().run({"query": "zzz nothing here"}, _ctx())
+        assert res.ok is True
+        assert "no matching" in res.content.lower()
+    finally:
+        await close_db()
+
+
+def test_memory_recall_ceiling_matches_kb_recall():
+    from yagami.skills.kb_recall import KbRecall
+    from yagami.skills.memory_recall import MemoryRecall
+
+    assert MemoryRecall().sensitivity_ceiling == KbRecall().sensitivity_ceiling
 
 
 # ---- sensitivity ceiling enforcement happens in tool_loop, not the skill ----
