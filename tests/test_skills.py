@@ -123,6 +123,7 @@ def test_registry_finds_first_party_skills():
     assert "base" not in skills
     assert "registry" not in skills
     assert "adapters" not in skills
+    assert "mcp_manager" not in skills
 
 
 # ---- kb.recall ----

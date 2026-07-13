@@ -14,6 +14,7 @@ from .api import costs as costs_api
 from .api import decisions as decisions_api
 from .api import ingest as ingest_api
 from .api import kb as kb_api
+from .api import mcp as mcp_api
 from .api import memory as memory_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
@@ -27,6 +28,8 @@ from . import secrets
 from .config import effective_routing, get_config, get_settings
 from .router.classifier import OllamaJSONClassifier
 from .router.policy import RoutingPolicy
+from .skills import mcp_manager as mcp_manager_mod
+from .skills.mcp_manager import McpManager
 from .storage.db import close_db, open_db
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -64,10 +67,11 @@ def build_app() -> FastAPI:
     config_api.set_policy(policy)
 
     embedding_worker: EmbeddingWorker | None = None
+    mcp_manager: McpManager | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        nonlocal embedding_worker
+        nonlocal embedding_worker, mcp_manager
         await open_db(db_path)
         sessions_api.set_store(sessions)
         if cfg.memory.enabled:
@@ -80,7 +84,19 @@ def build_app() -> FastAPI:
                 "memory worker + retriever started (model=%s)",
                 cfg.memory.embedding_model,
             )
+        if cfg.mcp_servers:
+            mcp_manager = McpManager()
+            await mcp_manager.connect_all(cfg.mcp_servers)
+            mcp_manager_mod.set_manager(mcp_manager)
+            log.info(
+                "mcp: %d server(s) configured, %d tool(s) connected",
+                len(cfg.mcp_servers),
+                len(mcp_manager.get_skills()),
+            )
         yield
+        if mcp_manager is not None:
+            await mcp_manager.close_all()
+            mcp_manager_mod.set_manager(None)
         if embedding_worker is not None:
             await embedding_worker.stop()
         await close_db()
@@ -101,6 +117,7 @@ def build_app() -> FastAPI:
     app.include_router(config_api.router)
     app.include_router(memory_api.router)
     app.include_router(kb_api.router)
+    app.include_router(mcp_api.router)
 
     @app.get("/api/health")
     async def health() -> dict:

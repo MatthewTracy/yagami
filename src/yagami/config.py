@@ -93,6 +93,18 @@ class MemoryConfig(BaseModel):
     embedding_model: str = "all-minilm"  # Ollama model name (384 dim)
 
 
+class McpServerConfig(BaseModel):
+    """One external MCP server to connect to over stdio. `command` is
+    launched as a subprocess (e.g. `npx`, `python`, `uvx`) with `args`;
+    `env` is merged into that subprocess's environment (useful for API keys
+    an MCP server itself needs - those are the MCP server's own secrets,
+    not read from Yagami's keyring)."""
+
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+
 class YagamiConfig(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
@@ -106,6 +118,7 @@ class YagamiConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
 def effective_routing(cfg: YagamiConfig) -> RoutingConfig:
