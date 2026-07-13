@@ -288,15 +288,14 @@ async def chat_endpoint(
 
             # v0.2.14: when the policy decided this turn needs tools AND the
             # chosen backend supports them, drive through tool_loop instead
-            # of the plain generate path.
-            from ..backends.anthropic import ClaudeBackend
+            # of the plain generate path. Capability-gated, not type-gated -
+            # tool_loop.run() dispatches Anthropic vs OpenAI wire format
+            # itself and degrades to plain generate for anything else.
             from ..backends.base import Capability
             from ..router.schema import Sensitivity as _Sens
 
             use_tool_loop = (
-                decision.use_tools
-                and isinstance(decision.backend, ClaudeBackend)
-                and Capability.TOOLS in decision.backend.capabilities
+                decision.use_tools and Capability.TOOLS in decision.backend.capabilities
             )
 
             if use_tool_loop:

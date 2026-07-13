@@ -298,13 +298,26 @@ class RoutingPolicy:
 
         # v0.2.14: needs_tools forces cloud-text route (Anthropic) when
         # tools are available - local Ollama doesn't yet have a tool loop.
-        # Honors the same spend / history-PHI gates.
-        wants_anthropic = (
+        # Honors the same spend / history-PHI gates. Anthropic stays the
+        # preferred escalation target; when it isn't configured, fall back
+        # to the first cloud backend that declares TOOLS (all the
+        # OpenAI-compatible ones do since the chat-completions tool loop
+        # landed) so a Groq-only or Mistral-only setup still escalates
+        # instead of silently staying local.
+        wants_escalation = (
             classification.complexity == Complexity.HIGH
             or classification.intent == Intent.COMPLEX_REASONING
             or classification.needs_tools
         )
-        if wants_anthropic and "anthropic" in self._backends:
+        escalation = self._backends.get("anthropic") or next(
+            (
+                b
+                for b in self._backends.values()
+                if _is_cloud_text(b) and Capability.TOOLS in b.capabilities
+            ),
+            None,
+        )
+        if wants_escalation and escalation is not None:
             if spend_blocked:
                 source = source + "+spend-cap"
                 cls_dict["source"] = source
@@ -313,7 +326,7 @@ class RoutingPolicy:
                 cls_dict["source"] = source
             else:
                 return RoutingDecision(
-                    backend=self._backends["anthropic"],
+                    backend=escalation,
                     reason=f"complexity={classification.complexity.value} intent={classification.intent.value} [{source}]",
                     classification=cls_dict,
                     use_tools=classification.needs_tools,
