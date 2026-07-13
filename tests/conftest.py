@@ -35,6 +35,10 @@ class FakeBackend:
 
 @pytest.fixture
 def backends() -> dict[str, Backend]:
+    # mistral/groq stand in for the whole OpenAI-compatible cloud family -
+    # the PHI-history and spend gates must treat every cloud TEXT backend
+    # identically, not just anthropic (that name-based assumption was a real
+    # bug once).
     return {
         "ollama": FakeBackend(
             "ollama", is_local=True, capabilities={Capability.TEXT, Capability.CODE}
@@ -42,6 +46,8 @@ def backends() -> dict[str, Backend]:
         "anthropic": FakeBackend(
             "anthropic", is_local=False, capabilities={Capability.TEXT, Capability.LONG_CONTEXT}
         ),
+        "mistral": FakeBackend("mistral", is_local=False, capabilities={Capability.TEXT}),
+        "groq": FakeBackend("groq", is_local=False, capabilities={Capability.TEXT}),
         "stability": FakeBackend("stability", is_local=False, capabilities={Capability.IMAGE}),
     }
 

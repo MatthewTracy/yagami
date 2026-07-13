@@ -7,6 +7,7 @@ type ProfileOverrides = {
   daily_spend_cap_usd?: number;
   default_backend?: string;
   long_message_token_threshold?: number;
+  block_cloud?: boolean;
 };
 
 type Cfg = {
@@ -20,6 +21,7 @@ type Cfg = {
       default_backend: string;
       lora_variants: Record<string, string>;
       daily_spend_cap_usd: number;
+      block_cloud: boolean;
       active_profile: string;
     };
     profiles: Record<string, ProfileOverrides>;
@@ -256,9 +258,20 @@ export function SettingsModal({ open, onClose }: Props) {
                 step={0.5}
                 onChange={(v) => update("routing", { daily_spend_cap_usd: v })}
               />
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-400 w-44 shrink-0">Block all cloud routes</span>
+                <input
+                  type="checkbox"
+                  checked={c.routing.block_cloud}
+                  onChange={(e) => update("routing", { block_cloud: e.target.checked })}
+                  className="accent-emerald-600"
+                />
+              </label>
               <p className="text-[10px] text-zinc-500">
-                Once today's spend reaches the cap, cloud backends are
-                refused with an explicit error. Local Ollama stays available.
+                Once today's spend reaches the cap - or "block all cloud" is
+                on - cloud backends are refused with an explicit error. Local
+                Ollama stays available. Note: cap 0 means NO cap; use "block
+                all cloud" for a zero-cloud setup.
               </p>
             </Group>
             <Group title="Privacy (locked)">
@@ -285,8 +298,8 @@ export function SettingsModal({ open, onClose }: Props) {
               <p className="text-[10px] text-zinc-500">
                 "" = no profile - [routing] above applies directly. A
                 profile overrides default backend / spend cap / long-message
-                threshold only. PHI must stay local either way; no profile
-                can change that.
+                threshold / block-cloud only. PHI must stay local either
+                way; no profile can change that.
               </p>
             </Group>
             {Object.keys(c.profiles).length === 0 && (
@@ -336,6 +349,15 @@ export function SettingsModal({ open, onClose }: Props) {
                   value={p.long_message_token_threshold ?? c.routing.long_message_token_threshold}
                   onChange={(v) => updateProfile(name, { long_message_token_threshold: v })}
                 />
+                <label className="flex items-center gap-2">
+                  <span className="text-zinc-400 w-44 shrink-0">Block all cloud routes</span>
+                  <input
+                    type="checkbox"
+                    checked={p.block_cloud ?? c.routing.block_cloud}
+                    onChange={(e) => updateProfile(name, { block_cloud: e.target.checked })}
+                    className="accent-emerald-600"
+                  />
+                </label>
               </Group>
             ))}
             <Group title="New profile">

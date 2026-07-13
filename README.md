@@ -219,7 +219,7 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 | Cost meter + daily spend cap | [`src/yagami/telemetry/costs.py`](src/yagami/telemetry/costs.py) |
 | Auto-retry on transient cloud errors | [`src/yagami/backends/retry.py`](src/yagami/backends/retry.py) |
 | File ingest (PDF / MD / TXT, drag-drop) | [`src/yagami/ingest/extract.py`](src/yagami/ingest/extract.py) |
-| Vision input (Claude + OpenAI) | `ImageAttachment` on `Message` |
+| Vision input (Claude, Gemini, OpenAI, OpenRouter) | `ImageAttachment` on `Message`; auto-picks the first configured vision backend |
 | Privacy Ledger panel | [`ui/src/components/PrivacyLedger.tsx`](ui/src/components/PrivacyLedger.tsx) |
 | Settings modal (live config edit) | [`ui/src/components/SettingsModal.tsx`](ui/src/components/SettingsModal.tsx) |
 | Stats dashboard | [`ui/src/components/StatsDashboard.tsx`](ui/src/components/StatsDashboard.tsx) |
@@ -507,10 +507,12 @@ long_message_token_threshold = 1500
 active_profile = ""            # "" = none; else a key under [profiles.*]
 
 # Named profiles override a subset of [routing] above - default_backend,
-# daily_spend_cap_usd, long_message_token_threshold. phi_must_be_local is
-# NOT overridable by any profile; it's a hard invariant, not a preference.
+# daily_spend_cap_usd, long_message_token_threshold, block_cloud.
+# phi_must_be_local is NOT overridable by any profile; it's a hard
+# invariant, not a preference.
 [profiles.work]
-daily_spend_cap_usd = 0        # no cloud spend at all on this profile
+block_cloud = true             # zero cloud on this profile. (NOT the same as
+                               # daily_spend_cap_usd = 0 - that means NO cap.)
 
 [profiles.personal]
 default_backend = "anthropic"

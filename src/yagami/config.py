@@ -68,6 +68,10 @@ class RoutingConfig(BaseModel):
     default_backend: str = "ollama"
     lora_variants: dict[str, str] = Field(default_factory=dict)
     daily_spend_cap_usd: float = 5.0  # 0 = no cap; cloud routes refused over cap
+    # Refuse ALL cloud routes, unconditionally - the "zero cloud" switch.
+    # Distinct from daily_spend_cap_usd=0, which means NO cap (a trap that
+    # used to be mis-documented as "no cloud spend").
+    block_cloud: bool = False
     # "" = no profile active, [routing] above applies directly. Otherwise a
     # key into YagamiConfig.profiles - see ProfileOverrides.
     active_profile: str = ""
@@ -80,12 +84,16 @@ class ProfileOverrides(BaseModel):
     invariant (see api/config.py put_config, which force-pins it true on
     every write), not a per-profile choice. A "personal" profile can relax
     the spend cap or change the default backend; it can never let PHI reach
-    a cloud backend.
+    a cloud backend. `block_cloud` IS overridable in both directions -
+    turning it ON per-profile is the whole point of a strict work profile,
+    and turning it OFF is no more permissive than the [routing] default
+    already allows.
     """
 
     daily_spend_cap_usd: float | None = None
     default_backend: str | None = None
     long_message_token_threshold: int | None = None
+    block_cloud: bool | None = None
 
 
 class MemoryConfig(BaseModel):
@@ -135,6 +143,8 @@ def effective_routing(cfg: YagamiConfig) -> RoutingConfig:
         base.default_backend = profile.default_backend
     if profile.long_message_token_threshold is not None:
         base.long_message_token_threshold = profile.long_message_token_threshold
+    if profile.block_cloud is not None:
+        base.block_cloud = profile.block_cloud
     return base
 
 
