@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { emitToast } from "./Toast";
 
-type Section = "models" | "routing" | "prompts";
+type Section = "models" | "routing" | "profiles" | "prompts";
+
+type ProfileOverrides = {
+  daily_spend_cap_usd?: number;
+  default_backend?: string;
+  long_message_token_threshold?: number;
+};
 
 type Cfg = {
   config: {
@@ -14,7 +20,9 @@ type Cfg = {
       default_backend: string;
       lora_variants: Record<string, string>;
       daily_spend_cap_usd: number;
+      active_profile: string;
     };
+    profiles: Record<string, ProfileOverrides>;
   };
   defaults: Cfg["config"];
   prompts: { phi_medical_default: string };
@@ -31,6 +39,7 @@ export function SettingsModal({ open, onClose }: Props) {
   const [tab, setTab] = useState<Section>("models");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -71,6 +80,46 @@ export function SettingsModal({ open, onClose }: Props) {
     setDirty(true);
   }
 
+  function updateProfile(name: string, patch: Partial<ProfileOverrides>) {
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            config: {
+              ...d.config,
+              profiles: { ...d.config.profiles, [name]: { ...d.config.profiles[name], ...patch } },
+            },
+          }
+        : d,
+    );
+    setDirty(true);
+  }
+
+  function addProfile() {
+    const name = newProfileName.trim();
+    if (!data || !name || data.config.profiles[name]) return;
+    setData((d) =>
+      d ? { ...d, config: { ...d.config, profiles: { ...d.config.profiles, [name]: {} } } } : d,
+    );
+    setNewProfileName("");
+    setDirty(true);
+  }
+
+  function removeProfile(name: string) {
+    setData((d) => {
+      if (!d) return d;
+      const profiles = { ...d.config.profiles };
+      delete profiles[name];
+      const active_profile =
+        d.config.routing.active_profile === name ? "" : d.config.routing.active_profile;
+      return {
+        ...d,
+        config: { ...d.config, profiles, routing: { ...d.config.routing, active_profile } },
+      };
+    });
+    setDirty(true);
+  }
+
   async function save() {
     if (!data) return;
     setSaving(true);
@@ -83,6 +132,7 @@ export function SettingsModal({ open, onClose }: Props) {
           anthropic: data.config.anthropic,
           stability: data.config.stability,
           routing: data.config.routing,
+          profiles: data.config.profiles,
         }),
       });
       if (!r.ok) {
@@ -112,7 +162,7 @@ export function SettingsModal({ open, onClose }: Props) {
         </button>
       </div>
       <div className="flex gap-1 mb-3 border-b border-zinc-800">
-        {(["models", "routing", "prompts"] as Section[]).map((s) => (
+        {(["models", "routing", "profiles", "prompts"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => setTab(s)}
@@ -178,7 +228,17 @@ export function SettingsModal({ open, onClose }: Props) {
               <SelectField
                 label="Default backend"
                 value={c.routing.default_backend}
-                options={["ollama", "anthropic", "stability", "echo"]}
+                options={[
+                  "ollama",
+                  "anthropic",
+                  "openai",
+                  "mistral",
+                  "groq",
+                  "openrouter",
+                  "gemini",
+                  "stability",
+                  "echo",
+                ]}
                 onChange={(v) => update("routing", { default_backend: v })}
               />
               <NumField
@@ -209,6 +269,94 @@ export function SettingsModal({ open, onClose }: Props) {
                 </span>
               </div>
               <p className="text-[10px] text-zinc-500">{data.notes.phi_must_be_local}</p>
+            </Group>
+          </>
+        )}
+
+        {tab === "profiles" && (
+          <>
+            <Group title="Active profile">
+              <SelectField
+                label="Profile"
+                value={c.routing.active_profile}
+                options={["", ...Object.keys(c.profiles)]}
+                onChange={(v) => update("routing", { active_profile: v })}
+              />
+              <p className="text-[10px] text-zinc-500">
+                "" = no profile - [routing] above applies directly. A
+                profile overrides default backend / spend cap / long-message
+                threshold only. PHI must stay local either way; no profile
+                can change that.
+              </p>
+            </Group>
+            {Object.keys(c.profiles).length === 0 && (
+              <p className="text-[10px] text-zinc-500 italic">No profiles yet.</p>
+            )}
+            {Object.entries(c.profiles).map(([name, p]) => (
+              <Group key={name} title={name}>
+                <div className="flex items-center justify-between">
+                  {name === c.routing.active_profile ? (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-800 text-emerald-100 text-[10px] font-medium">
+                      ACTIVE
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <button
+                    onClick={() => removeProfile(name)}
+                    className="text-[10px] text-red-400 hover:text-red-300"
+                  >
+                    Delete profile
+                  </button>
+                </div>
+                <SelectField
+                  label="Default backend"
+                  value={p.default_backend ?? c.routing.default_backend}
+                  options={[
+                  "ollama",
+                  "anthropic",
+                  "openai",
+                  "mistral",
+                  "groq",
+                  "openrouter",
+                  "gemini",
+                  "stability",
+                  "echo",
+                ]}
+                  onChange={(v) => updateProfile(name, { default_backend: v })}
+                />
+                <NumField
+                  label="Daily cap (USD, 0 = no cap)"
+                  value={p.daily_spend_cap_usd ?? c.routing.daily_spend_cap_usd}
+                  step={0.5}
+                  onChange={(v) => updateProfile(name, { daily_spend_cap_usd: v })}
+                />
+                <NumField
+                  label="Long-message threshold"
+                  value={p.long_message_token_threshold ?? c.routing.long_message_token_threshold}
+                  onChange={(v) => updateProfile(name, { long_message_token_threshold: v })}
+                />
+              </Group>
+            ))}
+            <Group title="New profile">
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-400 w-44 shrink-0">Name</span>
+                <input
+                  type="text"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addProfile()}
+                  placeholder="e.g. work"
+                  className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 font-mono text-[11px]"
+                />
+                <button
+                  onClick={addProfile}
+                  disabled={!newProfileName.trim()}
+                  className="px-2 py-1 text-[11px] rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-200"
+                >
+                  Add
+                </button>
+              </label>
             </Group>
           </>
         )}

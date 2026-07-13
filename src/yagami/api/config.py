@@ -7,10 +7,12 @@ schema ever grows a secret-like field, redact it here before returning.
 
 PUT accepts a partial JSON patch (any subset of YagamiConfig fields).
 Validates against the full pydantic schema after merging. On success,
-writes the file, invalidates the get_config LRU cache, and returns the
-new config. Live FastAPI does NOT auto-reload the backends - the next
-turn picks up routing.* settings; model URL / API key changes need a
-process restart.
+writes the file, invalidates the get_config LRU cache, pushes the new
+effective RoutingConfig into the live RoutingPolicy (see set_policy /
+RoutingPolicy.update_config), and returns the new config. routing.* changes
+(default backend, spend cap, threshold, active profile) apply on the very
+next turn, no restart. Backend model/URL/API-key changes still need a
+process restart - those backends were constructed once at boot.
 """
 
 from __future__ import annotations
@@ -18,10 +20,21 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from ..config import YagamiConfig, get_config, write_config
+from ..config import YagamiConfig, effective_routing, get_config, write_config
+from ..router.policy import RoutingPolicy
 from ..router.prompts import PHI_MEDICAL_SYSTEM_PROMPT
 
 router = APIRouter(prefix="/api/config", tags=["config"])
+
+# Set once at app startup (main.build_app) via set_policy() - same pattern as
+# sessions_api.set_store(). Lets a live PUT /api/config (including a profile
+# switch) take effect on the policy's next decide() call without a restart.
+_policy: RoutingPolicy | None = None
+
+
+def set_policy(policy: RoutingPolicy) -> None:
+    global _policy
+    _policy = policy
 
 
 def _config_payload() -> dict:
@@ -39,8 +52,9 @@ def _config_payload() -> dict:
             ),
             "live_reload": (
                 "Routing settings (default_backend, daily_spend_cap_usd, "
-                "long_message_token_threshold) take effect on the next turn. "
-                "Model name / URL changes require restarting uvicorn."
+                "long_message_token_threshold, active_profile) take effect on "
+                "the next turn. Backend model name / URL changes require "
+                "restarting uvicorn."
             ),
         },
     }
@@ -54,12 +68,24 @@ async def get_config_endpoint() -> dict:
 class ConfigPatch(BaseModel):
     """Loose patch shape - any field is optional. The server merges and
     re-validates against the full YagamiConfig pydantic model before
-    persisting."""
+    persisting.
+
+    `profiles` is a shallow merge like every other section: PUT-ing
+    `{"profiles": {"work": {...}}}` replaces the *entire* "work" entry, it
+    doesn't deep-merge individual override fields into an existing one. Send
+    the full profile body each time.
+    """
 
     ollama: dict | None = None
     anthropic: dict | None = None
     stability: dict | None = None
+    openai: dict | None = None
+    mistral: dict | None = None
+    groq: dict | None = None
+    openrouter: dict | None = None
+    gemini: dict | None = None
     routing: dict | None = None
+    profiles: dict[str, dict] | None = None
 
 
 @router.put("")
@@ -70,7 +96,8 @@ async def put_config(patch: ConfigPatch) -> dict:
         merged.setdefault(section, {}).update(body)
 
     # Always pin phi_must_be_local on - defense in depth in case the UI
-    # somehow PUTs it false despite the locked toggle.
+    # somehow PUTs it false despite the locked toggle. No profile can touch
+    # this either - see ProfileOverrides.
     merged.setdefault("routing", {})["phi_must_be_local"] = True
 
     try:
@@ -79,4 +106,6 @@ async def put_config(patch: ConfigPatch) -> dict:
         raise HTTPException(422, exc.errors())
 
     path = write_config(new_cfg)
+    if _policy is not None:
+        _policy.update_config(effective_routing(new_cfg))
     return {"ok": True, "path": str(path), **_config_payload()}

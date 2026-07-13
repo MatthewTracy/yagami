@@ -23,7 +23,7 @@ from .memory.embedder import Embedder
 from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
 from . import secrets
-from .config import get_config, get_settings
+from .config import effective_routing, get_config, get_settings
 from .router.classifier import OllamaJSONClassifier
 from .router.policy import RoutingPolicy
 from .storage.db import close_db, open_db
@@ -57,7 +57,8 @@ def build_app() -> FastAPI:
     log.info("backends loaded: %s", sorted(backends.keys()))
 
     classifier = OllamaJSONClassifier(cfg.ollama)
-    policy = RoutingPolicy(config=cfg.routing, backends=backends, classifier=classifier)
+    policy = RoutingPolicy(config=effective_routing(cfg), backends=backends, classifier=classifier)
+    config_api.set_policy(policy)
 
     embedding_worker: EmbeddingWorker | None = None
 
