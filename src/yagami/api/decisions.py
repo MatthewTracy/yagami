@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 import time
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from ..storage.db import get_db
-from ..telemetry.decisions import list_decisions
+from ..telemetry.decisions import export_decisions_csv, list_decisions
 
 router = APIRouter(prefix="/api/decisions", tags=["decisions"])
 
@@ -18,6 +19,29 @@ async def get_decisions(
 ) -> dict:
     rows = await list_decisions(session_id=session_id, limit=limit)
     return {"decisions": rows, "count": len(rows)}
+
+
+@router.get("/export")
+async def export_decisions(
+    session_id: str | None = Query(default=None),
+    limit: int = Query(default=10_000, ge=1, le=100_000),
+) -> Response:
+    """Download the Privacy Ledger as CSV - see telemetry/decisions.py for
+    what's included. Same scrubbing as the UI ledger view; nothing extra
+    leaks through this export."""
+    csv_text = await export_decisions_csv(session_id=session_id, limit=limit)
+    # session_id is caller-supplied; never interpolate it into a header
+    # unsanitized. Session ids are uuid4().hex (see chat/session.py) - a
+    # non-matching value just falls back to the unscoped filename.
+    suffix = ""
+    if session_id and re.fullmatch(r"[a-f0-9]{8,64}", session_id):
+        suffix = f"-{session_id}"
+    filename = f"yagami-privacy-ledger{suffix}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 class FeedbackPayload(BaseModel):

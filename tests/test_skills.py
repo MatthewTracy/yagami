@@ -118,10 +118,47 @@ def test_registry_finds_first_party_skills():
     skills = discover_skills()
     assert "calc.eval" in skills
     assert "web.fetch" in skills
+    assert "kb.recall" in skills
     # Helpers aren't skills.
     assert "base" not in skills
     assert "registry" not in skills
     assert "adapters" not in skills
+    assert "mcp_manager" not in skills
+
+
+# ---- kb.recall ----
+
+
+@pytest.mark.asyncio
+async def test_kb_recall_missing_query():
+    from yagami.skills.kb_recall import KbRecall
+
+    res = await KbRecall().run({}, _ctx())
+    assert res.ok is False
+    assert "query" in res.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_kb_recall_no_matches(tmp_path, monkeypatch):
+    from yagami.skills.kb_recall import KbRecall
+    from yagami.storage.db import close_db, open_db
+
+    await open_db(tmp_path / "kb.db")
+    try:
+        res = await KbRecall().run({"query": "anything"}, _ctx())
+        assert res.ok is True
+        assert "no matching" in res.content.lower()
+    finally:
+        await close_db()
+
+
+def test_kb_recall_sensitivity_ceiling_matches_web_fetch():
+    """kb.recall results flow to the cloud tool loop the same way web.fetch
+    results do (see the module docstring) - it should be at least as
+    conservative, not looser."""
+    from yagami.skills.kb_recall import KbRecall
+
+    assert KbRecall().sensitivity_ceiling == WebFetch().sensitivity_ceiling
 
 
 # ---- sensitivity ceiling enforcement happens in tool_loop, not the skill ----

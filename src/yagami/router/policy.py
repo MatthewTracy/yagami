@@ -55,6 +55,15 @@ class RoutingPolicy:
         self._backends = backends
         self._classifier = classifier
 
+    def update_config(self, config: RoutingConfig) -> None:
+        """Swap in a new effective RoutingConfig - e.g. after `PUT
+        /api/config` or a profile switch (see config.effective_routing).
+        `decide()` reads `self._config` fresh on every call, so this takes
+        effect on the next turn with no restart. A decide() already in
+        flight keeps using whatever it already read - plain attribute
+        assignment, no lock needed."""
+        self._config = config
+
     async def decide(
         self,
         history: list[Message],
@@ -75,7 +84,7 @@ class RoutingPolicy:
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
 
         # 1. Slash-command override at the start of the message.
-        override = parse_override(last_text)
+        override = parse_override(last_text, self._backends.keys())
         if override.forced_backend:
             if spend_blocked and override.forced_backend in ("anthropic", "stability"):
                 raise OverrideRefused(

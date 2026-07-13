@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.2.16"
+version = "0.3.0"
 description = "Local-first AI orchestrator with intelligent routing between local quantized models and cloud LLMs."
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,6 +29,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "openai>=2.0",
     "sqlite-vec>=0.1.6",
+    "mcp>=1.28",
     "tomli>=2.0; python_version<'3.11'",
 ]
 
@@ -38,6 +39,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
 ]
+
+[project.scripts]
+yagami = "yagami.cli:main"
 
 [build-system]
 requires = ["hatchling"]

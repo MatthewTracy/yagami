@@ -13,6 +13,7 @@ type DecisionRow = {
   t_classify_ms: number | null;
   t_first_token_ms: number | null;
   t_total_ms: number | null;
+  profile: string | null;
 };
 
 function fmtMs(ms: number | null): string {
@@ -59,6 +60,16 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
 
   return (
     <div className="space-y-2">
+      <div className="flex justify-end">
+        <a
+          href={`/api/decisions/export?session_id=${sessionId}`}
+          download
+          className="text-[10px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+          title="Download this session's routing decisions as CSV"
+        >
+          Export CSV
+        </a>
+      </div>
       {sessionHasPhi && (
         <div className="text-[11px] p-2 rounded border border-amber-900/50 bg-amber-900/10 text-amber-200 flex items-start gap-2">
           <span className="text-base leading-none">🔒</span>
@@ -97,6 +108,14 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
               ) : (
                 <span className="px-1 py-0.5 rounded bg-amber-900 text-amber-200 text-[9px] font-medium">
                   CLOUD
+                </span>
+              )}
+              {r.profile && (
+                <span
+                  className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[9px] font-medium"
+                  title="Profile active when this decision was made"
+                >
+                  {r.profile}
                 </span>
               )}
             </div>

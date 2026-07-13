@@ -191,6 +191,7 @@ async def chat_endpoint(
                 user_text=user_text,
                 decision=decision_payload,
                 timings={"classify_ms": t_classify_ms},
+                profile=cfg.routing.active_profile or None,
             )
             await _send(ws, {"type": "routing", "decision_id": decision_id, **decision_payload})
 

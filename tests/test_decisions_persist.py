@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import csv
+import io
+
 import pytest
 
 from yagami.chat.session import SessionStore
-from yagami.telemetry.decisions import list_decisions, persist_decision, scrub
+from yagami.telemetry.decisions import (
+    export_decisions_csv,
+    list_decisions,
+    persist_decision,
+    scrub,
+    update_decision_timings,
+)
 
 
 @pytest.mark.asyncio
@@ -81,3 +90,82 @@ def test_scrub_patterns():
     assert "[REDACTED]" in scrub("SSN 123-45-6789")
     assert "[REDACTED]" in scrub("card 4111111111111111")
     assert scrub("nothing sensitive here") == "nothing sensitive here"
+
+
+# ---- Audit export (CSV) ----
+
+
+@pytest.mark.asyncio
+async def test_export_csv_includes_cost_and_token_columns(fresh_db):
+    """list_decisions() intentionally omits tokens_in/out and cost_usd (not
+    shown in the ledger table) - the audit export is the full record and
+    must include them."""
+    store = SessionStore()
+    sid = await store.new_session()
+    decision = {
+        "backend": "anthropic",
+        "is_local": False,
+        "reason": "complexity=high",
+        "classification": {
+            "intent": "complex_reasoning",
+            "sensitivity": "none",
+            "complexity": "high",
+            "source": "classifier",
+        },
+    }
+    decision_id = await persist_decision(session_id=sid, user_text="explain X", decision=decision)
+    await update_decision_timings(
+        decision_id, tokens_in=120, tokens_out=340, cost_usd=0.0123, total_ms=850
+    )
+
+    csv_text = await export_decisions_csv(session_id=sid)
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["tokens_in"] == "120"
+    assert row["tokens_out"] == "340"
+    assert row["cost_usd"] == "0.0123"
+    assert row["backend"] == "anthropic"
+    assert row["intent"] == "complex_reasoning"
+    assert row["feedback_rating"] == ""  # no feedback given
+
+
+@pytest.mark.asyncio
+async def test_export_csv_scrubs_preview_same_as_ledger(fresh_db):
+    store = SessionStore()
+    sid = await store.new_session()
+    decision = {
+        "backend": "ollama",
+        "is_local": True,
+        "reason": "sensitivity=phi; forced local",
+        "classification": {
+            "intent": "simple_qa",
+            "sensitivity": "phi",
+            "complexity": "low",
+            "source": "classifier",
+        },
+    }
+    await persist_decision(session_id=sid, user_text="my SSN is 123-45-6789", decision=decision)
+    csv_text = await export_decisions_csv(session_id=sid)
+    assert "123-45-6789" not in csv_text
+    assert "[REDACTED]" in csv_text
+
+
+@pytest.mark.asyncio
+async def test_export_csv_scoped_to_session(fresh_db):
+    store = SessionStore()
+    sid_a = await store.new_session()
+    sid_b = await store.new_session()
+    decision = {
+        "backend": "ollama",
+        "is_local": True,
+        "reason": "default",
+        "classification": {"intent": "simple_qa", "sensitivity": "none", "complexity": "low"},
+    }
+    await persist_decision(session_id=sid_a, user_text="a", decision=decision)
+    await persist_decision(session_id=sid_b, user_text="b", decision=decision)
+
+    csv_text = await export_decisions_csv(session_id=sid_a)
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert len(rows) == 1
+    assert rows[0]["session_id"] == sid_a
