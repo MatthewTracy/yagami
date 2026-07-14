@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.4.1"
+version = "0.4.2"
 description = "Private AI policy gateway for governed routing across local models, cloud LLMs, and tools."
 keywords = ["ai-gateway", "llm", "privacy", "policy", "openai", "mcp", "local-ai"]
 readme = "README.md"

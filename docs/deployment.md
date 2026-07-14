@@ -14,8 +14,8 @@ For production, prefer the exact release tag (or, best, the digest recorded in
 the matching GitHub release) over rebuilding an unreviewed working tree:
 
 ```powershell
-docker pull ghcr.io/matthewtracy/yagami:0.4.1
-docker image inspect ghcr.io/matthewtracy/yagami:0.4.1 --format '{{json .RepoDigests}}'
+docker pull ghcr.io/matthewtracy/yagami:0.4.2
+docker image inspect ghcr.io/matthewtracy/yagami:0.4.2 --format '{{json .RepoDigests}}'
 ```
 
 Yagami does not publish a mutable `latest` container tag. Pinning the digest

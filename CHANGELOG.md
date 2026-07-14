@@ -8,6 +8,15 @@ shipped.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-14
+
+### Fixed
+- Use canonical GitHub URLs for every repository link in the packaged README,
+  so documentation, contribution, security, license, configuration, and source
+  links work when the project description is rendered on PyPI.
+- Pass the repository explicitly when creating GitHub Releases from downloaded
+  workflow artifacts, where no Git checkout is present.
+
 ## [0.4.1] - 2026-07-14
 
 ### Added
