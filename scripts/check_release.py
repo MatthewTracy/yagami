@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import os
 import re
 import sys
 import tomllib
@@ -27,7 +26,7 @@ def _package_version() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", default=os.getenv("GITHUB_REF_NAME", ""))
+    parser.add_argument("--tag", default="")
     args = parser.parse_args()
 
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
