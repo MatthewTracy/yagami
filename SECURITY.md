@@ -35,8 +35,9 @@ administrator rewriting both events and hashes.
 
 ## Supported versions
 
-Yagami is pre-1.0 (alpha). Only `main` is supported — there are no
-maintained release branches yet. Always report against the latest commit.
+Yagami is pre-1.0 (alpha). The latest `0.4.x` release and `main` receive
+security fixes; there are no separately maintained release branches yet.
+Reports should identify the exact version or container digest affected.
 
 ## Reporting a vulnerability
 

@@ -10,6 +10,19 @@ $env:YAGAMI_AUDIT_REQUIRED = "true"
 docker compose up --build
 ```
 
+For production, prefer the exact release tag (or, best, the digest recorded in
+the matching GitHub release) over rebuilding an unreviewed working tree:
+
+```powershell
+docker pull ghcr.io/matthewtracy/yagami:0.4.1
+docker image inspect ghcr.io/matthewtracy/yagami:0.4.1 --format '{{json .RepoDigests}}'
+```
+
+Yagami does not publish a mutable `latest` container tag. Pinning the digest
+prevents a registry tag change from silently changing the deployed image. See
+[Release integrity and verification](releases.md) for checksum, SBOM, and
+attestation commands.
+
 The supplied deployment:
 
 - Runs as a non-root user.

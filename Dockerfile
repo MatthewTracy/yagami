@@ -1,15 +1,21 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim-bookworm AS builder
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+FROM ${PYTHON_IMAGE} AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 WORKDIR /build
 
+COPY requirements.build.lock requirements.container.lock ./
+RUN python -m pip install --require-hashes --no-cache-dir -r requirements.build.lock && \
+    python -m pip wheel --require-hashes --wheel-dir /wheels \
+      -r requirements.container.lock
+
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN python -m pip wheel --wheel-dir /wheels .
+RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -24,7 +30,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN addgroup --system yagami && adduser --system --ingroup yagami --home /app yagami
 WORKDIR /app
 COPY --from=builder /wheels /wheels
-RUN python -m pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN python -m pip install --no-index --no-cache-dir /wheels/*.whl && rm -rf /wheels
 COPY --chown=yagami:yagami config ./config
 RUN mkdir -p /data && chown yagami:yagami /data
 
