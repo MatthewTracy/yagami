@@ -26,7 +26,7 @@ jobs:
           python -m build
           python -m twine check dist/*
       - name: Attest Python distributions
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
       - uses: actions/upload-artifact@v6
@@ -65,7 +65,7 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           platforms: linux/amd64,linux/arm64
       - name: Attest container image
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build.outputs.digest }}
