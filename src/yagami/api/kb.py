@@ -56,24 +56,16 @@ def _configured_roots() -> list[Path]:
 
 def _resolve_allowed_folder(raw_path: str) -> Path:
     candidate = os.path.realpath(os.path.expanduser(raw_path))
-    allowed = False
     for root in _configured_roots():
-        try:
-            allowed = os.path.commonpath((str(root), candidate)) == str(root)
-        except ValueError:
-            # Different drives on Windows cannot share a common path.
+        trusted_root = os.path.realpath(root)
+        trusted_prefix = os.path.join(trusted_root, "")
+        if candidate != trusted_root and not candidate.startswith(trusted_prefix):
             continue
-        if allowed:
-            break
-    if not allowed:
-        raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
-    try:
-        folder = Path(candidate).resolve(strict=True)
-    except OSError as exc:
-        raise HTTPException(400, "not a readable directory") from exc
-    if not folder.is_dir():
-        raise HTTPException(400, "not a directory")
-    return folder
+        folder = Path(candidate)
+        if not folder.is_dir():
+            raise HTTPException(400, "not a readable directory")
+        return folder
+    raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
 
 
 async def _run_index(job_id: str, folder: Path, *, prune_missing: bool) -> dict:
