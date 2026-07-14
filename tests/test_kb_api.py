@@ -80,12 +80,14 @@ async def test_index_folder_end_to_end_without_live_ollama(tmp_config, tmp_path)
     the connection error and returns None (see memory/embedder.py), so
     indexing should still complete (rows just land 'failed', not crash the
     request). Confirms the endpoint degrades instead of 500ing."""
-    (tmp_path / "doc.txt").write_text("some indexable content")
+    folder = tmp_path / "documents"
+    folder.mkdir()
+    (folder / "doc.txt").write_text("some indexable content")
     app = build_app()
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
-            r = await c.post("/api/kb/index", json={"path": str(tmp_path), "wait": True})
+            r = await c.post("/api/kb/index", json={"path": str(folder), "wait": True})
             assert r.status_code == 200
             data = r.json()
             assert data["files_indexed"] == 1

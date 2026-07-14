@@ -58,12 +58,29 @@ def _resolve_allowed_folder(raw_path: str) -> Path:
     candidate = os.path.realpath(os.path.expanduser(raw_path))
     for root in _configured_roots():
         trusted_root = os.path.realpath(root)
-        trusted_prefix = os.path.join(trusted_root, "")
-        if candidate != trusted_root and not candidate.startswith(trusted_prefix):
+        candidate_key = os.path.normcase(candidate)
+        trusted_key = os.path.normcase(trusted_root)
+        trusted_prefix = os.path.join(trusted_key, "")
+        if candidate_key != trusted_key and not candidate_key.startswith(trusted_prefix):
             continue
-        folder = Path(candidate)
-        if not folder.is_dir():
-            raise HTTPException(400, "not a readable directory")
+        relative = os.path.relpath(candidate, trusted_root)
+        folder = root
+        if relative == os.curdir:
+            return folder
+        for component in relative.split(os.sep):
+            if component in {"", os.curdir, os.pardir}:
+                raise HTTPException(403, "invalid directory component")
+            try:
+                child = next((entry for entry in folder.iterdir() if entry.name == component), None)
+                if child is None:
+                    raise HTTPException(400, "not a readable directory")
+                folder = child.resolve(strict=True)
+            except OSError as exc:
+                raise HTTPException(400, "not a readable directory") from exc
+            if not folder.is_dir():
+                raise HTTPException(400, "not a readable directory")
+            if folder != root and not folder.is_relative_to(root):
+                raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
         return folder
     raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
 
