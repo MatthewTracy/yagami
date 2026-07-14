@@ -69,6 +69,17 @@ async def spend_today_usd() -> float:
     return float(row[0]) if row and row[0] is not None else 0.0
 
 
+async def spend_project_today_usd(project_id: str) -> float:
+    cutoff_ms = _local_day_start_ms()
+    db = get_db()
+    async with db.execute(
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM decisions WHERE project_id=? AND created_at>=?",
+        (project_id, cutoff_ms),
+    ) as cursor:
+        row = await cursor.fetchone()
+    return float(row[0]) if row and row[0] is not None else 0.0
+
+
 def _local_day_start_ms(now: datetime | None = None) -> int:
     if now is None:
         local_now = datetime.now().astimezone()

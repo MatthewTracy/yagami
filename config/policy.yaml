@@ -1,0 +1,39 @@
+id: yagami-default
+version: 1.0.0
+mode: enforce
+
+defaults:
+  route: auto
+  transform: none
+  output_action: allow
+  retention_days: 30
+  denied_tools: []
+  require_approval_for_tools:
+    - file.write
+    - file.delete
+    - email.send
+    - payment.create
+    - sql.execute
+
+rules:
+  - id: sensitive-data-local
+    description: PHI, medical PHI, and secrets must remain on a local backend.
+    priority: 1000
+    match:
+      sensitivities: [phi, phi_medical, secret]
+    effect:
+      route: local
+      retention_days: 7
+
+  - id: destructive-tools-need-approval
+    description: Side-effecting tools require an explicit approval workflow.
+    priority: 500
+    match:
+      tools: [file.write, file.delete, email.send, payment.create, sql.execute]
+    effect:
+      require_approval_for_tools:
+        - file.write
+        - file.delete
+        - email.send
+        - payment.create
+        - sql.execute

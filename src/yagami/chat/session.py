@@ -8,16 +8,37 @@ from ..storage.db import get_db, now_ms
 
 
 class SessionStore:
-    async def new_session(self) -> str:
-        sid = uuid4().hex
+    async def new_session(
+        self,
+        *,
+        session_id: str | None = None,
+        title: str | None = None,
+        channel: str = "chat",
+        project_id: str | None = None,
+    ) -> str:
+        sid = session_id or uuid4().hex
         ts = now_ms()
         db = get_db()
         await db.execute(
-            "INSERT INTO sessions(id, created_at, updated_at, title) VALUES(?, ?, ?, NULL)",
-            (sid, ts, ts),
+            "INSERT INTO sessions(id, created_at, updated_at, title, channel, project_id)"
+            " VALUES(?, ?, ?, ?, ?, ?)",
+            (sid, ts, ts, title, channel, project_id),
         )
         await db.commit()
         return sid
+
+    async def ensure_gateway_session(self, session_id: str, *, project_id: str) -> str:
+        """Create the hidden audit parent for stateless gateway decisions."""
+        db = get_db()
+        ts = now_ms()
+        await db.execute(
+            "INSERT INTO sessions(id, created_at, updated_at, title, channel, project_id)"
+            " VALUES(?, ?, ?, ?, 'gateway', ?)"
+            " ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at",
+            (session_id, ts, ts, f"Gateway: {project_id}"[:120], project_id),
+        )
+        await db.commit()
+        return session_id
 
     async def session_exists(self, session_id: str) -> bool:
         db = get_db()
@@ -96,7 +117,7 @@ class SessionStore:
         db = get_db()
         async with db.execute(
             "SELECT id, created_at, updated_at, title FROM sessions"
-            " ORDER BY updated_at DESC LIMIT ?",
+            " WHERE channel='chat' ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ) as cur:
             return [dict(row) async for row in cur]

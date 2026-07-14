@@ -152,6 +152,69 @@ async def test_one_tool_call_then_final_text():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "artifact"),
+    [
+        ({"denied_tools": {"test.*"}}, "policy_denied"),
+        ({"approval_required": {"test.echo"}}, "approval_required"),
+    ],
+)
+async def test_tool_policy_denies_or_requires_approval(kwargs, artifact):
+    client = _ScriptedClient(
+        [
+            _Resp(
+                content=[
+                    _Block(type="tool_use", id="tool_1", name="test.echo", input={"text": "hi"})
+                ]
+            ),
+            _Resp(content=[_Block(type="text", text="not executed")]),
+        ]
+    )
+    chunks = [
+        chunk
+        async for chunk in tool_loop.run(
+            _make_backend(client),
+            [Message(role="user", content="x")],
+            BackendOptions(),
+            session_id="s1",
+            skills={"test.echo": EchoSkill()},
+            **kwargs,
+        )
+    ]
+    tool_chunk = next(chunk for chunk in chunks if chunk["type"] == "tool_call")
+    assert tool_chunk["meta"]["ok"] is False
+    assert tool_chunk["meta"]["artifacts"][artifact] is True
+
+
+@pytest.mark.asyncio
+async def test_approved_tool_executes():
+    client = _ScriptedClient(
+        [
+            _Resp(
+                content=[
+                    _Block(type="tool_use", id="tool_1", name="test.echo", input={"text": "hi"})
+                ]
+            ),
+            _Resp(content=[_Block(type="text", text="done")]),
+        ]
+    )
+    chunks = [
+        chunk
+        async for chunk in tool_loop.run(
+            _make_backend(client),
+            [Message(role="user", content="x")],
+            BackendOptions(),
+            session_id="s1",
+            skills={"test.echo": EchoSkill()},
+            approval_required={"test.echo"},
+            approved_tools={"test.echo"},
+        )
+    ]
+    tool_chunk = next(chunk for chunk in chunks if chunk["type"] == "tool_call")
+    assert tool_chunk["meta"]["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_unknown_skill_returns_error_to_model():
     client = _ScriptedClient(
         [

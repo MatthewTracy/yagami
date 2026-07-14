@@ -1,6 +1,6 @@
 # Yagami eval suite
 
-Two eval runners, both hit a running Yagami WS endpoint and grade the actual behavior.
+Three eval runners grade routing, refusal behavior, and end-to-end gateway containment.
 
 ## When to run
 
@@ -72,3 +72,22 @@ Refusal fixture shape:
 ## Adding a refusal phrase
 
 If you find a new way the model dodges, add it to `REFUSAL_PHRASES` in [run_refusals.py](run_refusals.py).
+
+## run_containment - policy-plane security benchmark
+
+This benchmark calls `/v1/policy/preview`, so it exercises project policy,
+history/system-context lineage, the local classifier, explicit cloud route
+containment, and tool approval requirements without making provider generation
+calls. The corpus includes identifiers, secrets, clinical text, RAG-style
+context contamination, governed tools, and benign false-positive controls.
+
+```powershell
+$env:YAGAMI_API_KEY = "your-project-key"
+python -m evals.run_containment --cloud-model anthropic
+python -m evals.run_containment --out .tmp/containment.json --junit .tmp/containment.xml
+```
+
+The named cloud backend must be configured because benign controls verify that
+Yagami does not force all public workloads local. Exit code `2` means at least
+one containment or false-positive regression. Add organization-specific cases
+to `fixtures/containment.jsonl`; do not commit real identifiers or secrets.

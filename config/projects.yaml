@@ -1,0 +1,10 @@
+version: 1.0.0
+
+defaults:
+  requests_per_minute: 120
+  max_concurrent_requests: 8
+  daily_spend_usd: null
+  allowed_purposes: []
+  allowed_jurisdictions: []
+
+projects: {}

@@ -1,21 +1,37 @@
 # Security Policy
 
-Yagami's core pitch is keeping PHI, secrets, and clinical content on-device
+Yagami's core pitch is keeping detected or caller-declared PHI, secrets, and clinical content on-device
 (see the [Privacy posture](README.md#privacy-posture-the-short-version)
 table in the README). Reports about routing, memory, or storage paths that
 could leak that content off-device are treated as high priority.
 
-Yagami is designed to listen on localhost. It has no built-in user
-authentication. Binding to a non-loopback address requires the explicit
-`--allow-remote` flag and should only be done behind a trusted, authenticated
-reverse proxy. Browser WebSocket connections are restricted to local origins
-plus exact origins explicitly configured with `--trusted-origin`.
+Yagami listens on localhost by default. The `/v1` gateway supports bearer API
+keys mapped to project identities through `YAGAMI_API_KEYS`, including multiple
+scoped separation-of-duties keys per project. Headless container
+deployments require authentication at startup. The local administration and
+chat APIs are intentionally not exposed in headless mode; non-headless remote
+deployments should still use a trusted authenticated reverse proxy. Browser
+WebSocket connections are restricted to local origins plus exact origins
+explicitly configured with `--trusted-origin`.
 
 The local SQLite database is not application-encrypted. Users handling PHI or
 other sensitive content should enable BitLocker, FileVault, or equivalent
 full-disk encryption. The Settings Privacy tab provides full JSON export,
 retention, and deletion controls; deleting a conversation also removes its
 saved images and derived cross-session memory rows.
+
+Sensitivity detection includes deterministic rules and a local model and is
+not infallible. Once content is detected or declared sensitive, local-only
+enforcement is deterministic and classifier outages fail closed. Strict
+integrations should declare sensitivity in request metadata or use a policy
+whose default route is local. See `docs/threat-model.md` for trust boundaries.
+
+Generated text can be buffered and locally inspected before delivery with a
+policy `output_action` of `redact` or `block`. Tool approvals are one-time,
+project/purpose-bound capabilities stored only as hashes. For tamper evidence,
+set a separate `YAGAMI_AUDIT_KEY` and `YAGAMI_AUDIT_REQUIRED=true`; unkeyed
+chains detect accidental changes but cannot authenticate against a database
+administrator rewriting both events and hashes.
 
 ## Supported versions
 

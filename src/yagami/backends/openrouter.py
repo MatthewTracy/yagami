@@ -30,7 +30,13 @@ def build(cfg: YagamiConfig, secrets_get) -> "OpenRouterBackend | None":
 
 class OpenRouterBackend(OpenAICompatBackend):
     name = "openrouter"
-    capabilities = {Capability.TEXT, Capability.LONG_CONTEXT, Capability.CODE, Capability.VISION}
+    capabilities = {
+        Capability.TEXT,
+        Capability.LONG_CONTEXT,
+        Capability.CODE,
+        Capability.VISION,
+        Capability.TOOLS,
+    }
     pricing = _PRICING
 
     def __init__(self, cfg: YagamiConfig, api_key: str) -> None:

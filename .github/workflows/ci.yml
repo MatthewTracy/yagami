@@ -56,3 +56,17 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=high
       - run: npm run build
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: yagami:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

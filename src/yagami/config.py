@@ -4,10 +4,10 @@ import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,6 +79,9 @@ class RoutingConfig(BaseModel):
     # Distinct from daily_spend_cap_usd=0, which means NO cap (a trap that
     # used to be mis-documented as "no cloud spend").
     block_cloud: bool = False
+    # A classifier outage must never turn into accidental cloud egress.
+    # Automatic routes fall back to local and explicit cloud routes are refused.
+    fail_closed_on_classifier_error: bool = True
     # "" = no profile active, [routing] above applies directly. Otherwise a
     # key into YagamiConfig.profiles - see ProfileOverrides.
     active_profile: str = ""
@@ -116,15 +119,52 @@ class PrivacyConfig(BaseModel):
 
 
 class McpServerConfig(BaseModel):
-    """One external MCP server to connect to over stdio. `command` is
-    launched as a subprocess (e.g. `npx`, `python`, `uvx`) with `args`;
-    `env` is merged into that subprocess's environment (useful for API keys
-    an MCP server itself needs - those are the MCP server's own secrets,
-    not read from Yagami's keyring)."""
+    """External MCP server over local stdio or remote Streamable HTTP.
 
-    command: str
+    Stdio `env` is merged into the administrator-installed subprocess.
+    Remote credentials are read only from the named environment variables and
+    are never inherited from an inbound Yagami bearer token.
+    """
+
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    url: str = ""
+    auth: Literal["none", "bearer_env", "client_credentials"] = "none"
+    bearer_token_env: str = ""
+    oauth_token_url: str = ""
+    oauth_client_id_env: str = ""
+    oauth_client_secret_env: str = ""
+    oauth_scopes: list[str] = Field(default_factory=list)
+    oauth_resource: str = ""
+    oauth_token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
+        "client_secret_basic"
+    )
+
+    @model_validator(mode="after")
+    def validate_transport(self) -> "McpServerConfig":
+        if self.transport == "stdio":
+            if not self.command:
+                raise ValueError("stdio MCP servers require command")
+            return self
+        if not self.url:
+            raise ValueError("streamable_http MCP servers require url")
+        if self.auth == "bearer_env" and not self.bearer_token_env:
+            raise ValueError("bearer_env MCP auth requires bearer_token_env")
+        if self.auth == "client_credentials":
+            required = {
+                "oauth_token_url": self.oauth_token_url,
+                "oauth_client_id_env": self.oauth_client_id_env,
+                "oauth_client_secret_env": self.oauth_client_secret_env,
+                "oauth_resource": self.oauth_resource,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    "client_credentials MCP auth missing " + ", ".join(sorted(missing))
+                )
+        return self
 
 
 class YagamiConfig(BaseModel):
@@ -175,6 +215,29 @@ class Settings(BaseSettings):
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
     )
     db_path: str = Field(default="yagami.db", validation_alias=AliasChoices("YAGAMI_DB_PATH"))
+    policy_path: str = Field(
+        default="config/policy.yaml", validation_alias=AliasChoices("YAGAMI_POLICY_PATH")
+    )
+    projects_path: str = Field(
+        default="config/projects.yaml", validation_alias=AliasChoices("YAGAMI_PROJECTS_PATH")
+    )
+    api_keys: str = Field(default="", validation_alias=AliasChoices("YAGAMI_API_KEYS"))
+    require_auth: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_REQUIRE_AUTH"))
+    headless: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_HEADLESS"))
+    metrics_enabled: bool = Field(
+        default=True, validation_alias=AliasChoices("YAGAMI_METRICS_ENABLED")
+    )
+    transform_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY"))
+    transform_vault_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86_400,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_VAULT_TTL_SECONDS"),
+    )
+    audit_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY"))
+    audit_required: bool = Field(
+        default=False, validation_alias=AliasChoices("YAGAMI_AUDIT_REQUIRED")
+    )
 
 
 @lru_cache

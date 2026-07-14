@@ -34,6 +34,11 @@ async def persist_decision(
     decision: dict,
     timings: dict | None = None,
     profile: str | None = None,
+    request_id: str | None = None,
+    project_id: str | None = None,
+    channel: str = "chat",
+    policy_decision: dict | None = None,
+    request_context: dict | None = None,
 ) -> int:
     preview = scrub(user_text)[:280]
     classification = decision.get("classification", {})
@@ -45,8 +50,9 @@ async def persist_decision(
     cur = await db.execute(
         "INSERT INTO decisions("
         " session_id, created_at, backend, is_local, reason, classification, scrubbed_preview,"
-        " source, t_classify_ms, t_first_token_ms, t_total_ms, profile"
-        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " source, t_classify_ms, t_first_token_ms, t_total_ms, profile, request_id, project_id,"
+        " channel, policy_decision, request_context"
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_id,
             now_ms(),
@@ -60,6 +66,11 @@ async def persist_decision(
             t.get("first_token_ms"),
             t.get("total_ms"),
             profile or None,
+            request_id,
+            project_id,
+            channel,
+            json.dumps(policy_decision, sort_keys=True) if policy_decision is not None else None,
+            json.dumps(request_context, sort_keys=True) if request_context is not None else None,
         ),
     )
     await db.commit()
@@ -89,11 +100,23 @@ async def update_decision_timings(
     await db.commit()
 
 
+async def update_decision_passport(decision_id: int, policy_decision: dict) -> None:
+    if decision_id <= 0:
+        return
+    db = get_db()
+    await db.execute(
+        "UPDATE decisions SET policy_decision=? WHERE id=?",
+        (json.dumps(policy_decision, sort_keys=True), decision_id),
+    )
+    await db.commit()
+
+
 async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> list[dict]:
     db = get_db()
     cols = (
         "id, session_id, created_at, backend, is_local, reason, classification,"
-        " scrubbed_preview, source, t_classify_ms, t_first_token_ms, t_total_ms, profile"
+        " scrubbed_preview, source, t_classify_ms, t_first_token_ms, t_total_ms, profile,"
+        " request_id, project_id, channel, policy_decision, request_context"
     )
     if session_id:
         sql = f"SELECT {cols} FROM decisions WHERE session_id=? ORDER BY id DESC LIMIT ?"
@@ -110,6 +133,12 @@ async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> 
                 d["classification"] = json.loads(d["classification"])
             except (TypeError, ValueError):
                 pass
+            for field in ("policy_decision", "request_context"):
+                try:
+                    if d[field] is not None:
+                        d[field] = json.loads(d[field])
+                except (TypeError, ValueError):
+                    pass
             rows.append(d)
         return rows
 
@@ -122,6 +151,13 @@ _EXPORT_HEADER = [
     "is_local",
     "reason",
     "profile",
+    "request_id",
+    "project_id",
+    "channel",
+    "policy_id",
+    "policy_version",
+    "policy_hash",
+    "matched_rules",
     "intent",
     "sensitivity",
     "complexity",
@@ -150,7 +186,8 @@ async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10
     cols = (
         "d.id, d.session_id, d.created_at, d.backend, d.is_local, d.reason, d.profile,"
         " d.classification, d.scrubbed_preview, d.t_classify_ms, d.t_first_token_ms,"
-        " d.t_total_ms, d.tokens_in, d.tokens_out, d.cost_usd, f.rating AS feedback_rating"
+        " d.t_total_ms, d.tokens_in, d.tokens_out, d.cost_usd, d.request_id, d.project_id,"
+        " d.channel, d.policy_decision, f.rating AS feedback_rating"
     )
     base = f"SELECT {cols} FROM decisions d LEFT JOIN feedback f ON f.decision_id = d.id"
     if session_id:
@@ -170,6 +207,10 @@ async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10
                 cls = json.loads(row["classification"])
             except (TypeError, ValueError):
                 cls = {}
+            try:
+                policy = json.loads(row["policy_decision"]) if row["policy_decision"] else {}
+            except (TypeError, ValueError):
+                policy = {}
             created_iso = datetime.fromtimestamp(
                 row["created_at"] / 1000, tz=timezone.utc
             ).isoformat()
@@ -182,6 +223,13 @@ async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10
                     bool(row["is_local"]),
                     row["reason"],
                     row["profile"] or "",
+                    row["request_id"] or "",
+                    row["project_id"] or "",
+                    row["channel"] or "chat",
+                    policy.get("policy_id", ""),
+                    policy.get("policy_version", ""),
+                    policy.get("policy_hash", ""),
+                    "|".join(policy.get("matched_rules", [])),
                     cls.get("intent", ""),
                     cls.get("sensitivity", ""),
                     cls.get("complexity", ""),

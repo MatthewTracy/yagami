@@ -8,6 +8,38 @@ shipped.
 
 ## [Unreleased]
 
+### Added
+- OpenAI-compatible `POST /v1/chat/completions`, `GET /v1/models`, and a core
+  `POST /v1/responses` text/streaming surface for headless integrations.
+- Versioned YAML/JSON policy engine with canonical policy hashes, restrictive
+  rule merging, hot reload, caller context, sensitivity hints, shadow mode,
+  and `POST /v1/policy/preview`.
+- Bearer API keys mapped to project identities through `YAGAMI_API_KEYS`.
+- Scoped service accounts, multiple separation-of-duties keys per project,
+  hot-reloaded project rate/concurrency/spend/context limits, and authenticated
+  metrics/audit operations.
+- Content-free context-lineage graphs, AES-GCM local tokenization and
+  rehydration, output allow/redact/block DLP, and policy simulation/replay.
+- Caller-defined Chat Completions function tools plus durable, short-lived,
+  one-time approval capabilities bound to project, purpose, and tool pattern.
+- Governed remote MCP over Streamable HTTP with HTTPS enforcement, dedicated
+  bearer secrets or OAuth client credentials, audience/resource binding, and
+  token caching.
+- Project-scoped tamper-evident SHA-256/HMAC audit chains with verification and
+  SIEM-friendly NDJSON export.
+- A containment benchmark with synthetic PHI/PII/secrets, RAG contamination,
+  tool-governance cases, benign controls, and JSON/JUnit output.
+- Policy passports on gateway ledger rows, privacy-safe OpenTelemetry span
+  attributes, and low-cardinality Prometheus metrics.
+- Hardened non-root Docker image, Compose deployment, container CI, and tagged
+  release workflow for wheels and multi-architecture GHCR images with build
+  provenance attestations.
+
+### Security
+- Explicit remote backend and slash-command routes now run semantic privacy
+  classification before cloud egress. Classifier failures fail local for
+  automatic routing and refuse explicit remote routes.
+
 ### Fixed
 - **PHI-history gate now covers every cloud text backend.** It previously
   matched `backend.name == "anthropic"` literally, so `/mistral`, `/groq`,

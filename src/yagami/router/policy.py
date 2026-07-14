@@ -75,6 +75,10 @@ class RoutingPolicy:
         self._backends = backends
         self._classifier = classifier
 
+    @property
+    def config(self) -> RoutingConfig:
+        return self._config
+
     def update_config(self, config: RoutingConfig) -> None:
         """Swap in a new effective RoutingConfig - e.g. after `PUT
         /api/config` or a profile switch (see config.effective_routing).
@@ -117,7 +121,15 @@ class RoutingPolicy:
                     "override refused: cloud routes blocked (daily spend cap reached or "
                     f"block_cloud active); {override.forced_backend!r} is cloud"
                 )
-            return self._apply_override(override, last_text, history_has_phi=history_has_phi)
+            classified_sensitivity = await self._cloud_override_sensitivity(
+                override.stripped_text, target
+            )
+            return self._apply_override(
+                override,
+                last_text,
+                history_has_phi=history_has_phi,
+                classified_sensitivity=classified_sensitivity,
+            )
 
         # 2. Programmatic force_backend (WS field).
         if force_backend:
@@ -127,8 +139,12 @@ class RoutingPolicy:
                     "force_backend refused: cloud routes blocked (daily spend cap reached "
                     f"or block_cloud active); {force_backend!r} is cloud"
                 )
+            classified_sensitivity = await self._cloud_override_sensitivity(last_text, target)
             return self._apply_force_backend(
-                force_backend, last_text, history_has_phi=history_has_phi
+                force_backend,
+                last_text,
+                history_has_phi=history_has_phi,
+                classified_sensitivity=classified_sensitivity,
             )
 
         # 3. Rule-based fast-path bypass for high-confidence cases.
@@ -152,6 +168,18 @@ class RoutingPolicy:
                 source = "classifier"
             except Exception:
                 classification = self._fallback_classify(last_text)
+                if self._config.fail_closed_on_classifier_error:
+                    cls_dict = classification.model_dump(mode="json")
+                    cls_dict["source"] = "fallback-after-error-local"
+                    backend = self._preferred_local()
+                    return RoutingDecision(
+                        backend=backend,
+                        reason=(
+                            "privacy classifier unavailable; failed closed to local "
+                            f"({backend.name})"
+                        ),
+                        classification=cls_dict,
+                    )
                 source = "fallback-after-error"
 
         return self._apply_rules(
@@ -168,10 +196,11 @@ class RoutingPolicy:
         original_text: str,
         *,
         history_has_phi: bool = False,
+        classified_sensitivity: Sensitivity | None = None,
     ) -> RoutingDecision:
         from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
 
-        sensitive: Sensitivity | None = None
+        sensitive: Sensitivity | None = classified_sensitivity
         if _has_phi(override.stripped_text):
             sensitive = Sensitivity.PHI
         elif _has_secret(override.stripped_text):
@@ -231,10 +260,11 @@ class RoutingPolicy:
         last_text: str,
         *,
         history_has_phi: bool = False,
+        classified_sensitivity: Sensitivity | None = None,
     ) -> RoutingDecision:
         from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
 
-        sensitive: Sensitivity | None = None
+        sensitive: Sensitivity | None = classified_sensitivity
         if _has_phi(last_text):
             sensitive = Sensitivity.PHI
         elif _has_secret(last_text):
@@ -266,6 +296,41 @@ class RoutingPolicy:
             if sensitive
             else None,
         )
+
+    async def _cloud_override_sensitivity(
+        self, text: str, target: Backend | None
+    ) -> Sensitivity | None:
+        """Classify explicit remote routes before honoring them.
+
+        Regex checks in ``_apply_override`` remain a second layer. This
+        classifier pass catches semantic medical/private content that has no
+        obvious identifier pattern. A classifier outage refuses the remote
+        route instead of silently treating the request as non-sensitive.
+        """
+        if target is None or target.is_local or self._classifier is None:
+            return None
+        bypass = can_bypass(text)
+        if bypass is not None and bypass.sensitivity in (
+            Sensitivity.PHI,
+            Sensitivity.PHI_MEDICAL,
+            Sensitivity.SECRET,
+        ):
+            return bypass.sensitivity
+        try:
+            classification = await self._classifier(text)
+        except Exception as exc:
+            if self._config.fail_closed_on_classifier_error:
+                raise OverrideRefused(
+                    "cloud route refused: privacy classifier unavailable; retry or use local"
+                ) from exc
+            return None
+        if classification.sensitivity in (
+            Sensitivity.PHI,
+            Sensitivity.PHI_MEDICAL,
+            Sensitivity.SECRET,
+        ):
+            return classification.sensitivity
+        return None
 
     def _apply_rules(
         self,

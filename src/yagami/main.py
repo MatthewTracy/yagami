@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket
+from fastapi import Depends, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -21,10 +21,12 @@ from .api import ingest as ingest_api
 from .api import kb as kb_api
 from .api import mcp as mcp_api
 from .api import memory as memory_api
+from .api import openai_compat as openai_compat_api
 from .api import privacy as privacy_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
 from .backends.registry import build_all
+from .auth import Authenticator, Principal, require_scope
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint, set_memory_worker, set_retriever
 from .memory.embedder import Embedder
@@ -33,11 +35,19 @@ from .memory.worker import EmbeddingWorker
 from .privacy import cleanup_expired_sessions
 from . import secrets
 from .config import effective_routing, get_config, get_settings
+from .gateway import GatewayService
+from .governance import ApprovalStore, PrivacyTransformer
+from .policy import PolicyEngine
+from .projects import ProjectGovernor, ProjectRegistry
 from .router.classifier import OllamaJSONClassifier
 from .router.policy import RoutingPolicy
 from .skills import mcp_manager as mcp_manager_mod
 from .skills.mcp_manager import McpManager
 from .storage.db import close_db, open_db
+from .runtime import AppRuntime
+from .telemetry.observability import GatewayMetrics
+from .telemetry.audit import AuditLedger
+from . import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("yagami")
@@ -104,7 +114,8 @@ async def _close_resource(name: str, resource: object) -> None:
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    configured = os.getenv("YAGAMI_PROJECT_ROOT")
+    return Path(configured).resolve() if configured else Path(__file__).resolve().parents[2]
 
 
 def build_app() -> FastAPI:
@@ -132,6 +143,34 @@ def build_app() -> FastAPI:
     classifier = OllamaJSONClassifier(cfg.ollama)
     policy = RoutingPolicy(config=effective_routing(cfg), backends=backends, classifier=classifier)
     config_api.set_policy(policy)
+    policy_path = Path(settings.policy_path)
+    if not policy_path.is_absolute():
+        policy_path = _project_root() / policy_path
+    policy_engine = PolicyEngine(policy_path)
+    projects_path = Path(settings.projects_path)
+    if not projects_path.is_absolute():
+        projects_path = _project_root() / projects_path
+    projects = ProjectRegistry(projects_path)
+    governor = ProjectGovernor(projects)
+    authenticator = Authenticator(settings)
+    metrics = GatewayMetrics()
+    audit = AuditLedger(key=settings.audit_key, required=settings.audit_required)
+    approvals = ApprovalStore()
+    transformer = PrivacyTransformer(
+        key=settings.transform_key,
+        ttl_seconds=settings.transform_vault_ttl_seconds,
+    )
+    gateway = GatewayService(
+        routing_policy=policy,
+        backends=backends,
+        policy_engine=policy_engine,
+        sessions=sessions,
+        metrics=metrics,
+        transformer=transformer,
+        governor=governor,
+        audit=audit,
+        approvals=approvals,
+    )
 
     embedding_worker: EmbeddingWorker | None = None
     embedder: Embedder | None = None
@@ -143,6 +182,12 @@ def build_app() -> FastAPI:
         nonlocal embedding_worker, embedder, mcp_manager, retention_task
         await open_db(db_path)
         try:
+            expired_tokens = await transformer.cleanup_expired()
+            if expired_tokens:
+                log.info("privacy transform vault: removed %d expired token(s)", expired_tokens)
+            expired_approvals = await approvals.cleanup_expired()
+            if expired_approvals:
+                log.info("tool approvals: removed %d expired approval(s)", expired_approvals)
             sessions_api.set_store(sessions)
             set_memory_worker(None)
             set_retriever(None)
@@ -203,7 +248,31 @@ def build_app() -> FastAPI:
             await asyncio.gather(*(_close_resource(name, resource) for name, resource in resources))
             await close_db()
 
-    app = FastAPI(title="Yagami", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Yagami Private AI Gateway",
+        version=__version__,
+        description=("Policy-governed routing across local models, cloud LLMs, memory, and tools."),
+        lifespan=lifespan,
+        docs_url=None if settings.headless else "/docs",
+        redoc_url=None if settings.headless else "/redoc",
+        openapi_url=None if settings.headless else "/openapi.json",
+    )
+    app.state.runtime = AppRuntime(
+        settings=settings,
+        config=cfg,
+        backends=backends,
+        routing_policy=policy,
+        policy_engine=policy_engine,
+        sessions=sessions,
+        authenticator=authenticator,
+        metrics=metrics,
+        transformer=transformer,
+        approvals=approvals,
+        projects=projects,
+        governor=governor,
+        audit=audit,
+        gateway=gateway,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -211,53 +280,74 @@ def build_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(decisions_api.router)
-    app.include_router(sessions_api.router)
-    app.include_router(costs_api.router)
-    app.include_router(ingest_api.router)
-    app.include_router(stats_api.router)
-    app.include_router(config_api.router)
-    app.include_router(memory_api.router)
-    app.include_router(privacy_api.router)
-    app.include_router(kb_api.router)
-    app.include_router(mcp_api.router)
+    app.include_router(openai_compat_api.router)
+    if not settings.headless:
+        app.include_router(decisions_api.router)
+        app.include_router(sessions_api.router)
+        app.include_router(costs_api.router)
+        app.include_router(ingest_api.router)
+        app.include_router(stats_api.router)
+        app.include_router(config_api.router)
+        app.include_router(memory_api.router)
+        app.include_router(privacy_api.router)
+        app.include_router(kb_api.router)
+        app.include_router(mcp_api.router)
 
-    @app.get("/api/health")
-    async def health() -> dict:
-        return {
-            "ok": True,
-            "backends": [
-                {"name": b.name, "is_local": b.is_local, "healthy": await b.health()}
-                for b in backends.values()
-            ],
-        }
+    @app.get("/healthz", tags=["operations"])
+    async def healthz() -> dict:
+        return {"ok": True, "version": __version__}
 
-    @app.get("/api/models")
-    async def models() -> dict:
-        current_routing = effective_routing(get_config())
-        return {
-            "backends": [
-                {
-                    "name": b.name,
-                    "is_local": b.is_local,
-                    "capabilities": sorted(c.value for c in b.capabilities),
-                }
-                for b in backends.values()
-            ],
-            "default": current_routing.default_backend,
-        }
+    if settings.metrics_enabled:
 
-    @app.websocket("/ws/chat")
-    async def ws_chat(ws: WebSocket) -> None:
-        origin = ws.headers.get("origin")
-        if not _is_allowed_websocket_origin(origin):
-            log.warning("rejected WebSocket connection from origin %r", origin)
-            await ws.close(code=1008, reason="untrusted origin")
-            return
-        await chat_endpoint(ws, sessions, policy)
+        @app.get("/metrics", include_in_schema=False)
+        async def prometheus_metrics(
+            _principal: Principal = Depends(require_scope("metrics:read")),
+        ):
+            from fastapi import Response
+            from prometheus_client import CONTENT_TYPE_LATEST
+
+            return Response(content=metrics.render(), media_type=CONTENT_TYPE_LATEST)
+
+    if not settings.headless:
+
+        @app.get("/api/health")
+        async def health() -> dict:
+            return {
+                "ok": True,
+                "backends": [
+                    {"name": b.name, "is_local": b.is_local, "healthy": await b.health()}
+                    for b in backends.values()
+                ],
+            }
+
+        @app.get("/api/models")
+        async def models() -> dict:
+            current_routing = effective_routing(get_config())
+            return {
+                "backends": [
+                    {
+                        "name": b.name,
+                        "is_local": b.is_local,
+                        "capabilities": sorted(c.value for c in b.capabilities),
+                    }
+                    for b in backends.values()
+                ],
+                "default": current_routing.default_backend,
+            }
+
+    if not settings.headless:
+
+        @app.websocket("/ws/chat")
+        async def ws_chat(ws: WebSocket) -> None:
+            origin = ws.headers.get("origin")
+            if not _is_allowed_websocket_origin(origin):
+                log.warning("rejected WebSocket connection from origin %r", origin)
+                await ws.close(code=1008, reason="untrusted origin")
+                return
+            await chat_endpoint(ws, sessions, policy)
 
     dist = _project_root() / "ui" / "dist"
-    if dist.exists():
+    if not settings.headless and dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="ui")
 
     return app

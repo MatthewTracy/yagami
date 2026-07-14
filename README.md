@@ -1,6 +1,6 @@
-# Yagami
+# Yagami Private AI Gateway
 
-**A local-first AI router. Sends each chat message to the cheapest competent backend, keeps sensitive content on-device by default, and remembers across sessions.**
+**One OpenAI-compatible endpoint that decides what data may leave the device, which models and tools may receive it, what may be remembered, and records evidence for every decision.**
 
 [![CI](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml/badge.svg)](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -8,9 +8,11 @@
 [![Routing eval](https://img.shields.io/badge/routing%20eval-48%2F48-brightgreen.svg)](#tests-and-quality)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
 
-Most chat UIs assume you've already picked a model. Yagami doesn't. Every turn passes through a small on-device classifier that decides whether the prompt needs a frontier cloud model, a local quantized one, an image generator, or a tool-using agent. Anything tagged PHI or secret never leaves the machine.
+Yagami is a local-first policy gateway for applications and agents that use a mix of local and cloud AI. Every request is classified on-device, evaluated against a versioned policy, routed to an allowed backend, and recorded in a privacy-conscious decision ledger. Detected or caller-declared PHI and secrets are forced local.
 
-If you've ever wished your chat would just route a "what's 2+2" to your laptop and a "design a rate limiter" to Claude, without you flipping a switch, this is that.
+Existing OpenAI SDK applications can use Yagami by changing `base_url`. The included React chat remains a useful demo and local control surface, but the gateway works headlessly in Docker or directly from Python.
+
+> Detection is probabilistic; enforcement after a sensitive label is deterministic. Strict deployments should supply `metadata.sensitivity`, use a local-only policy, or both. See [Threat model](docs/threat-model.md).
 
 ## Demo
 
@@ -50,7 +52,7 @@ Every routing decision lands in a Privacy Ledger panel with the reasoning and ti
 
 ## Why local-first
 
-- **Privacy by default.** PHI, secrets, and clinical content never leave the device. The `phi_must_be_local` rule is pinned on at routing time AND pinned on every config write (defense in depth).
+- **Privacy by default.** Once PHI, secrets, or clinical content is detected or declared, it cannot use a remote backend. The `phi_must_be_local` rule is pinned on at routing time and on every config write (defense in depth).
 - **Cost control.** A daily spend cap (`daily_spend_cap_usd`) refuses cloud routes once exceeded; local stays available. Live cost meter in the UI.
 - **Right model for the job.** Trivial small-talk doesn't pay a frontier-model round trip. Hard reasoning doesn't get stuck on a 3B local model.
 - **Cross-session memory that respects privacy.** PHI rows get a 7-day TTL, never surface in non-PHI sessions, and never reach the embedding worker if tagged `secret`.
@@ -64,26 +66,81 @@ Every routing decision lands in a Privacy Ledger panel with the reasoning and ti
 | Open WebUI, LibreChat | Chat UIs over an existing model |
 | LangChain, LlamaIndex | SDKs you call from your own server |
 | Continue, Cursor | IDE-side AI agents |
-| **Yagami** | A standalone local web app that routes per turn, with PHI/cost guards and memory built in |
+| LiteLLM, Portkey | General provider gateways, retries, budgets, and broad integrations |
+| **Yagami** | A private-AI policy gateway: local classification, sensitive-data containment, governed model/tool routes, and policy evidence |
 
-You bring your own keys. Yagami brings the routing, the privacy guarantees, the memory, and the UI.
+Yagami can sit directly in front of model providers or in front of another OpenAI-compatible gateway. Provider breadth is not the moat; privacy enforcement and context lineage are.
 
 ---
 
 ## Status
 
-Alpha. Working chat, intelligent routing, vision input, image generation, multi-turn tool calling, cross-session memory, Settings + Stats + Memory UI. No desktop packaging yet (run as a local web app). Primary target is Windows 11; the Python and React halves run on macOS / Linux too but the install notes below assume Windows.
+Alpha. OpenAI-compatible Chat Completions (including caller function tools) plus a core Responses API, versioned policy evaluation/replay, multi-key project identity and scoped service accounts, lineage, reversible privacy transformation, output DLP, one-time tool approvals, hash-chained audit evidence, Prometheus/OpenTelemetry, governed remote MCP, and hardened container packaging. The desktop chat is optional; headless Linux containers and Windows 11 are both supported.
 
 ---
 
-## Quickstart
+## Five-minute gateway quickstart
+
+### Docker Compose
+
+```powershell
+$env:YAGAMI_API_KEYS = "dev:replace-with-at-least-16-characters"
+docker compose up --build
+```
+
+The Compose service binds only to `127.0.0.1:8000`, requires bearer authentication, stores its database in a named volume, and connects to Ollama on the host by default.
+
+### Use the OpenAI SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="replace-with-at-least-16-characters",
+)
+
+response = client.chat.completions.create(
+    model="yagami-auto",
+    messages=[{"role": "user", "content": "Summarize this document."}],
+    metadata={
+        "purpose": "internal-documentation",
+        "sensitivity": "none",
+        "session_id": "example-session",
+    },
+)
+print(response.choices[0].message.content)
+```
+
+Supported caller sensitivity values today are `none`, `phi`, `phi_medical`, and `secret`. A sensitive hint can make policy stricter but cannot relax a sensitivity detected by Yagami.
+
+Useful endpoints:
+
+- `POST /v1/chat/completions`
+- `POST /v1/responses` (core text/streaming surface)
+- `GET /v1/models`
+- `GET /v1/policy`
+- `POST /v1/policy/preview`
+- `POST /v1/policy/replay`
+- `POST /v1/privacy/transform` and `/v1/privacy/rehydrate`
+- `POST /v1/tool-approvals`
+- `GET /v1/audit/verify` and `/v1/audit/events`
+- `GET /healthz`
+- `GET /metrics`
+
+See [Gateway API](docs/gateway.md), [Policy configuration](docs/policies.md), and [Deployment](docs/deployment.md).
+
+---
+
+## Local chat application quickstart
 
 Requires [Ollama](https://ollama.com/download), Python 3.11+, and Node 20+.
 Windows is the primary target (the notes below assume it); the Python and
 React halves also run on macOS / Linux, and CI exercises the Python half on
 Windows and Ubuntu with every supported Python version.
 
-Yagami intentionally listens on localhost and has no built-in user
+Yagami intentionally listens on localhost. Its local admin/chat routes do not
+have a separate interactive user login; the `/v1` gateway has scoped bearer
 authentication. A non-loopback `--host` requires the explicit
 `--allow-remote` flag; use that only behind a trusted, authenticated reverse
 proxy. To use the browser UI remotely, also repeat
@@ -212,16 +269,21 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 
 | Capability | Where it lives |
 |---|---|
+| OpenAI-compatible headless gateway + caller function tools | `POST /v1/chat/completions`, core `/v1/responses` |
+| Versioned policy, preview/replay, and content-free passports | [`src/yagami/policy/`](src/yagami/policy), `/v1/policy/*` |
+| Project service accounts, limits, scopes, and one-time tool approvals | [`src/yagami/auth.py`](src/yagami/auth.py), [`src/yagami/projects.py`](src/yagami/projects.py) |
+| Context lineage, AES-GCM tokenization, and output DLP | [`src/yagami/governance/`](src/yagami/governance) |
+| Verifiable SHA-256/HMAC audit chain + NDJSON export | [`src/yagami/telemetry/audit.py`](src/yagami/telemetry/audit.py), `/v1/audit/*` |
 | Streaming chat over WebSocket | [`src/yagami/chat/stream.py`](src/yagami/chat/stream.py) |
 | Per-turn classification (Phi-4 Mini, JSON mode) | [`src/yagami/router/classifier.py`](src/yagami/router/classifier.py) |
 | Fast-path bypass with PHI / secret / image regexes | [`src/yagami/router/fast_path.py`](src/yagami/router/fast_path.py) |
 | Backend registry (drop-in plugins) | [`src/yagami/backends/registry.py`](src/yagami/backends/registry.py) |
-| 8 backends out of the box (Ollama, llama.cpp local; Anthropic, OpenAI, Mistral, Groq, OpenRouter, Gemini, Stability cloud) | [`src/yagami/backends/`](src/yagami/backends) |
+| 9 backends out of the box (Ollama, llama.cpp local; Anthropic, OpenAI, Mistral, Groq, OpenRouter, Gemini, Stability cloud) | [`src/yagami/backends/`](src/yagami/backends) |
 | Multi-turn tool-use loop (Anthropic) | [`src/yagami/router/tool_loop.py`](src/yagami/router/tool_loop.py) |
 | First-party skills (`calc.eval`, `web.fetch`) | [`src/yagami/skills/`](src/yagami/skills) |
 | Cross-session memory with sqlite-vec + FTS5 fallback | [`src/yagami/memory/`](src/yagami/memory) |
 | Folder-indexed document knowledge base (`kb.recall` skill) | [`src/yagami/memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index` |
-| MCP client (external MCP servers as skills) | [`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py), `GET /api/mcp` |
+| Governed stdio/Streamable HTTP MCP client with bearer/OAuth auth | [`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py), `GET /api/mcp` |
 | Cost meter + daily spend cap | [`src/yagami/telemetry/costs.py`](src/yagami/telemetry/costs.py) |
 | Auto-retry on transient cloud errors | [`src/yagami/backends/retry.py`](src/yagami/backends/retry.py) |
 | File ingest (PDF / MD / TXT, drag-drop) | [`src/yagami/ingest/extract.py`](src/yagami/ingest/extract.py) |
@@ -239,6 +301,26 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 ---
 
 ## Architecture
+
+```mermaid
+flowchart LR
+    C["Apps and agents<br/>OpenAI SDK"] --> A["/v1 auth<br/>project + scopes"]
+    A --> G["Gateway service"]
+    G --> L["Local lineage +<br/>sensitivity inspection"]
+    L --> P["Versioned policy +<br/>project limits"]
+    P --> V["Optional redact/tokenize<br/>AES-GCM vault"]
+    V --> R{"Allowed route"}
+    R -->|local| LM["Ollama / llama.cpp / vLLM"]
+    R -->|cloud| CM["Anthropic / OpenAI-compatible"]
+    R -->|governed tools| T["Built-in + MCP<br/>deny / approval gates"]
+    LM --> O["Output DLP<br/>allow / redact / block"]
+    CM --> O
+    T --> O
+    O --> C
+    G --> E["Policy passport + metrics +<br/>OTel + HMAC audit chain"]
+```
+
+The optional React application remains a local demo and administration surface:
 
 ```
                           +-------------------+
@@ -278,9 +360,9 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 
 Three operating principles:
 
-1. **PHI guard is the single chokepoint.** Every new write path (memory, skills, future automation) goes through `RoutingPolicy.decide()`. There is no second routing layer to keep in sync.
-2. **Backends and skills are filesystem-discovered.** Drop a file in `src/yagami/backends/` or `src/yagami/skills/`, expose a `build(...)` function, and the registry picks it up on boot. No `main.py` edit, no central registration list.
-3. **Failures degrade, they don't crash.** Cloud 503 retries. Embedder timeouts mark the row failed. Skill exceptions surface as `SkillResult(ok=False)`. The chat itself only fails if the WebSocket fails.
+1. **One governed data plane.** Chat Completions and Responses share `GatewayService`; routing, policy, transformation, output inspection, budgets, lineage, and evidence cannot drift between endpoints.
+2. **Sensitive routes fail closed.** Once content is detected or declared sensitive, the eligible backend set contains only local targets. Classifier failure defaults local and refuses an explicit cloud override.
+3. **Evidence excludes content.** Metrics, spans, lineage, approvals, and audit events keep IDs, labels, counts, hashes, and fingerprints—not prompt, response, tool, or arbitrary metadata values.
 
 ---
 
@@ -399,7 +481,7 @@ No UI panel for this yet - it's API/curl-only for now. A couple of things worth 
 
 ## MCP client support
 
-Yagami connects to external [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio and exposes every tool they offer as a regular Yagami skill - `mcp.<server>.<tool>` - through the exact same `Skill` protocol calc.eval and web.fetch use ([`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py)). That's the point: any MCP server in the ecosystem becomes usable through Yagami's existing PHI-aware tool-loop gating for free, no per-server integration code.
+Yagami connects to external [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio or Streamable HTTP and exposes every tool they offer as a regular Yagami skill - `mcp.<server>.<tool>` - through the exact same `Skill` protocol calc.eval and web.fetch use ([`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py)). That's the point: any MCP server in the ecosystem becomes usable through Yagami's existing PHI-aware tool-loop gating for free, no per-server integration code.
 
 Configure one or more servers in `config/yagami.toml`:
 
@@ -411,6 +493,15 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\you\\Docume
 [mcp_servers.everything]
 command = "uvx"
 args = ["mcp-server-everything"]
+
+[mcp_servers.remote_catalog]
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+auth = "client_credentials"
+oauth_token_url = "https://identity.example.com/oauth2/token"
+oauth_client_id_env = "CATALOG_MCP_CLIENT_ID"
+oauth_client_secret_env = "CATALOG_MCP_CLIENT_SECRET"
+oauth_resource = "https://mcp.example.com"
 ```
 
 Restart `yagami` - connections are established once at startup (a server that fails to connect is logged and skipped, it won't crash boot or take down the others). Check what actually connected:
@@ -422,23 +513,24 @@ curl http://localhost:8000/api/mcp
 A few things worth knowing:
 
 - **Conservative sensitivity ceiling.** MCP servers are arbitrary, user-configured third-party processes; their tool results flow into the conversation like any tool result (Anthropic-only tool loop today). Every MCP-derived skill gets `sensitivity_ceiling = NONE` - the same floor as `web.fetch` - so it refuses whenever the current turn is flagged sensitive at all.
-- **Client only, not server.** Yagami connects *out* to MCP servers; it doesn't expose itself as one yet (a natural follow-up, lower priority since fewer people run Yagami as infrastructure for another tool at this stage).
-- **stdio transport only.** No SSE/HTTP MCP servers yet - stdio covers the common case (`npx`/`uvx`-launched local servers) with the least new attack surface.
+- **Client only, not server.** Yagami connects *out* to MCP servers; it does not expose itself as an MCP server.
+- **Local or remote transport.** Use stdio for administrator-installed local servers or Streamable HTTP for remote servers. Remote URLs require HTTPS except loopback and use a dedicated bearer secret or OAuth client credentials; Yagami never forwards the inbound project key.
 
 ---
 
 ## Tests and quality
 
 ```powershell
-pytest                          # ~275 tests, ~30s
+pytest                          # 380+ tests
 python -m evals.run_routing     # 48/48 routing decisions, against a running uvicorn
+python -m evals.run_containment # PHI/PII/secret/RAG/tool containment + benign controls
 ruff check src tests            # 0 issues
 cd ui ; npm run build           # tsc + vite build, clean
 ```
 
 Key invariants (one test file each):
 
-- **PHI never leaves the device.** 20 PHI-shaped prompts, every one routes `is_local=True`.
+- **Detected or caller-declared PHI is enforced local.** Semantic and identifier-shaped cases cover automatic and explicit routes.
 - **Secrets never bypass the classifier OR enter the memory index.**
 - **Fast-path keeps its mouth shut on creative, complex-reasoning, and ambiguous prompts** so they fall through to the classifier.
 - **Tool loop bounds turns at MAX_TURNS=8.** A confused model can't infinite-loop.
@@ -451,20 +543,22 @@ Key invariants (one test file each):
 
 | Asset | How it's protected |
 |---|---|
+| Gateway identity | Bearer keys map requests to project IDs. Keys remain in environment/secret storage; only short SHA-256 fingerprints are held for identity metadata. |
+| Policy evidence | Every gateway decision includes a policy ID, version, canonical SHA-256 hash, matched rules, effective sensitivity, enforced backend, tool restrictions, approvals, transformations, output inspection, and retention decision. Project audit events form an independently verifiable SHA-256/HMAC chain. |
 | API keys | OS keyring (Windows DPAPI / macOS Keychain / Secret Service) by default. `.env` is a fallback for dev only. |
 | Routing decisions | Logged with user text scrubbed of SSN / credit card / email / phone patterns. |
-| PHI prompts | Forced local. Logged with the same scrubber. |
+| PHI prompts | Detected or caller-declared PHI is forced local. Classifier failure fails local and refuses explicit cloud overrides. Detection itself is measured, not claimed to be infallible. |
 | PHI memory rows | 7-day TTL. Never returned in a non-PHI session. |
 | SECRET prompts | Never written to memory. Never reach the embedding worker. |
-| Tool calls | Per-skill `sensitivity_ceiling`. `web.fetch` refuses any PHI session. |
+| Tool calls | Per-skill `sensitivity_ceiling`, wildcard deny policy, and one-time project/purpose-bound approval capabilities for side effects. Caller-defined function tools pass through the same policy check. |
 | Cross-session leakage | `history_has_phi` gate refuses cloud text routes when any prior turn contained PHI. |
 | Config profiles | Can change default backend / spend cap / message-length threshold per profile. Cannot change `phi_must_be_local` - that's pinned server-side regardless of profile. |
-| Audit trail | `GET /api/decisions/export` downloads the full Privacy Ledger as CSV (same scrubbing as the UI view, plus cost/token/feedback columns) for compliance review. |
+| Audit trail | `GET /v1/audit/verify` checks a project-scoped hash/HMAC chain and `/v1/audit/events` exports content-free NDJSON for SIEM ingestion. The local UI ledger still supports CSV export. |
 | Conversation retention | Configurable in the Settings Privacy tab. Stale sessions and their derived memory/vector rows are removed together. `0` keeps data until manual deletion. |
 | Full data control | `GET /api/privacy/export` streams a portable JSON export. Settings can delete chats + memory or everything including indexed documents. |
 | Data at rest | The SQLite database and saved image blobs are not application-encrypted. Protect the drive with BitLocker, FileVault, or equivalent full-disk encryption. |
 
-Compliance note: the Privacy Ledger records which config profile was active for every decision, so an audit export answers not just "what did Yagami do" but "under which policy." See [Configuration](#configuration) for defining profiles.
+Compliance note: Yagami supplies technical controls and evidence; it does not make a deployment compliant by itself. The Privacy Ledger records the exact policy hash and matched rules for gateway decisions. See [Threat model](docs/threat-model.md).
 
 ---
 
@@ -535,7 +629,7 @@ block_cloud = true             # zero cloud on this profile. (NOT the same as
 default_backend = "anthropic"
 daily_spend_cap_usd = 10.0
 
-# Connect to external MCP servers over stdio - each tool they expose shows
+# Connect to external MCP servers over stdio or Streamable HTTP - each tool shows
 # up as a Yagami skill, namespaced `mcp.<server>.<tool>`. See "MCP client
 # support" below.
 [mcp_servers.filesystem]
@@ -560,15 +654,7 @@ Model and URL changes need a uvicorn restart. Routing changes (default backend, 
 
 ## Roadmap
 
-Shipped through v0.3.0 (see [CHANGELOG.md](CHANGELOG.md) for what each version added). Planned:
-
-- **v0.5a (partial)** - `kb.recall` shipped, but for a folder-indexed document corpus ([`memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index`), not cross-session chat memory - that's still classifier-driven via `needs_recall`. A `kb.remember` skill (and a `kb.recall` variant over chat memory itself) is still open, so the LLM can choose when to fetch either, not just documents.
-- **v0.5b (partial)** - MCP *client* shipped ([MCP client support](#mcp-client-support)). MCP *server* mount (Yagami exposing itself to other MCP clients) + OAuth for Gmail / Calendar are still open.
-- **v0.6** - user-authored automation routines (cron triggers, content triggers, dry-run-by-default).
-- **v0.7** - ambient inputs: global hotkey (Ctrl+Alt+Y) for clipboard / screenshot context, voice in / out via whisper-cpp + piper.
-- **v0.8+** - Tauri 2 desktop shell, system tray, true LoRA hot-swap, local SDXL.
-
-If you want to push any of these forward, the lowest-friction PR is a new skill (one file in `src/yagami/skills/` plus a test).
+The private-AI policy plane now includes lineage, tokenization/rehydration, policy replay, governed remote MCP, scoped service accounts, durable one-time approvals, output DLP, and tamper-evident audit export. The next milestones focus on OIDC/workload identity, managed multi-node storage and keys, route canaries, and production design partners. See [Product roadmap](docs/roadmap.md).
 
 ---
 

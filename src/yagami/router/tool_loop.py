@@ -16,6 +16,7 @@ render an inline card before the next text turn arrives.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 from typing import AsyncIterator
 
@@ -61,6 +62,10 @@ def _sensitivity_rank(s: Sensitivity) -> int:
     return order.get(s, 0)
 
 
+def _tool_matches(patterns: set[str], tool_name: str) -> bool:
+    return any(fnmatch.fnmatchcase(tool_name, pattern) for pattern in patterns)
+
+
 async def run(
     backend: ClaudeBackend,
     messages: list[Message],
@@ -69,6 +74,11 @@ async def run(
     session_id: str,
     session_sensitivity: Sensitivity = Sensitivity.NONE,
     skills: dict[str, Skill] | None = None,
+    project_id: str = "local",
+    purpose: str = "general",
+    denied_tools: set[str] | None = None,
+    approval_required: set[str] | None = None,
+    approved_tools: set[str] | None = None,
 ) -> AsyncIterator[BackendChunk]:
     """Drive the conversation through tool-use cycles until the model emits
     a turn with no tool_use blocks."""
@@ -107,7 +117,15 @@ async def run(
         else:
             chat.append({"role": m.role, "content": m.content})
 
-    ctx = SkillContext(session_id=session_id, session_sensitivity=session_sensitivity)
+    ctx = SkillContext(
+        session_id=session_id,
+        session_sensitivity=session_sensitivity,
+        project_id=project_id,
+        purpose=purpose,
+    )
+    denied = denied_tools or set()
+    approvals = approval_required or set()
+    approved = approved_tools or set()
 
     for turn in range(MAX_TURNS):
         kwargs: dict = {
@@ -172,6 +190,18 @@ async def run(
             skill = skills_map.get(tu["name"])
             if skill is None:
                 return tu, SkillResult(ok=False, error=f"unknown skill {tu['name']!r}")
+            if _tool_matches(denied, skill.name):
+                return tu, SkillResult(
+                    ok=False,
+                    error=f"skill {skill.name} denied by policy",
+                    artifacts={"policy_denied": True},
+                )
+            if _tool_matches(approvals, skill.name) and not _tool_matches(approved, skill.name):
+                return tu, SkillResult(
+                    ok=False,
+                    error=f"skill {skill.name} requires human approval",
+                    artifacts={"approval_required": True},
+                )
             return tu, await _run_skill(skill, tu["input"], ctx)
 
         results = await asyncio.gather(*[_exec(tu) for tu in tool_uses])

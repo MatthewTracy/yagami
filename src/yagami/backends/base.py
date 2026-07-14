@@ -4,7 +4,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from enum import Enum
-from typing import AsyncIterator, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, AsyncIterator, Literal, Protocol, TypedDict, runtime_checkable
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -51,9 +51,12 @@ class ImageAttachment(BaseModel):
 
 
 class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str = ""
     images: list[ImageAttachment] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class BackendOptions(BaseModel):
@@ -62,6 +65,8 @@ class BackendOptions(BaseModel):
     lora_variant: str | None = None
     model_override: str | None = None
     system_prompt: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any = None
 
 
 class BackendChunk(TypedDict):

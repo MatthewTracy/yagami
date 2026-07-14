@@ -1,7 +1,8 @@
 [project]
 name = "yagami"
-version = "0.3.0"
-description = "Local-first AI orchestrator with intelligent routing between local quantized models and cloud LLMs."
+version = "0.4.0"
+description = "Private AI policy gateway for governed routing across local models, cloud LLMs, and tools."
+keywords = ["ai-gateway", "llm", "privacy", "policy", "openai", "mcp", "local-ai"]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -10,7 +11,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Operating System :: Microsoft :: Windows",
+    "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
@@ -30,8 +31,19 @@ dependencies = [
     "openai>=2.0",
     "sqlite-vec>=0.1.6",
     "mcp>=1.28",
+    "PyYAML>=6.0.2",
+    "prometheus-client>=0.21",
+    "opentelemetry-api>=1.28",
+    "cryptography>=43",
     "tomli>=2.0; python_version<'3.11'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/MatthewTracy/yagami"
+Repository = "https://github.com/MatthewTracy/yagami"
+Documentation = "https://github.com/MatthewTracy/yagami/tree/main/docs"
+Issues = "https://github.com/MatthewTracy/yagami/issues"
+Changelog = "https://github.com/MatthewTracy/yagami/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
@@ -39,9 +51,14 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
 ]
+observability = [
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
 
 [project.scripts]
 yagami = "yagami.cli:main"
+yagami-keygen = "yagami.generate_key:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -53,6 +70,7 @@ packages = ["src/yagami"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--basetemp=.tmp/pytest"
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,32 @@
+services:
+  yagami:
+    build:
+      context: .
+    image: ghcr.io/matthewtracy/yagami:local
+    environment:
+      YAGAMI_API_KEYS: ${YAGAMI_API_KEYS:?Set YAGAMI_API_KEYS to project:at-least-16-character-key}
+      YAGAMI_OLLAMA_URL: ${YAGAMI_OLLAMA_URL:-http://host.docker.internal:11434}
+      YAGAMI_HEADLESS: "true"
+      YAGAMI_REQUIRE_AUTH: "true"
+      YAGAMI_METRICS_ENABLED: "true"
+      YAGAMI_TRANSFORM_KEY: ${YAGAMI_TRANSFORM_KEY:-}
+      YAGAMI_AUDIT_KEY: ${YAGAMI_AUDIT_KEY:-}
+      YAGAMI_AUDIT_REQUIRED: ${YAGAMI_AUDIT_REQUIRED:-false}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - yagami-data:/data
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  yagami-data:

@@ -24,6 +24,12 @@ _EXPORT_TABLES: tuple[tuple[str, str], ...] = (
     ("feedback", "SELECT * FROM feedback ORDER BY id"),
     ("observations", "SELECT * FROM observations ORDER BY id"),
     ("kb_documents", "SELECT * FROM kb_documents ORDER BY id"),
+    ("audit_events", "SELECT * FROM audit_events ORDER BY id"),
+    (
+        "tool_approvals",
+        "SELECT id, project_id, tools, purpose, ticket, created_by, created_at, expires_at,"
+        " consumed_at, consumed_request_id, revoked_at FROM tool_approvals ORDER BY created_at, id",
+    ),
 )
 
 
@@ -37,6 +43,9 @@ async def _data_counts(db: aiosqlite.Connection) -> dict[str, int]:
         "feedback",
         "observations",
         "kb_documents",
+        "privacy_tokens",
+        "audit_events",
+        "tool_approvals",
     ):
         async with db.execute(f"SELECT COUNT(*) FROM {name}") as cur:
             row = await cur.fetchone()
@@ -83,6 +92,7 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         before = await _data_counts(db)
         await db.execute("DELETE FROM observations_vec")
         await db.execute("DELETE FROM observations")
+        await db.execute("DELETE FROM privacy_tokens")
         await db.execute("DELETE FROM sessions")
         if include_knowledge_base:
             await db.execute("DELETE FROM kb_documents_vec")

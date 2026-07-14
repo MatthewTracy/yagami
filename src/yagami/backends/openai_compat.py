@@ -54,6 +54,15 @@ class OpenAICompatBackend(Backend):
         if system_parts:
             chat.append({"role": "system", "content": "\n\n".join(system_parts)})
         for m in messages:
+            if m.role == "tool":
+                chat.append(
+                    {
+                        "role": "tool",
+                        "content": m.content,
+                        "tool_call_id": m.tool_call_id,
+                    }
+                )
+                continue
             if m.role not in ("user", "assistant"):
                 continue
             if m.images:
@@ -69,22 +78,44 @@ class OpenAICompatBackend(Backend):
                     content.append({"type": "text", "text": m.content})
                 chat.append({"role": m.role, "content": content})
             else:
-                chat.append({"role": m.role, "content": m.content})
+                item: dict = {"role": m.role, "content": m.content or None}
+                if m.role == "assistant" and m.tool_calls:
+                    item["tool_calls"] = m.tool_calls
+                chat.append(item)
 
         try:
-            stream = await self._client.chat.completions.create(
+            kwargs: dict = dict(
                 model=self._model,
                 messages=chat,  # type: ignore[arg-type]
                 max_tokens=options.max_tokens or self._max_tokens,
                 temperature=options.temperature,
                 stream=True,
             )
+            if options.tools:
+                kwargs["tools"] = options.tools
+                if options.tool_choice is not None:
+                    kwargs["tool_choice"] = options.tool_choice
+            stream = await self._client.chat.completions.create(**kwargs)
             async for event in stream:
                 if not event.choices:
                     continue
                 delta = event.choices[0].delta
                 if delta and delta.content:
                     yield {"type": "text", "content": delta.content, "meta": {"model": self._model}}
+                for tool_call in delta.tool_calls or [] if delta else []:
+                    function = tool_call.function
+                    yield {
+                        "type": "tool_call",
+                        "content": "",
+                        "meta": {
+                            "kind": "caller_function",
+                            "index": tool_call.index,
+                            "id": tool_call.id,
+                            "name": function.name if function else None,
+                            "arguments": function.arguments if function else None,
+                            "model": self._model,
+                        },
+                    }
             yield {"type": "done", "content": "", "meta": {"model": self._model}}
         except APIError as exc:
             yield {"type": "error", "content": f"{self.name} error: {exc}", "meta": {}}

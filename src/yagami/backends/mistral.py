@@ -29,7 +29,12 @@ def build(cfg: YagamiConfig, secrets_get) -> "MistralBackend | None":
 
 class MistralBackend(OpenAICompatBackend):
     name = "mistral"
-    capabilities = {Capability.TEXT, Capability.LONG_CONTEXT, Capability.CODE}
+    capabilities = {
+        Capability.TEXT,
+        Capability.LONG_CONTEXT,
+        Capability.CODE,
+        Capability.TOOLS,
+    }
     pricing = _PRICING
 
     def __init__(self, cfg: YagamiConfig, api_key: str) -> None:

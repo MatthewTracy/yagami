@@ -20,16 +20,20 @@ api/config.py's set_policy or api/sessions.py's set_store.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
+import httpx
 
 from ..config import McpServerConfig
 from ..router.schema import Sensitivity
 from .base import Skill, SkillContext, SkillResult
+from .mcp_auth import OAuthClientCredentialsAuth, validate_remote_url
 
 log = logging.getLogger("yagami.skills.mcp")
 
@@ -46,6 +50,8 @@ class _McpTool:
     description: str
     input_schema: dict
     session: ClientSession
+    transport: str = "stdio"
+    auth: str = "none"
 
 
 class McpSkillAdapter:
@@ -108,6 +114,9 @@ class McpManager:
                 log.warning("mcp server %r failed to connect: %s", name, exc)
 
     async def _connect_one(self, name: str, server_cfg: McpServerConfig) -> None:
+        if server_cfg.transport == "streamable_http":
+            await self._connect_http(name, server_cfg)
+            return
         params = StdioServerParameters(
             command=server_cfg.command,
             args=server_cfg.args,
@@ -124,8 +133,65 @@ class McpManager:
                 description=tool.description or "",
                 input_schema=tool.inputSchema,
                 session=session,
+                transport="stdio",
+                auth="none",
             )
         log.info("mcp server %r connected: %d tool(s)", name, len(listed.tools))
+
+    async def _connect_http(self, name: str, server_cfg: McpServerConfig) -> None:
+        url = validate_remote_url(server_cfg.url, field=f"mcp_servers.{name}.url")
+        headers: dict[str, str] = {}
+        auth: httpx.Auth | None = None
+        oauth_auth: OAuthClientCredentialsAuth | None = None
+        if server_cfg.auth == "bearer_env":
+            token = os.getenv(server_cfg.bearer_token_env, "")
+            if not token:
+                raise ValueError(
+                    f"MCP server {name!r} token env {server_cfg.bearer_token_env!r} is empty"
+                )
+            headers["Authorization"] = "Bearer " + token
+        elif server_cfg.auth == "client_credentials":
+            client_id = os.getenv(server_cfg.oauth_client_id_env, "")
+            client_secret = os.getenv(server_cfg.oauth_client_secret_env, "")
+            if not client_id or not client_secret:
+                raise ValueError(f"MCP server {name!r} OAuth credential env vars are empty")
+            oauth_auth = OAuthClientCredentialsAuth(
+                token_url=server_cfg.oauth_token_url,
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=server_cfg.oauth_scopes,
+                resource=server_cfg.oauth_resource,
+                token_endpoint_auth_method=server_cfg.oauth_token_endpoint_auth_method,
+            )
+            auth = oauth_auth
+
+        client = await self._stack.enter_async_context(
+            httpx.AsyncClient(
+                headers=headers,
+                auth=auth,
+                timeout=httpx.Timeout(60.0, connect=10.0),
+                follow_redirects=False,
+            )
+        )
+        if oauth_auth is not None:
+            self._stack.push_async_callback(oauth_auth.aclose)
+        read, write, _get_session_id = await self._stack.enter_async_context(
+            streamable_http_client(url, http_client=client)
+        )
+        session = await self._stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        listed = await session.list_tools()
+        for tool in listed.tools:
+            self._tools[f"{name}.{tool.name}"] = _McpTool(
+                server_name=name,
+                tool_name=tool.name,
+                description=tool.description or "",
+                input_schema=tool.inputSchema,
+                session=session,
+                transport="streamable_http",
+                auth=server_cfg.auth,
+            )
+        log.info("remote MCP server %r connected: %d tool(s)", name, len(listed.tools))
 
     async def close_all(self) -> None:
         await self._stack.aclose()
@@ -139,7 +205,13 @@ class McpManager:
     def status(self) -> list[dict]:
         """Per-tool connection status for GET /api/mcp."""
         return [
-            {"server": t.server_name, "tool": t.tool_name, "description": t.description}
+            {
+                "server": t.server_name,
+                "tool": t.tool_name,
+                "description": t.description,
+                "transport": t.transport,
+                "auth": t.auth,
+            }
             for t in self._tools.values()
         ]
 

@@ -26,7 +26,7 @@ def build(cfg: YagamiConfig, secrets_get) -> "GroqBackend | None":
 
 class GroqBackend(OpenAICompatBackend):
     name = "groq"
-    capabilities = {Capability.TEXT, Capability.CODE}
+    capabilities = {Capability.TEXT, Capability.CODE, Capability.TOOLS}
     pricing = _PRICING
 
     def __init__(self, cfg: YagamiConfig, api_key: str) -> None:

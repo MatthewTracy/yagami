@@ -34,7 +34,7 @@ def _is_loopback_host(host: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="yagami", description="Run the Yagami local-first AI router."
+        prog="yagami", description="Run the Yagami private AI policy gateway."
     )
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
@@ -66,12 +66,15 @@ def main() -> None:
                 "non-loopback --host requires --allow-remote; Yagami has no built-in "
                 "authentication and should normally remain on localhost"
             )
-        print(
-            "[yagami] WARNING: remote access has no built-in authentication. "
-            "Use only behind a trusted, authenticated reverse proxy.",
-            file=sys.stderr,
-            flush=True,
-        )
+        headless = os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"}
+        has_api_auth = bool(os.getenv("YAGAMI_API_KEYS"))
+        if not (headless and has_api_auth):
+            print(
+                "[yagami] WARNING: remote access can expose local administration APIs. "
+                "Use headless mode with YAGAMI_API_KEYS or a trusted authenticated proxy.",
+                file=sys.stderr,
+                flush=True,
+            )
     if args.trusted_origin:
         os.environ["YAGAMI_TRUSTED_ORIGINS"] = ",".join(args.trusted_origin)
 
