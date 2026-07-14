@@ -71,8 +71,11 @@ password to GitHub secrets.
    `requirements.build.lock` from `requirements.build.in` when build tooling
    changes.
 2. Merge the change through the protected branch after every required check
-   passes.
-3. Create and push an annotated tag from the exact `origin/main` commit:
+   passes. Run the `Release` workflow manually on `main`; this executes all
+   release-only build, clean-install, runtime, vulnerability, SBOM, and
+   attestation steps without publishing anything.
+3. Create and push an annotated tag from the exact `origin/main` commit only
+   after the dry run succeeds:
 
    ```bash
    git switch main
