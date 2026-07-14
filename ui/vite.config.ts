@@ -6,14 +6,27 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "react-vendor": ["react", "react-dom"],
-          "markdown-vendor": [
-            "highlight.js",
-            "react-markdown",
-            "rehype-highlight",
-            "remark-gfm",
-          ],
+        manualChunks(id) {
+          if (
+            ["react", "react-dom", "scheduler"].some((dependency) =>
+              id.includes(`/node_modules/${dependency}/`),
+            )
+          ) {
+            return "react-vendor";
+          }
+
+          if (
+            [
+              "highlight.js",
+              "react-markdown",
+              "rehype-highlight",
+              "remark-gfm",
+            ].some((dependency) =>
+              id.includes(`/node_modules/${dependency}/`),
+            )
+          ) {
+            return "markdown-vendor";
+          }
         },
       },
     },

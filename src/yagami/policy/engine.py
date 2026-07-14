@@ -84,7 +84,7 @@ class PolicyEngine:
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._mtime_ns: int | None = None
+        self._source_digest: str | None = None
         self._document = default_policy()
         self._hash = _canonical_hash(self._document)
         self.reload(force=True)
@@ -102,16 +102,17 @@ class PolicyEngine:
     def reload(self, *, force: bool = False) -> bool:
         if not self.path.exists():
             return False
-        stat = self.path.stat()
-        if not force and stat.st_mtime_ns == self._mtime_ns:
+        source = self.path.read_bytes()
+        source_digest = hashlib.sha256(source).hexdigest()
+        if not force and source_digest == self._source_digest:
             return False
-        raw = yaml.safe_load(self.path.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(source.decode("utf-8"))
         if not isinstance(raw, dict):
             raise ValueError(f"policy file {self.path} must contain a YAML/JSON object")
         document = PolicyDocument.model_validate(raw)
         self._document = document
         self._hash = _canonical_hash(document)
-        self._mtime_ns = stat.st_mtime_ns
+        self._source_digest = source_digest
         return True
 
     def evaluate(
