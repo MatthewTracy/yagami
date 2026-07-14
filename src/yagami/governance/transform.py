@@ -173,8 +173,8 @@ class PrivacyTransformer:
         entity_type: str,
         value: str,
     ) -> None:
-        assert self._aesgcm is not None
-        assert self._hash_key is not None
+        if self._aesgcm is None or self._hash_key is None:
+            raise TransformationError("tokenization key is not configured")
         nonce = os.urandom(12)
         aad = f"{request_id}:{project_id}:{placeholder}".encode("utf-8")
         ciphertext = self._aesgcm.encrypt(nonce, value.encode("utf-8"), aad)

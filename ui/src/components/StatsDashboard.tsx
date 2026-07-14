@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchJson } from "../lib/http";
 
 type Stats = {
   window_days: number;
@@ -40,9 +41,9 @@ export function StatsDashboard({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    fetch(`/api/stats?days=${days}`)
-      .then((r) => r.json())
-      .then((d: Stats) => setData(d));
+    fetchJson<Stats>(`/api/stats?days=${days}`)
+      .then((d) => setData(d))
+      .catch(() => setData(null));
   }, [open, days]);
 
   useEffect(() => {

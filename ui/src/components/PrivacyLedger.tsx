@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchJson } from "../lib/http";
 
 type DecisionRow = {
   id: number;
@@ -32,10 +33,12 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
     if (!sessionId) return;
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/decisions?session_id=${sessionId}&limit=50`)
-      .then((r) => r.json())
+    fetchJson<{ decisions?: DecisionRow[] }>(`/api/decisions?session_id=${sessionId}&limit=50`)
       .then((d) => {
         if (!cancelled) setRows(d.decisions || []);
+      })
+      .catch(() => {
+        if (!cancelled) setRows([]);
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {

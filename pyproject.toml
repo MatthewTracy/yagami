@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.4.2"
+version = "0.5.0"
 description = "Private AI policy gateway for governed routing across local models, cloud LLMs, and tools."
 keywords = ["ai-gateway", "llm", "privacy", "policy", "openai", "mcp", "local-ai"]
 readme = "README.md"
@@ -13,6 +13,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -27,8 +29,6 @@ dependencies = [
     "aiosqlite>=0.20",
     "keyring>=25.4",
     "pypdf>=5.0",
-    "markdown-it-py>=3.0",
-    "Pillow>=10.4",
     "python-multipart>=0.0.20",
     "openai>=2.0",
     "sqlite-vec>=0.1.6",
@@ -37,13 +37,13 @@ dependencies = [
     "prometheus-client>=0.21",
     "opentelemetry-api>=1.28",
     "cryptography>=43",
-    "tomli>=2.0; python_version<'3.11'",
+    "PyJWT[crypto]>=2.10",
 ]
 
 [project.urls]
 Homepage = "https://github.com/MatthewTracy/yagami"
 Repository = "https://github.com/MatthewTracy/yagami"
-Documentation = "https://github.com/MatthewTracy/yagami/tree/main/docs"
+Documentation = "https://matthewtracy.github.io/yagami/"
 Issues = "https://github.com/MatthewTracy/yagami/issues"
 Changelog = "https://github.com/MatthewTracy/yagami/blob/main/CHANGELOG.md"
 
@@ -51,7 +51,10 @@ Changelog = "https://github.com/MatthewTracy/yagami/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "ruff>=0.7",
+    "mypy>=1.15",
+    "types-PyYAML>=6.0",
 ]
 observability = [
     "opentelemetry-sdk>=1.28",
@@ -69,6 +72,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/yagami"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"ui/dist" = "yagami/ui_dist"
+"config" = "yagami/templates/config"
+".env.example" = "yagami/templates/.env.example"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/CHANGELOG.md",
@@ -76,13 +84,44 @@ include = [
     "/README.md",
     "/pyproject.toml",
     "/src",
+    "/ui/dist",
+    "/config",
+    "/.env.example",
 ]
+
+[tool.hatch.build.targets.sdist.force-include]
+"ui/dist" = "ui/dist"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--basetemp=.pytest-tmp"
 
+[tool.coverage.run]
+branch = true
+source = ["yagami"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["ui", "dist", "build"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+extend-select = ["S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S104", "S106", "S608"]
+"evals/**/*.py" = ["S101"]

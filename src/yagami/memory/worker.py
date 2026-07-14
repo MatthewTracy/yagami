@@ -47,8 +47,10 @@ class EmbeddingWorker:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            except asyncio.CancelledError:
+                log.debug("memory worker cancelled")
+            except Exception:  # noqa: BLE001 - stop must complete during application shutdown
+                log.warning("memory worker failed while stopping", exc_info=True)
             self._task = None
 
     def nudge(self) -> None:

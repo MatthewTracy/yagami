@@ -45,7 +45,7 @@ class LlamaCppBackend(Backend):
         if self._llm is not None:
             return self._llm
         try:
-            from llama_cpp import Llama  # type: ignore[import-not-found]
+            from llama_cpp import Llama
         except ImportError as exc:
             raise RuntimeError(
                 "llama-cpp-python not installed. "

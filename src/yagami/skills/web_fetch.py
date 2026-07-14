@@ -13,6 +13,7 @@ remote host's logs.
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -30,15 +31,35 @@ _MAX_REDIRECTS = 5
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
+class _HTMLTextExtractor(HTMLParser):
+    _IGNORED = {"script", "style", "template", "noscript"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_stack: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        normalized = tag.casefold()
+        if normalized in self._IGNORED:
+            self._ignored_stack.append(normalized)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        if normalized in self._IGNORED and normalized in self._ignored_stack:
+            index = len(self._ignored_stack) - 1 - self._ignored_stack[::-1].index(normalized)
+            del self._ignored_stack[index:]
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_stack:
+            self.parts.append(data)
+
+
 def _strip_html(html: str) -> str:
-    """Very lightweight HTML → text. Not a parser - drops tags and
-    collapses whitespace. Good enough for tool results that the LLM will
-    summarize. For richer extraction, swap to readability-lxml later."""
-    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.S | re.I)
-    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.S | re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    parser = _HTMLTextExtractor()
+    parser.feed(html)
+    parser.close()
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
 class WebFetch:
@@ -117,6 +138,13 @@ class WebFetch:
                             continue
 
                         response.raise_for_status()
+                        content_type = response.headers.get("content-type", "text/plain")
+                        media_type = content_type.split(";", 1)[0].strip().casefold()
+                        if media_type not in {"text/html", "text/plain", "application/xhtml+xml"}:
+                            return SkillResult(
+                                ok=False,
+                                error=f"unsupported response content type {media_type!r}",
+                            )
                         encoding = response.charset_encoding or "utf-8"
                         body_bytes = bytearray()
                         response_truncated = False

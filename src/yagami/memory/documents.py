@@ -46,16 +46,41 @@ _MAX_CHARS_PER_FILE = 5_000_000
 # enough headroom for "a folder of docs" while still capping worst-case
 # memory/DB writes from one pathological file.
 _MAX_CHUNKS_PER_FILE = 2000
+_MAX_FILE_BYTES = 25 * 1024 * 1024
+_MAX_FILES_PER_JOB = 2_000
+_MAX_TOTAL_BYTES = 250 * 1024 * 1024
 
 
 def _vec_blob(vec: list[float]) -> bytes:
     return struct.pack(f"<{len(vec)}f", *vec)
 
 
-def _iter_files(folder: Path) -> list[Path]:
-    return sorted(
-        p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in _SUPPORTED_SUFFIXES
-    )
+def _collect_files(folder: Path) -> tuple[list[Path], set[str], int]:
+    files: list[Path] = []
+    present_sources: set[str] = set()
+    skipped = 0
+    total_bytes = 0
+    for candidate in sorted(folder.rglob("*")):
+        if not candidate.is_file() or candidate.suffix.lower() not in _SUPPORTED_SUFFIXES:
+            continue
+        try:
+            path = candidate.resolve(strict=True)
+            path.relative_to(folder)
+            size = path.stat().st_size
+        except (OSError, ValueError):
+            skipped += 1
+            continue
+        source = str(path)
+        present_sources.add(source)
+        if size > _MAX_FILE_BYTES or total_bytes + size > _MAX_TOTAL_BYTES:
+            skipped += 1
+            continue
+        if len(files) >= _MAX_FILES_PER_JOB:
+            skipped += 1
+            continue
+        files.append(path)
+        total_bytes += size
+    return files, present_sources, skipped
 
 
 async def _replace_document(source_path: str, chunks: list[str], *, embedder: Embedder) -> int:
@@ -68,8 +93,14 @@ async def _replace_document(source_path: str, chunks: list[str], *, embedder: Em
         old_ids = [int(r[0]) async for r in cur]
     if old_ids:
         qmarks = ",".join("?" * len(old_ids))
-        await db.execute(f"DELETE FROM kb_documents_vec WHERE rowid IN ({qmarks})", old_ids)
-        await db.execute(f"DELETE FROM kb_documents WHERE id IN ({qmarks})", old_ids)
+        await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+            f"DELETE FROM kb_documents_vec WHERE rowid IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+            old_ids,
+        )
+        await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+            f"DELETE FROM kb_documents WHERE id IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+            old_ids,
+        )
 
     now = int(time.time() * 1000)
     for i, text in enumerate(chunks):
@@ -102,24 +133,30 @@ async def _replace_document(source_path: str, chunks: list[str], *, embedder: Em
     return len(chunks)
 
 
-async def index_folder(folder: Path, *, embedder: Embedder) -> dict:
+async def index_folder(folder: Path, *, embedder: Embedder, prune_missing: bool = True) -> dict:
     """Index every supported file (.pdf/.md/.txt/.log) under `folder`,
     recursively. Re-running is idempotent per file - existing chunks for a
     source_path are replaced, not duplicated. Concurrent calls are
     serialized by _index_lock. Returns a summary dict."""
     async with _index_lock:
-        files = _iter_files(folder)
+        folder = folder.resolve(strict=True)
+        files, present_sources, files_skipped = await asyncio.to_thread(_collect_files, folder)
         files_indexed = 0
-        files_skipped = 0
         chunks_written = 0
         for path in files:
             try:
-                blob = path.read_bytes()
+                blob = await asyncio.to_thread(path.read_bytes)
             except OSError as exc:
                 log.warning("failed to read %s: %s", path, exc)
                 files_skipped += 1
                 continue
-            doc = extract(filename=path.name, mime="", blob=blob, max_chars=_MAX_CHARS_PER_FILE)
+            doc = await asyncio.to_thread(
+                extract,
+                filename=path.name,
+                mime="",
+                blob=blob,
+                max_chars=_MAX_CHARS_PER_FILE,
+            )
             if doc.error or not doc.text:
                 files_skipped += 1
                 continue
@@ -127,10 +164,21 @@ async def index_folder(folder: Path, *, embedder: Embedder) -> dict:
             n = await _replace_document(str(path), chunks, embedder=embedder)
             files_indexed += 1
             chunks_written += n
+        sources_pruned = 0
+        if prune_missing:
+            for source in await list_sources():
+                source_path = Path(str(source["source_path"])).resolve(strict=False)
+                try:
+                    source_path.relative_to(folder)
+                except ValueError:
+                    continue
+                if str(source_path) not in present_sources:
+                    sources_pruned += await delete_source(str(source_path))
         return {
             "files_indexed": files_indexed,
             "files_skipped": files_skipped,
             "chunks_written": chunks_written,
+            "sources_pruned": sources_pruned,
         }
 
 
@@ -156,8 +204,14 @@ async def delete_source(source_path: str) -> int:
     if not ids:
         return 0
     qmarks = ",".join("?" * len(ids))
-    await db.execute(f"DELETE FROM kb_documents_vec WHERE rowid IN ({qmarks})", ids)
-    await db.execute(f"DELETE FROM kb_documents WHERE id IN ({qmarks})", ids)
+    await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+        f"DELETE FROM kb_documents_vec WHERE rowid IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+        ids,
+    )
+    await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+        f"DELETE FROM kb_documents WHERE id IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+        ids,
+    )
     await db.commit()
     return len(ids)
 

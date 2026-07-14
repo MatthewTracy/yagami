@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -36,15 +36,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Lint (ruff)
-        run: ruff check src tests
+        run: ruff check src tests scripts evals
       - name: Format check (ruff)
-        run: ruff format --check src tests
+        run: ruff format --check src tests scripts evals
+      - name: Type check
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: mypy src/yagami
       - name: Check release metadata
         run: python scripts/check_release.py
+      - name: Test default policy
+        run: yagami policy test --policy config/policy.yaml --cases config/policy-tests.yaml
       - name: Test
+        if: matrix.os != 'ubuntu-latest' || matrix.python-version != '3.12'
         run: pytest -q
+      - name: Test with coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: pytest -q --cov=yagami --cov-report=term-missing --cov-fail-under=80
       - name: Verify installed dependencies
         run: pip check
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build bundled control surface
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
       - name: Build wheel
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: pip wheel . --no-deps --wheel-dir dist
@@ -71,7 +92,10 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=high
+      - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
 
   container:
     timeout-minutes: 25
@@ -89,3 +113,15 @@ jobs:
           tags: yagami:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  helm:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/yagami --strict
+      - name: Render secure defaults
+        run: helm template test deploy/helm/yagami > /dev/null

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yagami.fullname" . }}-config
+  labels:
+    {{- include "yagami.labels" . | nindent 4 }}
+data:
+  yagami.toml: |
+    {{- .Values.config.yagamiToml | nindent 4 }}
+  policy.yaml: |
+    {{- .Values.config.policyYaml | nindent 4 }}
+  projects.yaml: |
+    {{- .Values.config.projectsYaml | nindent 4 }}

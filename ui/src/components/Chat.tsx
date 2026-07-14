@@ -65,7 +65,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState<string>(() => {
     try {
-      return localStorage.getItem(DRAFT_KEY) || "";
+      return sessionStorage.getItem(DRAFT_KEY) || "";
     } catch {
       return "";
     }
@@ -89,11 +89,12 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     return () => window.removeEventListener("yagami:reset-phi", onReset);
   }, []);
 
-  // Persist draft to localStorage on every change, restore on mount above.
+  // Retain drafts only for this browser tab. Unsent private text must not
+  // survive a browser restart or fall outside Yagami's server retention controls.
   useEffect(() => {
     try {
-      if (input) localStorage.setItem(DRAFT_KEY, input);
-      else localStorage.removeItem(DRAFT_KEY);
+      if (input) sessionStorage.setItem(DRAFT_KEY, input);
+      else sessionStorage.removeItem(DRAFT_KEY);
     } catch {
       /* localStorage full / disabled; ignore */
     }

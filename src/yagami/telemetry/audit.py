@@ -4,22 +4,73 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
+from typing import Any, Literal, Protocol
+
+import httpx
 
 from ..storage.db import get_db, now_ms
 
 _GENESIS = "0" * 64
+log = logging.getLogger("yagami.audit")
+
+
+class AuditSink(Protocol):
+    async def emit(self, event: dict[str, Any]) -> None: ...
+
+
+class HttpAuditSink:
+    """Send content-free audit records to a generic webhook or Splunk HEC."""
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        token: str = "",
+        sink_format: Literal["json", "splunk_hec"] = "json",
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        if not url.casefold().startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise ValueError("audit sink URL must use HTTPS unless it is loopback")
+        self.url = url
+        self.token = token
+        self.sink_format = sink_format
+        self.timeout_seconds = timeout_seconds
+
+    async def emit(self, event: dict[str, Any]) -> None:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            prefix = "Splunk" if self.sink_format == "splunk_hec" else "Bearer"
+            headers["Authorization"] = f"{prefix} {self.token}"
+        body: dict[str, Any] = (
+            {"event": event, "source": "yagami"} if self.sink_format == "splunk_hec" else event
+        )
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(self.url, headers=headers, json=body)
+            response.raise_for_status()
 
 
 class AuditLedger:
     """Project-scoped append-only hash chains with optional HMAC authentication."""
 
-    def __init__(self, *, key: str = "", required: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        key: str = "",
+        required: bool = False,
+        sink: AuditSink | None = None,
+        sink_required: bool = False,
+    ) -> None:
         if key and len(key) < 16:
             raise ValueError("YAGAMI_AUDIT_KEY must contain at least 16 characters")
         if required and not key:
             raise ValueError("YAGAMI_AUDIT_REQUIRED requires YAGAMI_AUDIT_KEY")
         self._key = key.encode("utf-8") if key else None
         self.required = required
+        if sink_required and sink is None:
+            raise ValueError("YAGAMI_AUDIT_SINK_REQUIRED requires YAGAMI_AUDIT_SINK_URL")
+        self._sink = sink
+        self._sink_required = sink_required
         self.key_id = (
             "hmac-sha256:" + hashlib.sha256(self._key).hexdigest()[:12]
             if self._key is not None
@@ -96,13 +147,25 @@ class AuditLedger:
                 ),
             )
             await db.commit()
-            return {
+            record = {
                 "id": int(cursor.lastrowid or 0),
                 "created_at": created_at,
                 "event_hash": event_hash,
                 "previous_hash": previous_hash,
                 "key_id": self.key_id,
+                "project_id": project_id,
+                "request_id": request_id,
+                "event_type": event_type,
+                "payload": payload,
             }
+        if self._sink is not None:
+            try:
+                await self._sink.emit(record)
+            except Exception:
+                if self._sink_required:
+                    raise
+                log.exception("optional audit sink delivery failed")
+        return record
 
     async def verify(self, project_id: str) -> dict:
         db = get_db()
@@ -111,7 +174,7 @@ class AuditLedger:
             " event_hash, key_id FROM audit_events WHERE project_id=? ORDER BY id",
             (project_id,),
         ) as cursor:
-            rows = await cursor.fetchall()
+            rows = list(await cursor.fetchall())
         expected_previous = _GENESIS
         for index, row in enumerate(rows):
             if row["previous_hash"] != expected_previous:

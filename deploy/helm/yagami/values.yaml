@@ -1,0 +1,124 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/matthewtracy/yagami
+  tag: "0.5.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Create this Secret outside the chart. At minimum it must contain a
+# YAGAMI_API_KEYS key. It may also contain provider keys and *_KEY_REF values.
+apiKeysExistingSecret: yagami-secrets
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+  runAsUser: 100
+  runAsGroup: 101
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: yagami.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes: ["ReadWriteOnce"]
+  size: 5Gi
+
+config:
+  yagamiToml: |-
+    [routing]
+    phi_must_be_local = true
+    default_backend = "ollama"
+    daily_spend_cap_usd = 5.0
+    fail_closed_on_classifier_error = true
+
+    [ollama]
+    url = "http://ollama:11434"
+    model = "llama3.2:3b-instruct-q4_K_M"
+    classifier_model = "phi4-mini"
+  policyYaml: |-
+    id: yagami-default
+    version: 1.0.0
+    mode: enforce
+    defaults:
+      route: auto
+      transform: none
+      output_action: allow
+      retention_days: 30
+      require_approval_for_tools: [file.write, file.delete, email.send, payment.create, sql.execute]
+    rules:
+      - id: sensitive-data-local
+        priority: 1000
+        match:
+          sensitivities: [phi, phi_medical, secret]
+        effect:
+          route: local
+          retention_days: 7
+  projectsYaml: |-
+    version: 1.0.0
+    defaults:
+      requests_per_minute: 120
+      max_concurrent_requests: 8
+      daily_spend_usd: null
+      allowed_purposes: []
+      allowed_jurisdictions: []
+    projects: {}
+
+extraEnv: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  ingressNamespaceSelector: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

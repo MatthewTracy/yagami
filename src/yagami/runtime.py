@@ -7,7 +7,7 @@ from .backends.base import Backend
 from .chat.session import SessionStore
 from .config import Settings, YagamiConfig
 from .gateway import GatewayService
-from .governance import ApprovalStore, PrivacyTransformer
+from .governance import ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
 from .policy import PolicyEngine
 from .projects import ProjectGovernor, ProjectRegistry
 from .router.policy import RoutingPolicy
@@ -27,6 +27,7 @@ class AppRuntime:
     metrics: GatewayMetrics
     transformer: PrivacyTransformer
     approvals: ApprovalStore
+    tool_schemas: ToolSchemaRegistry
     projects: ProjectRegistry
     governor: ProjectGovernor
     audit: AuditLedger

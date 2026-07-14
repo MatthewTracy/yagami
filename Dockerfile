@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1.7
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+ARG NODE_IMAGE=node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+
+FROM ${NODE_IMAGE} AS ui-builder
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui ./
+RUN npm run build
+
 FROM ${PYTHON_IMAGE} AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -11,7 +20,9 @@ RUN python -m pip install --require-hashes --no-cache-dir -r requirements.build.
     python -m pip wheel --require-hashes --wheel-dir /wheels \
       -r requirements.container.lock
 
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE .env.example ./
+COPY config ./config
+COPY --from=ui-builder /ui/dist ./ui/dist
 COPY src ./src
 RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 

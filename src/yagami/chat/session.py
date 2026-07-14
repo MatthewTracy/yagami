@@ -56,7 +56,8 @@ class SessionStore:
             (session_id, message.role, message.content, ts),
         )
         message_id = cur.lastrowid
-        assert message_id is not None
+        if message_id is None:
+            raise RuntimeError("message insert did not return a row id")
         for image in message.images or []:
             await db.execute(
                 "INSERT INTO message_attachments(message_id, media_type, data, created_at)"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Protocol
 
 from ..backends.base import Backend, Capability, Message
 from ..config import RoutingConfig
@@ -11,6 +11,11 @@ from .prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
 from .schema import Classification, Complexity, Intent, Sensitivity
 
 Classifier = Callable[[str], Awaitable[Classification]]
+
+
+class SensitivityInspector(Protocol):
+    async def inspect(self, text: str) -> Sensitivity: ...
+
 
 # Order used when we need to compare two sensitivity labels.
 _SENSITIVITY_ORDER: dict[Sensitivity, int] = {
@@ -70,10 +75,12 @@ class RoutingPolicy:
         config: RoutingConfig,
         backends: dict[str, Backend],
         classifier: Classifier | None = None,
+        sensitivity_inspector: SensitivityInspector | None = None,
     ) -> None:
         self._config = config
         self._backends = backends
         self._classifier = classifier
+        self._sensitivity_inspector = sensitivity_inspector
 
     @property
     def config(self) -> RoutingConfig:
@@ -111,6 +118,21 @@ class RoutingPolicy:
         active profile has block_cloud on.
         """
         last_text = next((m.content for m in reversed(history) if m.role == "user"), "")
+        external_sensitivity = (
+            await self._sensitivity_inspector.inspect(last_text)
+            if self._sensitivity_inspector is not None
+            else Sensitivity.NONE
+        )
+        if self._sensitivity_inspector is not None:
+            last_user_index = max(
+                (index for index, message in enumerate(history) if message.role == "user"),
+                default=0,
+            )
+            prior_text = "\n".join(message.content for message in history[:last_user_index])
+            if prior_text:
+                history_has_phi = history_has_phi or (
+                    await self._sensitivity_inspector.inspect(prior_text) != Sensitivity.NONE
+                )
 
         # 1. Slash-command override at the start of the message.
         override = parse_override(last_text, self._backends.keys())
@@ -124,6 +146,7 @@ class RoutingPolicy:
             classified_sensitivity = await self._cloud_override_sensitivity(
                 override.stripped_text, target
             )
+            classified_sensitivity = stickier(classified_sensitivity, external_sensitivity)
             return self._apply_override(
                 override,
                 last_text,
@@ -140,6 +163,7 @@ class RoutingPolicy:
                     f"or block_cloud active); {force_backend!r} is cloud"
                 )
             classified_sensitivity = await self._cloud_override_sensitivity(last_text, target)
+            classified_sensitivity = stickier(classified_sensitivity, external_sensitivity)
             return self._apply_force_backend(
                 force_backend,
                 last_text,
@@ -150,9 +174,12 @@ class RoutingPolicy:
         # 3. Rule-based fast-path bypass for high-confidence cases.
         bypass = can_bypass(last_text)
         if bypass is not None:
+            bypass.sensitivity = stickier(bypass.sensitivity, external_sensitivity)
             return self._apply_rules(
                 bypass,
-                "rules-fast-path",
+                "rules-fast-path+external"
+                if external_sensitivity != Sensitivity.NONE
+                else "rules-fast-path",
                 last_text,
                 spend_blocked=spend_blocked,
                 history_has_phi=history_has_phi,
@@ -182,6 +209,10 @@ class RoutingPolicy:
                     )
                 source = "fallback-after-error"
 
+        classification.sensitivity = stickier(classification.sensitivity, external_sensitivity)
+        if external_sensitivity != Sensitivity.NONE:
+            source += "+external"
+
         return self._apply_rules(
             classification,
             source,
@@ -206,7 +237,7 @@ class RoutingPolicy:
         elif _has_secret(override.stripped_text):
             sensitive = Sensitivity.SECRET
 
-        if sensitive and self._config.phi_must_be_local:
+        if sensitive not in {None, Sensitivity.NONE} and self._config.phi_must_be_local:
             target = self._backends.get(override.forced_backend or "")
             if target is not None and not target.is_local:
                 raise OverrideRefused(
@@ -249,7 +280,7 @@ class RoutingPolicy:
             classification=cls_dict,
             system_prompt=sysprompt,
             model_override=self._config.local_model_overrides.get(sensitive.value)
-            if sensitive
+            if sensitive not in {None, Sensitivity.NONE}
             else None,
             effective_user_text=override.stripped_text or None,
         )
@@ -273,7 +304,11 @@ class RoutingPolicy:
         backend = self._backends.get(name)
         if backend is None:
             raise OverrideRefused(f"force_backend {name!r} not registered")
-        if sensitive and self._config.phi_must_be_local and not backend.is_local:
+        if (
+            sensitive not in {None, Sensitivity.NONE}
+            and self._config.phi_must_be_local
+            and not backend.is_local
+        ):
             raise OverrideRefused(
                 f"force_backend {name!r} is cloud but content is "
                 f"{sensitive.value}-sensitive; refused"
@@ -293,7 +328,7 @@ class RoutingPolicy:
             classification=cls_dict,
             system_prompt=sysprompt,
             model_override=self._config.local_model_overrides.get(sensitive.value)
-            if sensitive
+            if sensitive not in {None, Sensitivity.NONE}
             else None,
         )
 

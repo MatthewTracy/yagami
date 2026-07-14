@@ -5,7 +5,18 @@ import json
 import pytest
 
 from yagami.storage.db import get_db
-from yagami.telemetry.audit import AuditLedger
+from yagami.telemetry.audit import AuditLedger, HttpAuditSink
+
+
+class RecordingSink:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.events: list[dict] = []
+        self.fail = fail
+
+    async def emit(self, event: dict) -> None:
+        self.events.append(event)
+        if self.fail:
+            raise RuntimeError("sink unavailable")
 
 
 @pytest.mark.asyncio
@@ -61,3 +72,40 @@ async def test_audit_export_is_project_scoped(fresh_db) -> None:
 def test_required_audit_requires_an_authentication_key() -> None:
     with pytest.raises(ValueError, match="YAGAMI_AUDIT_KEY"):
         AuditLedger(required=True)
+
+
+@pytest.mark.asyncio
+async def test_audit_sink_receives_tamper_evident_record(fresh_db) -> None:
+    sink = RecordingSink()
+    ledger = AuditLedger(key="audit-test-key-0123456789", sink=sink)
+
+    result = await ledger.append(
+        project_id="alpha", event_type="decision.created", payload={"backend": "local"}
+    )
+
+    assert sink.events == [result]
+    assert result["project_id"] == "alpha"
+    assert result["event_hash"]
+
+
+@pytest.mark.asyncio
+async def test_optional_audit_sink_failure_does_not_lose_local_event(fresh_db) -> None:
+    ledger = AuditLedger(sink=RecordingSink(fail=True))
+
+    result = await ledger.append(project_id="alpha", event_type="test", payload={})
+
+    assert result["id"] > 0
+    assert (await ledger.verify("alpha"))["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_required_audit_sink_failure_is_reported(fresh_db) -> None:
+    ledger = AuditLedger(sink=RecordingSink(fail=True), sink_required=True)
+
+    with pytest.raises(RuntimeError, match="sink unavailable"):
+        await ledger.append(project_id="alpha", event_type="test", payload={})
+
+
+def test_audit_sink_rejects_plaintext_remote_transport() -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        HttpAuditSink("http://siem.example.test/events")

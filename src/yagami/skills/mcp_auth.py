@@ -48,7 +48,7 @@ class OAuthClientCredentialsAuth(httpx.Auth):
         client_secret: str,
         scopes: list[str],
         resource: str,
-        token_endpoint_auth_method: str = "client_secret_basic",
+        token_endpoint_auth_method: str = "client_secret_basic",  # noqa: S107 - OAuth method
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.token_url = validate_remote_url(token_url, field="oauth_token_url")
@@ -80,13 +80,16 @@ class OAuthClientCredentialsAuth(httpx.Auth):
             }
             if self.scopes:
                 data["scope"] = " ".join(self.scopes)
-            auth = None
-            if self.token_endpoint_auth_method == "client_secret_basic":
+            auth: httpx.Auth | None = None
+            if self.token_endpoint_auth_method == "client_secret_basic":  # noqa: S105
                 auth = httpx.BasicAuth(self.client_id, self.client_secret)
             else:
                 data["client_id"] = self.client_id
                 data["client_secret"] = self.client_secret
-            response = await self._client.post(self.token_url, data=data, auth=auth)
+            if auth is None:
+                response = await self._client.post(self.token_url, data=data)
+            else:
+                response = await self._client.post(self.token_url, data=data, auth=auth)
             response.raise_for_status()
             payload = response.json()
             token = payload.get("access_token") if isinstance(payload, dict) else None

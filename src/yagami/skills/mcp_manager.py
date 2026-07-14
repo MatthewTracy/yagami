@@ -86,7 +86,9 @@ class McpSkillAdapter:
         except Exception as exc:  # noqa: BLE001 - skills must never raise
             return SkillResult(ok=False, error=f"mcp call failed: {exc}")
         text_parts = [
-            block.text for block in result.content if getattr(block, "type", None) == "text"
+            text
+            for block in result.content
+            if isinstance((text := getattr(block, "text", None)), str)
         ]
         content = "\n".join(text_parts)
         if result.isError:

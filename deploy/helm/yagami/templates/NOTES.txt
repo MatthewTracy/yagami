@@ -1,0 +1,4 @@
+1. Yagami is deployed in authenticated headless mode.
+2. Confirm that Secret {{ .Values.apiKeysExistingSecret }} contains YAGAMI_API_KEYS.
+3. Access the service with:
+   kubectl port-forward service/{{ include "yagami.fullname" . }} 8000:{{ .Values.service.port }}

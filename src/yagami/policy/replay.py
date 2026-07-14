@@ -27,8 +27,8 @@ async def replay_decisions(
     if not decision_ids:
         return []
     placeholders = ",".join("?" for _ in decision_ids)
-    sql = (
-        "SELECT id, backend, classification, policy_decision, request_context"
+    sql = (  # noqa: S608 -- placeholders are generated and all values are bound
+        "SELECT id, backend, classification, policy_decision, request_context"  # noqa: S608 -- generated placeholders only
         f" FROM decisions WHERE channel='gateway' AND project_id=? AND id IN ({placeholders})"
         " ORDER BY id"
     )

@@ -56,9 +56,9 @@ class ClaudeBackend(Backend):
             if m.role not in ("user", "assistant"):
                 continue
             if m.images:
-                blocks: list[dict] = []
+                image_blocks: list[dict] = []
                 for img in m.images:
-                    blocks.append(
+                    image_blocks.append(
                         {
                             "type": "image",
                             "source": {
@@ -69,12 +69,12 @@ class ClaudeBackend(Backend):
                         }
                     )
                 if m.content:
-                    blocks.append({"type": "text", "text": m.content})
-                chat.append({"role": m.role, "content": blocks})
+                    image_blocks.append({"type": "text", "text": m.content})
+                chat.append({"role": m.role, "content": image_blocks})
             elif m.role == "assistant" and m.tool_calls:
-                blocks: list[dict] = []
+                tool_blocks: list[dict] = []
                 if m.content:
-                    blocks.append({"type": "text", "text": m.content})
+                    tool_blocks.append({"type": "text", "text": m.content})
                 for tool_call in m.tool_calls:
                     function = tool_call.get("function", {})
                     arguments = function.get("arguments", "{}")
@@ -82,7 +82,7 @@ class ClaudeBackend(Backend):
                         parsed_arguments = json.loads(arguments)
                     except (TypeError, ValueError):
                         parsed_arguments = {}
-                    blocks.append(
+                    tool_blocks.append(
                         {
                             "type": "tool_use",
                             "id": tool_call.get("id"),
@@ -90,7 +90,7 @@ class ClaudeBackend(Backend):
                             "input": parsed_arguments,
                         }
                     )
-                chat.append({"role": m.role, "content": blocks})
+                chat.append({"role": m.role, "content": tool_blocks})
             else:
                 chat.append({"role": m.role, "content": m.content})
         kwargs: dict = {

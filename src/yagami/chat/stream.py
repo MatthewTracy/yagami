@@ -3,23 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..backends.base import BackendOptions, Capability, ImageAttachment, Message
-from ..backends.retry import generate_with_retry
-from ..config import effective_routing, get_config
+from ..backends.base import Capability, ImageAttachment, Message
+from ..config import get_config
+from ..gateway.service import GatewayError, GatewayRequestOptions, GatewayService
 from ..memory import store as memory_store
 from ..memory.retriever import Retriever
-from ..router.fast_path import _has_phi, _has_secret
+from ..policy import PolicyContext, PolicyMode
 from ..router.overrides import parse as parse_override
-from ..router.policy import OverrideRefused, RoutingPolicy
 from ..router.schema import Sensitivity
-from ..storage.db import get_db  # noqa: F401  (kept for future use)
-from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
-from ..telemetry.decisions import persist_decision, update_decision_timings
 from .session import SessionStore
 
 # Module-level worker + retriever handles so main.py can register them
@@ -41,20 +37,10 @@ def set_retriever(retriever: Retriever | None) -> None:
 
 
 _IMAGE_PROMPT_PREFIX = "high quality, detailed, photorealistic: "
-
-
-def _history_has_phi(history: list[Message]) -> bool:
-    """True if any earlier message in the chat contains PHI or secret content.
-
-    Skips the LAST user message - that's the CURRENT turn and is classified
-    on its own merits. Only looks at prior turns.
-    """
-    if len(history) < 2:
-        return False
-    for m in history[:-1]:
-        if _has_phi(m.content) or _has_secret(m.content):
-            return True
-    return False
+_MAX_CHAT_TEXT_CHARS = 1_000_000
+_MAX_CHAT_IMAGES = 4
+_MAX_CHAT_IMAGE_B64_CHARS = 4 * 27_962_028
+_MAX_INBOX_MESSAGES = 32
 
 
 log = logging.getLogger("yagami.stream")
@@ -63,7 +49,7 @@ log = logging.getLogger("yagami.stream")
 async def chat_endpoint(
     ws: WebSocket,
     sessions: SessionStore,
-    policy: RoutingPolicy,
+    gateway: GatewayService,
 ) -> None:
     await ws.accept()
     session_id: str | None = None
@@ -71,7 +57,7 @@ async def chat_endpoint(
     gen_task: asyncio.Task | None = None
     decide_task: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
-    inbox: asyncio.Queue = asyncio.Queue()
+    inbox: asyncio.Queue = asyncio.Queue(maxsize=_MAX_INBOX_MESSAGES)
     connection_closed = asyncio.Event()
 
     async def receive_loop():
@@ -120,7 +106,7 @@ async def chat_endpoint(
                 continue
             if ptype == "load_session":
                 sid = payload.get("session_id")
-                if sid and await sessions.session_exists(sid):
+                if isinstance(sid, str) and len(sid) <= 128 and await sessions.session_exists(sid):
                     session_id = sid
                     history_cache = await sessions.history(session_id)
                     await _send(ws, {"type": "session", "session_id": session_id})
@@ -140,11 +126,30 @@ async def chat_endpoint(
             if not isinstance(user_text, str):
                 await _refuse_turn(ws, "content must be a string")
                 continue
+            if len(user_text) > _MAX_CHAT_TEXT_CHARS:
+                await _refuse_turn(ws, "content exceeds 1,000,000 characters")
+                continue
             if not isinstance(images_raw, list):
                 await _refuse_turn(ws, "images must be a list")
                 continue
+            if len(images_raw) > _MAX_CHAT_IMAGES:
+                await _refuse_turn(ws, "at most 4 images are supported per message")
+                continue
             if force_backend is not None and not isinstance(force_backend, str):
                 await _refuse_turn(ws, "force_backend must be a string or null")
+                continue
+            if isinstance(force_backend, str) and len(force_backend) > 128:
+                await _refuse_turn(ws, "force_backend exceeds 128 characters")
+                continue
+            if (
+                sum(
+                    len(image.get("data_b64", ""))
+                    for image in images_raw
+                    if isinstance(image, dict)
+                )
+                > _MAX_CHAT_IMAGE_B64_CHARS
+            ):
+                await _refuse_turn(ws, "combined image payload is too large")
                 continue
             if session_id is None:
                 continue
@@ -173,7 +178,7 @@ async def chat_endpoint(
             # vision backend (anthropic preferred, then gemini/openai/
             # openrouter - see RoutingPolicy.first_vision_backend).
             if attachments and not force_backend:
-                force_backend = policy.first_vision_backend()
+                force_backend = gateway.routing_policy.first_vision_backend()
                 if force_backend is None:
                     history_cache.pop()  # not persisted; keep cache/DB consistent
                     await _send(
@@ -190,20 +195,8 @@ async def chat_endpoint(
                     await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
                     continue
 
-            t_start = time.perf_counter()
             append_task = asyncio.create_task(sessions.append(session_id, user_msg))
-
             cfg = get_config()
-            # The gate reads the EFFECTIVE routing config - [routing] with the
-            # active profile's overrides applied - so a profile's spend-cap
-            # override or block_cloud flag actually bites.
-            eff = effective_routing(cfg)
-            spend_blocked = eff.block_cloud
-            if not spend_blocked and eff.daily_spend_cap_usd > 0:
-                today = await spend_today_usd()
-                spend_blocked = today >= eff.daily_spend_cap_usd
-
-            history_has_phi = _history_has_phi(history_cache)
             # `/reset` starts a fresh model context for this turn. It strips
             # the prefix so the policy sees the clean prompt, and the backend
             # receives only that prompt (never the PHI-tainted prior history).
@@ -211,81 +204,55 @@ async def chat_endpoint(
             reset_override = parse_override(user_text)
             reset_context = reset_override.bypass_history_phi
             if reset_context:
-                history_has_phi = False
                 cleaned = reset_override.stripped_text or ""
                 history_cache[-1] = Message(
                     role="user", content=cleaned, images=attachments or None
                 )
+            message_id = await append_task
+
+            context = PolicyContext(
+                project_id="local",
+                purpose="interactive-chat",
+                session_id=session_id,
+            )
+            request_options = GatewayRequestOptions()
+            model = force_backend or "yagami-auto"
             decision_history = _messages_for_backend(history_cache, reset_context=reset_context)
             decide_task = asyncio.create_task(
-                policy.decide(
-                    decision_history,
-                    force_backend=force_backend,
-                    spend_blocked=spend_blocked,
-                    history_has_phi=history_has_phi,
+                gateway.prepare(
+                    messages=decision_history,
+                    model=model,
+                    context=context,
+                    options=request_options,
+                    persist=False,
+                    raise_on_deny=False,
                 )
             )
-            message_id = await append_task
             try:
-                decision = await decide_task
+                prepared = await decide_task
             except asyncio.CancelledError:
                 decide_task = None
                 await _send(ws, {"type": "error", "content": "cancelled", "meta": {}})
                 await _send(ws, {"type": "done", "content": "", "meta": {"cancelled": True}})
                 continue
-            except OverrideRefused as exc:
+            except GatewayError as exc:
                 decide_task = None
-                await _refuse_turn(ws, str(exc))
+                await _refuse_turn(ws, exc.message)
                 continue
             decide_task = None
             if connection_closed.is_set():
                 break
-            t_classify_ms = int((time.perf_counter() - t_start) * 1000)
 
-            if attachments and Capability.VISION not in decision.backend.capabilities:
+            if attachments and Capability.VISION not in prepared.decision.backend.capabilities:
                 # The message text is persisted, but the refused attachment
                 # must not hitch a ride on a later turn's history.
                 history_cache[-1] = Message(role="user", content=history_cache[-1].content)
                 await sessions.delete_message_images(message_id)
                 await _refuse_turn(
                     ws,
-                    f"backend {decision.backend.name!r} cannot accept image attachments",
+                    f"backend {prepared.decision.backend.name!r} cannot accept image attachments",
                 )
                 continue
-
-            # If the policy stripped a slash command, swap the last user message
-            # so the backend sees the cleaned text. The original message was
-            # already persisted for display in the chat.
-            if decision.effective_user_text and decision.effective_user_text != user_text:
-                history_cache[-1] = Message(
-                    role="user",
-                    content=decision.effective_user_text,
-                    images=attachments or None,
-                )
-
-            # Image-prompt auto-enhancement: if the chosen backend is an image
-            # generator and the prompt is short, prepend a quality hint.
-            if decision.backend.name == "stability":
-                last = history_cache[-1]
-                if len(last.content) < 40 and not last.content.startswith(_IMAGE_PROMPT_PREFIX):
-                    history_cache[-1] = Message(
-                        role="user", content=_IMAGE_PROMPT_PREFIX + last.content
-                    )
-
-            decision_payload = {
-                "backend": decision.backend.name,
-                "is_local": decision.backend.is_local,
-                "reason": decision.reason,
-                "classification": decision.classification,
-            }
-            decision_id = await persist_decision(
-                session_id=session_id,
-                user_text=user_text,
-                decision=decision_payload,
-                timings={"classify_ms": t_classify_ms},
-                profile=cfg.routing.active_profile or None,
-            )
-            await _send(ws, {"type": "routing", "decision_id": decision_id, **decision_payload})
 
             # v0.2.16: cross-session recall. When the classifier flagged
             # needs_recall and a retriever is registered, fetch top-K
@@ -295,11 +262,13 @@ async def chat_endpoint(
             # PHI; and we skip retrieval entirely on cloud-text turns
             # whose history already contains PHI (policy refused anyway).
             try:
-                recall_sens = Sensitivity(decision.classification.get("sensitivity", "none"))
+                recall_sens = Sensitivity(
+                    prepared.decision.classification.get("sensitivity", "none")
+                )
             except (TypeError, ValueError):
                 recall_sens = Sensitivity.NONE
             recall_hits = []
-            if decision.classification.get("needs_recall") and _retriever is not None:
+            if prepared.decision.classification.get("needs_recall") and _retriever is not None:
                 try:
                     recall_hits = await _retriever.fetch(
                         history_cache[-1].content,
@@ -341,65 +310,51 @@ async def chat_endpoint(
                             },
                         },
                     )
-
-            options = BackendOptions(
-                temperature=0.2 if decision.system_prompt else 0.7,
-                lora_variant=decision.lora_variant,
-                model_override=decision.model_override,
-                system_prompt=decision.system_prompt,
-            )
-            t_gen_start = time.perf_counter()
-            first_token_ms_holder: list[int | None] = [None]
-            image_count_holder = [0]
-
-            # v0.2.16: build the per-turn message list for the backend. Recall
-            # context is prepended HERE so it doesn't pollute the session
-            # history_cache that future turns inherit.
-            messages_for_backend = _messages_for_backend(history_cache, reset_context=reset_context)
             if recall_hits:
-                messages_for_backend = [recall_msg, *messages_for_backend]
-
-            # v0.2.14: when the policy decided this turn needs tools AND the
-            # chosen backend supports them, drive through tool_loop instead
-            # of the plain generate path.
-            from ..backends.anthropic import ClaudeBackend
-            from ..router.schema import Sensitivity as _Sens
-
-            use_tool_loop = (
-                decision.use_tools
-                and isinstance(decision.backend, ClaudeBackend)
-                and Capability.TOOLS in decision.backend.capabilities
+                prepared = await gateway.prepare(
+                    messages=[recall_msg, *decision_history],
+                    model=model,
+                    context=context,
+                    options=request_options,
+                    persist=False,
+                    raise_on_deny=False,
+                )
+            prepared.audit_user_text = user_text
+            await gateway.persist_prepared(
+                prepared,
+                storage_session_id=session_id,
+                channel="chat",
+                profile=cfg.routing.active_profile or None,
+            )
+            decision_payload = {
+                "backend": prepared.decision.backend.name,
+                "is_local": prepared.decision.backend.is_local,
+                "reason": prepared.decision.reason,
+                "classification": prepared.decision.classification,
+                "policy": prepared.policy.passport(),
+            }
+            await _send(
+                ws,
+                {"type": "routing", "decision_id": prepared.decision_id, **decision_payload},
             )
 
-            if use_tool_loop:
-                try:
-                    sens = _Sens(decision.classification.get("sensitivity", "none"))
-                except (TypeError, ValueError):
-                    sens = _Sens.NONE
-                gen_task = asyncio.create_task(
-                    _stream_tool_loop(
-                        ws,
-                        decision.backend,
-                        messages_for_backend,
-                        options,
-                        t_gen_start,
-                        first_token_ms_holder,
-                        session_id=session_id,
-                        sensitivity=sens,
-                    )
-                )
-            else:
-                gen_task = asyncio.create_task(
-                    _stream_generation(
-                        ws,
-                        decision.backend,
-                        messages_for_backend,
-                        options,
-                        t_gen_start,
-                        first_token_ms_holder,
-                        image_count_holder,
-                    )
-                )
+            if prepared.policy.denied and prepared.policy.mode == PolicyMode.ENFORCE:
+                await _refuse_turn(ws, "request denied by Yagami policy")
+                continue
+
+            if prepared.decision.backend.name == "stability":
+                for index in range(len(prepared.messages) - 1, -1, -1):
+                    last = prepared.messages[index]
+                    if last.role == "user":
+                        if len(last.content) < 40 and not last.content.startswith(
+                            _IMAGE_PROMPT_PREFIX
+                        ):
+                            prepared.messages[index] = last.model_copy(
+                                update={"content": _IMAGE_PROMPT_PREFIX + last.content}
+                            )
+                        break
+
+            gen_task = asyncio.create_task(_stream_gateway(ws, gateway, prepared))
             try:
                 assistant_text = await gen_task
             except asyncio.CancelledError:
@@ -408,26 +363,6 @@ async def chat_endpoint(
                 await _send(ws, {"type": "done", "content": "", "meta": {"cancelled": True}})
             finally:
                 gen_task = None
-
-            t_total_ms = int((time.perf_counter() - t_start) * 1000)
-            tokens_in = sum(
-                rough_token_count(m.content) for m in history_cache[:-1]
-            ) + rough_token_count(history_cache[-1].content)
-            tokens_out = rough_token_count(assistant_text)
-            cost = estimate_cost(
-                decision.backend,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                images=image_count_holder[0],
-            )
-            await update_decision_timings(
-                decision_id,
-                first_token_ms=first_token_ms_holder[0],
-                total_ms=t_total_ms,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cost_usd=cost,
-            )
 
             if assistant_text:
                 assistant_msg = Message(role="assistant", content=assistant_text)
@@ -441,14 +376,14 @@ async def chat_endpoint(
                 session_id=session_id,
                 user_text=user_text,
                 assistant_text=assistant_text,
-                classification=decision.classification,
+                classification=prepared.decision.classification,
             )
     except Exception:
         log.exception("stream error")
         try:
             await _send(ws, {"type": "error", "content": "internal stream error", "meta": {}})
         except Exception:
-            pass
+            log.debug("failed to report stream error to disconnected client", exc_info=True)
     finally:
         pending_tasks: list[asyncio.Task] = []
         if receiver and not receiver.done():
@@ -464,56 +399,16 @@ async def chat_endpoint(
             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
-async def _stream_generation(
-    ws, backend, history, options, t_gen_start, first_token_holder, image_count_holder
-) -> str:
+async def _stream_gateway(ws: WebSocket, gateway: GatewayService, prepared) -> str:
     pieces: list[str] = []
-    async for chunk in generate_with_retry(backend, history, options):
-        if chunk["type"] in ("text", "image_url") and first_token_holder[0] is None:
-            first_token_holder[0] = int((time.perf_counter() - t_gen_start) * 1000)
-        if chunk["type"] == "text":
-            pieces.append(chunk["content"])
-        elif chunk["type"] == "image_url":
-            image_count_holder[0] += 1
-        await _send(ws, chunk)
-    return "".join(pieces)
-
-
-async def _stream_tool_loop(
-    ws,
-    backend,
-    history,
-    options,
-    t_gen_start,
-    first_token_holder,
-    *,
-    session_id,
-    sensitivity,
-) -> str:
-    """v0.2.14: drive the multi-turn tool loop and forward each chunk to the WS.
-
-    Returns the concatenated assistant text (without tool_call chunks) so
-    spend bookkeeping in the caller can rough-count tokens normally.
-    """
-    from ..router import tool_loop
-
-    pieces: list[str] = []
-    async for chunk in tool_loop.run(
-        backend,
-        history,
-        options,
-        session_id=session_id,
-        session_sensitivity=sensitivity,
-    ):
-        if chunk["type"] in ("text", "tool_call") and first_token_holder[0] is None:
-            first_token_holder[0] = int((time.perf_counter() - t_gen_start) * 1000)
+    async for chunk in gateway.stream(prepared):
         if chunk["type"] == "text":
             pieces.append(chunk["content"])
         await _send(ws, chunk)
     return "".join(pieces)
 
 
-async def _send(ws: WebSocket, msg: dict[str, Any]) -> None:
+async def _send(ws: WebSocket, msg: Mapping[str, Any]) -> None:
     await ws.send_text(json.dumps(msg))
 
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchJson } from "../lib/http";
 
 type Costs = {
   today_usd: number;
@@ -21,10 +22,12 @@ export function CostMeter({ sessionId, refreshKey }: Props) {
   useEffect(() => {
     let cancelled = false;
     const url = sessionId ? `/api/costs?session_id=${sessionId}` : "/api/costs";
-    fetch(url)
-      .then((r) => r.json())
+    fetchJson<Costs>(url)
       .then((d) => {
         if (!cancelled) setC(d);
+      })
+      .catch(() => {
+        if (!cancelled) setC(null);
       });
     return () => {
       cancelled = true;

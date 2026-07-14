@@ -7,7 +7,7 @@ from yagami.router.schema import Sensitivity
 
 def test_containment_corpus_has_unique_cross_category_cases() -> None:
     cases = load_fixtures(FIXTURES)
-    assert len(cases) >= 12
+    assert len(cases) >= 20
     assert len({case["id"] for case in cases}) == len(cases)
     assert {
         "pii-identifiers",
@@ -16,6 +16,7 @@ def test_containment_corpus_has_unique_cross_category_cases() -> None:
         "rag-contamination",
         "tool-governance",
         "benign-controls",
+        "prompt-injection",
     }.issubset({case["category"] for case in cases})
 
 

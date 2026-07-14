@@ -1,6 +1,6 @@
 from yagami.cli import _is_loopback_host
 from yagami import config as config_mod
-from yagami.main import _is_allowed_websocket_origin, build_app
+from yagami.main import _is_allowed_websocket_origin, _log_safe, build_app
 
 
 def test_websocket_origins_allow_local_ui_and_non_browser_clients() -> None:
@@ -15,6 +15,14 @@ def test_websocket_origins_reject_remote_and_opaque_origins() -> None:
     assert not _is_allowed_websocket_origin("null")
     assert not _is_allowed_websocket_origin("not an origin")
     assert not _is_allowed_websocket_origin("https://trusted.example/path")
+
+
+def test_untrusted_log_values_are_single_line_and_bounded() -> None:
+    value = _log_safe("https://attacker.example\r\nforged=true" + "x" * 1_000)
+    assert "\r" not in value
+    assert "\n" not in value
+    assert "\\r\\n" in value
+    assert len(value) == 512
 
 
 def test_websocket_origin_allows_only_exact_configured_remote_origin() -> None:

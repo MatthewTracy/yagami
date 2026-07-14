@@ -1,33 +1,39 @@
 # Product roadmap
 
-## Shipped in 0.4
+Yagami's focus is the private context and policy plane between applications,
+models, retrieval systems, and tools. This roadmap separates implemented
+capabilities from work that still needs production design partners.
 
-- OpenAI-compatible Chat Completions, caller-defined function tools, and core
-  Responses API text/streaming surfaces.
-- Headless mode, scoped multi-key project identity, project rate/concurrency/
-  spend/context limits, Docker/Compose, and release provenance automation.
-- Versioned policy documents, restrictive merging, hashes, preview, replay,
-  shadow evaluation, policy passports, and fail-closed privacy routing.
-- Content-free context lineage across prompts, history, images, tool
-  arguments/results, and output.
-- Local AES-GCM tokenization/rehydration, output allow/redact/block DLP, and
-  encrypted, expiring project/request-bound token mappings.
-- Governed stdio/Streamable HTTP MCP with dedicated bearer or OAuth client
-  credentials, wildcard deny rules, and one-time tool approvals.
-- Project-scoped SHA-256/HMAC audit chains, verification, NDJSON export,
-  Prometheus metrics, and privacy-safe OpenTelemetry.
-- An open containment corpus and JSON/JUnit benchmark for identifiers,
+## Shipped
+
+- OpenAI-compatible Chat Completions and Responses APIs with function calls,
+  function outputs, multimodal input, and streaming tool events.
+- Authenticated MCP client and server surfaces governed by the same project,
+  policy, approval, privacy, lineage, rate, and spend controls.
+- API keys plus OIDC/JWT workload identity with JWKS, issuer, audience, scope,
+  and project-claim validation.
+- Versioned policy documents, restrictive merging, preview/replay, shadow
+  evaluation, regression tests, signed policy bundles, schema pinning, and
+  policy passports.
+- Context trust/injection signals, sensitive tool-result containment, local
+  tokenization/rehydration, output DLP, and optional Presidio analysis.
+- Hash-chained audit evidence, NDJSON/SIEM streaming, approval notifications,
+  Prometheus, and content-free OpenTelemetry GenAI telemetry.
+- PyPI, container, Compose, and Helm packaging with checksums, SBOMs,
+  provenance attestations, hardened defaults, and Python 3.11-3.14 support.
+- An open containment corpus and JSON/JUnit benchmark spanning identifiers,
   secrets, clinical data, RAG contamination, tool policy, and benign controls.
 
-## Next: production identity and storage
+## Next: production storage and key lifecycle
 
-- OIDC/JWT workload identity with JWKS rotation, issuer/audience validation,
-  group/claim-to-project mapping, and short-lived service credentials.
-- Postgres for multi-replica concurrency and database-native row isolation.
-- KMS/BYOK envelope encryption, audit-key epochs/rotation, signed export
-  manifests, and object-storage/SIEM streaming sinks.
-- Background retention enforcement for decisions, approvals, and externally
-  configured evidence lifecycles.
+- Postgres for multi-replica concurrency, migrations, database-native tenant
+  isolation, backup/restore, and tested SQLite-to-Postgres migration tooling.
+- Cloud KMS/HSM envelope providers, key epochs and rotation, re-encryption, and
+  independently signed audit-export manifests.
+- Background retention enforcement for decisions, approvals, token mappings,
+  and externally configured evidence lifecycles.
+- Object-storage audit sinks with delivery queues, retry/dead-letter handling,
+  backpressure, and end-to-end operational dashboards.
 
 ## Then: fleet reliability and interoperability
 
@@ -35,9 +41,9 @@
   and controlled policy promotion/rollback.
 - A production local-engine capability registry for vLLM, llama.cpp, Ollama,
   and multi-node scheduling.
+- Richer Responses API parity as the upstream specification evolves, including
+  long-running/background response lifecycle support.
 - A2A policy-envelope interoperability and governed agent-to-agent artifacts.
-- Responses API tool parity, richer multimodal surfaces, and an MCP server
-  facade for policy-aware tools.
 
 Desktop shells, ambient voice/hotkeys, first-party consumer OAuth apps, LoRA
 training, and local image-generation expansion remain deferred until the

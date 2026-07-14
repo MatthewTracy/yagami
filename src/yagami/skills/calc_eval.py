@@ -11,11 +11,13 @@ from __future__ import annotations
 import ast
 import math
 import operator
+from collections.abc import Callable
+from typing import Any
 
 from ..router.schema import Sensitivity
 from .base import Skill, SkillContext, SkillResult
 
-_BIN_OPS = {
+_BIN_OPS: dict[type[ast.operator], Callable[..., Any]] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
@@ -24,11 +26,11 @@ _BIN_OPS = {
     ast.Mod: operator.mod,
     ast.Pow: operator.pow,
 }
-_UNARY_OPS = {
+_UNARY_OPS: dict[type[ast.unaryop], Callable[..., Any]] = {
     ast.USub: operator.neg,
     ast.UAdd: operator.pos,
 }
-_FUNCS = {
+_FUNCS: dict[str, Callable[..., Any]] = {
     "sqrt": math.sqrt,
     "log": math.log,
     "log2": math.log2,
@@ -49,21 +51,27 @@ _FUNCS = {
 _CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf, "nan": math.nan}
 
 
-def _safe_eval(node):
+def _safe_eval(node: ast.AST) -> int | float:
     if isinstance(node, ast.Expression):
         return _safe_eval(node.body)
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
         return node.value
     if isinstance(node, ast.BinOp):
-        op = _BIN_OPS.get(type(node.op))
-        if op is None:
+        binary_op = _BIN_OPS.get(type(node.op))
+        if binary_op is None:
             raise ValueError(f"operator {type(node.op).__name__} not allowed")
-        return op(_safe_eval(node.left), _safe_eval(node.right))
+        value = binary_op(_safe_eval(node.left), _safe_eval(node.right))
+        if not isinstance(value, (int, float)):
+            raise ValueError("operator returned a non-numeric value")
+        return value
     if isinstance(node, ast.UnaryOp):
-        op = _UNARY_OPS.get(type(node.op))
-        if op is None:
+        unary_op = _UNARY_OPS.get(type(node.op))
+        if unary_op is None:
             raise ValueError(f"unary {type(node.op).__name__} not allowed")
-        return op(_safe_eval(node.operand))
+        value = unary_op(_safe_eval(node.operand))
+        if not isinstance(value, (int, float)):
+            raise ValueError("unary operator returned a non-numeric value")
+        return value
     if isinstance(node, ast.Name):
         if node.id in _CONSTS:
             return _CONSTS[node.id]
@@ -76,7 +84,10 @@ def _safe_eval(node):
         if node.keywords:
             raise ValueError("keyword args not allowed")
         args = [_safe_eval(a) for a in node.args]
-        return _FUNCS[node.func.id](*args)
+        value = _FUNCS[node.func.id](*args)
+        if not isinstance(value, (int, float)):
+            raise ValueError("function returned a non-numeric value")
+        return value
     raise ValueError(f"AST node {type(node).__name__} not allowed")
 
 

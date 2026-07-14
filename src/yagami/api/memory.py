@@ -35,7 +35,7 @@ async def list_observations(
            LIMIT ? OFFSET ?""",
         (limit, offset),
     ) as cur:
-        rows = await cur.fetchall()
+        rows = list(await cur.fetchall())
     return {
         "observations": [
             {
@@ -77,7 +77,7 @@ async def search(
                LIMIT ?""",
             (cleaned, limit),
         ) as cur:
-            rows = await cur.fetchall()
+            rows = list(await cur.fetchall())
     except Exception as exc:  # noqa: BLE001 - FTS MATCH parser is picky
         raise HTTPException(400, f"search failed: {exc}")
     return {
@@ -114,11 +114,13 @@ async def memory_stats() -> dict:
     counts = await memory_store.count_by_status()
     db = get_db()
     async with db.execute("SELECT COUNT(*) FROM observations") as cur:
-        total = (await cur.fetchone())[0]
+        total_row = await cur.fetchone()
     async with db.execute("SELECT COUNT(*) FROM observations_vec") as cur:
-        vec_total = (await cur.fetchone())[0]
+        vec_row = await cur.fetchone()
+    if total_row is None or vec_row is None:
+        raise RuntimeError("memory count query returned no row")
     return {
-        "total": int(total),
-        "vec_total": int(vec_total),
+        "total": int(total_row[0]),
+        "vec_total": int(vec_row[0]),
         "by_status": counts,
     }

@@ -86,7 +86,7 @@ class OpenAICompatBackend(Backend):
         try:
             kwargs: dict = dict(
                 model=self._model,
-                messages=chat,  # type: ignore[arg-type]
+                messages=chat,
                 max_tokens=options.max_tokens or self._max_tokens,
                 temperature=options.temperature,
                 stream=True,

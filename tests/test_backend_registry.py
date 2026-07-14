@@ -119,3 +119,17 @@ def test_failing_builder_doesnt_crash_others(monkeypatch):
     out = registry.build_all(cfg, secrets_get=lambda _n: None)
     assert "echo" in out
     assert "boomer" not in out
+
+
+def test_policy_only_upstream_is_explicit_and_supports_internal_no_auth():
+    cfg = YagamiConfig()
+    cfg.upstream.enabled = True
+    cfg.upstream.base_url = "http://litellm.internal/v1"
+    cfg.upstream.model = "provider/model"
+
+    assert "upstream" not in registry.build_all(cfg, secrets_get=lambda _name: None)
+
+    cfg.upstream.allow_unauthenticated = True
+    backends = registry.build_all(cfg, secrets_get=lambda _name: None)
+    assert backends["upstream"]._model == "provider/model"
+    assert backends["upstream"].is_local is False

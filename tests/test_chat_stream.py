@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import AsyncIterator, Callable
 
 import pytest
@@ -17,6 +18,8 @@ from yagami.backends.base import (
 from yagami.chat.session import SessionStore
 from yagami.chat.stream import chat_endpoint
 from yagami.config import RoutingConfig
+from yagami.backends.retry import generate_with_retry
+from yagami.policy import PolicyMode
 from yagami.router.policy import RoutingPolicy
 
 _DISCONNECT = object()
@@ -104,11 +107,47 @@ def _policy(backend) -> RoutingPolicy:
     )
 
 
+class _Gateway:
+    def __init__(self, policy: RoutingPolicy) -> None:
+        self.routing_policy = policy
+
+    async def prepare(self, *, messages, model, options, **kwargs):
+        force_backend = None if model == "yagami-auto" else model
+        decision = await self.routing_policy.decide(messages, force_backend=force_backend)
+        return SimpleNamespace(
+            messages=messages,
+            decision=decision,
+            policy=SimpleNamespace(
+                denied=False,
+                mode=PolicyMode.ENFORCE,
+                passport=lambda: {"mode": "enforce", "denied": False},
+            ),
+            options=options,
+            decision_id=0,
+            audit_user_text="",
+        )
+
+    async def persist_prepared(self, prepared, **kwargs) -> None:
+        prepared.decision_id = 1
+
+    async def stream(self, prepared):
+        async for chunk in generate_with_retry(
+            prepared.decision.backend,
+            prepared.messages,
+            BackendOptions(),
+        ):
+            yield chunk
+
+
+def _gateway(backend) -> _Gateway:
+    return _Gateway(_policy(backend))
+
+
 @pytest.mark.asyncio
 async def test_cancel_interrupts_live_generation(fresh_db):
     ws = _FakeWebSocket()
     backend = _SlowBackend()
-    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _policy(backend)))
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _gateway(backend)))
     await ws.wait_for(lambda m: m.get("type") == "session")
 
     await ws.incoming.put({"content": "keep thinking for a while"})
@@ -129,7 +168,7 @@ async def test_cancel_interrupts_live_generation(fresh_db):
 async def test_text_only_forced_backend_refuses_image_instead_of_dropping_it(fresh_db):
     ws = _FakeWebSocket()
     backend = _RecordingBackend()
-    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _policy(backend)))
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _gateway(backend)))
     await ws.wait_for(lambda m: m.get("type") == "session")
 
     await ws.incoming.put(

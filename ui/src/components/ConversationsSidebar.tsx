@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchJson } from "../lib/http";
 
 type SessionRow = {
   id: string;
@@ -21,17 +22,19 @@ export function ConversationsSidebar({ activeSessionId, refreshKey, onSelect, on
   const [editValue, setEditValue] = useState("");
 
   function refresh() {
-    fetch("/api/sessions?limit=100")
-      .then((r) => r.json())
-      .then((d) => setSessions(d.sessions || []));
+    fetchJson<{ sessions?: SessionRow[] }>("/api/sessions?limit=100")
+      .then((d) => setSessions(d.sessions || []))
+      .catch(() => setSessions([]));
   }
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/sessions?limit=100")
-      .then((r) => r.json())
+    fetchJson<{ sessions?: SessionRow[] }>("/api/sessions?limit=100")
       .then((d) => {
         if (!cancelled) setSessions(d.sessions || []);
+      })
+      .catch(() => {
+        if (!cancelled) setSessions([]);
       });
     return () => {
       cancelled = true;

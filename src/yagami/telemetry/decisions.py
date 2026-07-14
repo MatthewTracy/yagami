@@ -119,10 +119,10 @@ async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> 
         " request_id, project_id, channel, policy_decision, request_context"
     )
     if session_id:
-        sql = f"SELECT {cols} FROM decisions WHERE session_id=? ORDER BY id DESC LIMIT ?"
-        args = (session_id, limit)
+        sql = f"SELECT {cols} FROM decisions WHERE session_id=? ORDER BY id DESC LIMIT ?"  # noqa: S608 -- cols is a fixed internal projection
+        args: tuple = (session_id, limit)
     else:
-        sql = f"SELECT {cols} FROM decisions ORDER BY id DESC LIMIT ?"
+        sql = f"SELECT {cols} FROM decisions ORDER BY id DESC LIMIT ?"  # noqa: S608 -- cols is a fixed internal projection
         args = (limit,)
     async with db.execute(sql, args) as cur:
         rows = []
@@ -189,7 +189,7 @@ async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10
         " d.t_total_ms, d.tokens_in, d.tokens_out, d.cost_usd, d.request_id, d.project_id,"
         " d.channel, d.policy_decision, f.rating AS feedback_rating"
     )
-    base = f"SELECT {cols} FROM decisions d LEFT JOIN feedback f ON f.decision_id = d.id"
+    base = f"SELECT {cols} FROM decisions d LEFT JOIN feedback f ON f.decision_id = d.id"  # noqa: S608 -- cols is a fixed internal projection
     if session_id:
         sql = base + " WHERE d.session_id = ? ORDER BY d.id DESC LIMIT ?"
         args: tuple = (session_id, limit)

@@ -22,6 +22,41 @@ from .embedder import Embedder
 
 log = logging.getLogger("yagami.memory.retriever")
 
+_VEC_QUERY = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance
+    FROM observations_vec v
+    JOIN observations o ON o.id = v.rowid
+    WHERE v.embedding MATCH ? AND k = ?
+      AND o.embedding_status = 'ready'
+    ORDER BY v.distance ASC
+    LIMIT ?
+"""
+_VEC_QUERY_EXCLUDING_SESSION = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance
+    FROM observations_vec v
+    JOIN observations o ON o.id = v.rowid
+    WHERE v.embedding MATCH ? AND k = ? AND o.session_id != ?
+      AND o.embedding_status = 'ready'
+    ORDER BY v.distance ASC
+    LIMIT ?
+"""
+_FTS_QUERY = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id
+    FROM observations_fts f
+    JOIN observations o ON o.id = f.rowid
+    WHERE f.text MATCH ?
+    ORDER BY rank
+    LIMIT ?
+"""
+_FTS_QUERY_EXCLUDING_SESSION = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id
+    FROM observations_fts f
+    JOIN observations o ON o.id = f.rowid
+    WHERE f.text MATCH ? AND o.session_id != ?
+    ORDER BY rank
+    LIMIT ?
+"""
+
 
 @dataclass
 class Hit:
@@ -107,23 +142,11 @@ class Retriever:
     ) -> list[Hit]:
         db = get_db()
         params: list = [_vec_blob(vec), k * 3]  # over-fetch so the post-filter has room
-        where_excl = ""
         if exclude_session:
-            where_excl = " AND o.session_id != ?"
             params.append(exclude_session)
+        query = _VEC_QUERY_EXCLUDING_SESSION if exclude_session else _VEC_QUERY
         try:
-            async with db.execute(
-                f"""
-                SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance
-                FROM observations_vec v
-                JOIN observations o ON o.id = v.rowid
-                WHERE v.embedding MATCH ? AND k = ? {where_excl}
-                  AND o.embedding_status = 'ready'
-                ORDER BY v.distance ASC
-                LIMIT ?
-                """,
-                (*params, k),
-            ) as cur:
+            async with db.execute(query, (*params, k)) as cur:
                 rows = await cur.fetchall()
         except Exception as exc:  # noqa: BLE001 - vec query failure shouldn't break retrieval
             log.warning("vec search failed: %s; falling back to FTS only", exc)
@@ -155,22 +178,11 @@ class Retriever:
         if not cleaned:
             return []
         params: list = [cleaned]
-        where_excl = ""
         if exclude_session:
-            where_excl = " AND o.session_id != ?"
             params.append(exclude_session)
+        sql = _FTS_QUERY_EXCLUDING_SESSION if exclude_session else _FTS_QUERY
         try:
-            async with db.execute(
-                f"""
-                SELECT o.id, o.role, o.text, o.sensitivity, o.session_id
-                FROM observations_fts f
-                JOIN observations o ON o.id = f.rowid
-                WHERE f.text MATCH ? {where_excl}
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (*params, k),
-            ) as cur:
+            async with db.execute(sql, (*params, k)) as cur:
                 rows = await cur.fetchall()
         except Exception as exc:  # noqa: BLE001 - FTS MATCH can throw on weird tokens
             log.warning("fts search failed: %s", exc)
