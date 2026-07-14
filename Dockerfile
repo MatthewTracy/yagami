@@ -20,7 +20,7 @@ RUN python -m pip install --require-hashes --no-cache-dir -r requirements.build.
     python -m pip wheel --require-hashes --wheel-dir /wheels \
       -r requirements.container.lock
 
-COPY pyproject.toml README.md LICENSE .env.example ./
+COPY pyproject.toml hatch_build.py README.md LICENSE .env.example ./
 COPY config ./config
 COPY --from=ui-builder /ui/dist ./ui/dist
 COPY src ./src

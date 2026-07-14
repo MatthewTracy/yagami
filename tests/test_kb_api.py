@@ -93,11 +93,14 @@ async def test_index_folder_runs_as_background_job(tmp_config, tmp_path):
             accepted = await c.post("/api/kb/index", json={"path": str(tmp_path)})
             assert accepted.status_code == 202
             job_id = accepted.json()["job_id"]
-            for _ in range(100):
+            deadline = asyncio.get_running_loop().time() + 10
+            while True:
                 status = (await c.get(f"/api/kb/jobs/{job_id}")).json()
                 if status["status"] not in {"queued", "running"}:
                     break
-                await asyncio.sleep(0.01)
+                if asyncio.get_running_loop().time() >= deadline:
+                    pytest.fail(f"knowledge-base job timed out: {status}")
+                await asyncio.sleep(0.05)
             assert status["status"] == "completed"
 
 

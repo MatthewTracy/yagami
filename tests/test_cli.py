@@ -54,7 +54,9 @@ def test_configure_default_state_sets_absolute_runtime_paths(tmp_path, monkeypat
     configure_default_state(state)
 
     assert Path(sys.modules["os"].environ["YAGAMI_CONFIG_PATH"]).is_absolute()
-    assert sys.modules["os"].environ["YAGAMI_DB_PATH"].endswith("data\\yagami.db")
+    assert Path(sys.modules["os"].environ["YAGAMI_DB_PATH"]) == (
+        state.resolve() / "data" / "yagami.db"
+    )
 
 
 def test_serve_preserves_legacy_flags_and_calls_uvicorn(monkeypatch):
