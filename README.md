@@ -81,6 +81,25 @@ Alpha. OpenAI-compatible Chat Completions (including caller function tools) plus
 
 ## Five-minute gateway quickstart
 
+### Install a release
+
+Install the Python CLI and server from PyPI:
+
+```bash
+pip install yagami==0.4.1
+```
+
+Or pull the immutable multi-architecture container tag:
+
+```bash
+docker pull ghcr.io/matthewtracy/yagami:0.4.1
+```
+
+Published wheels, source archives, and container digests include checksums,
+SBOMs, license inventory, and GitHub build-provenance attestations. See
+[Release integrity and verification](docs/releases.md) before promoting an
+artifact into a production environment.
+
 ### Docker Compose
 
 ```powershell

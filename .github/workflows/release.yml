@@ -3,70 +3,279 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/matthewtracy/yagami
 
 jobs:
-  artifacts:
+  ci:
+    name: Full release CI
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  validate:
+    name: Validate release source
+    needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require an annotated version tag on the tip of main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = "tag"
+          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
+          git fetch --no-tags origin main
+          test "$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{}")" = "$(git rev-parse origin/main)"
+      - name: Validate version and changelog
+        run: python scripts/check_release.py --tag "${{ github.ref_name }}"
+
+  build-python:
+    name: Build and attest Python package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
-      - name: Build Python distributions
+      - name: Build distributions
         run: |
-          python -m pip install --upgrade build twine
+          python -m pip install build==1.5.1 twine==6.2.0
           python -m build
-          python -m twine check dist/*
+          python -m twine check --strict dist/*
+      - name: Verify a clean wheel install
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .release-venv
+          .release-venv/bin/pip install dist/*.whl pip-licenses==5.5.5
+          .release-venv/bin/pip check
+          .release-venv/bin/yagami --help >/dev/null
+          EXPECTED_VERSION="${GITHUB_REF_NAME#v}" .release-venv/bin/python - <<'PY'
+          import os
+          import yagami
+          from yagami.main import app
+
+          assert yagami.__version__ == os.environ["EXPECTED_VERSION"]
+          assert app.title.startswith("Yagami")
+          print(f"installed wheel smoke test passed: yagami {yagami.__version__}")
+          PY
+          mkdir -p release-metadata
+          .release-venv/bin/pip-licenses \
+            --format=json \
+            --output-file=release-metadata/python-licenses.json
+      - name: Generate Python environment SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .release-venv
+          format: spdx-json
+          output-file: release-metadata/python-environment.spdx.json
+          upload-artifact: false
       - name: Attest Python distributions
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
           subject-path: dist/*
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: python-distributions
           path: dist/*
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-metadata
+          path: release-metadata/*
+          if-no-files-found: error
+          retention-days: 30
 
-  container:
+  test-container:
+    name: Test and scan container
+    needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Build scan candidate
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: yagami:release-candidate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run container smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker logs yagami-release-candidate || true
+            docker rm -f yagami-release-candidate || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name yagami-release-candidate \
+            --env YAGAMI_API_KEYS="release-smoke:replace-with-at-least-16-characters" \
+            --publish 127.0.0.1:18000:8000 \
+            yagami:release-candidate
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18000/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Scan container for known high-severity vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: yagami:release-candidate
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+  publish-container:
+    name: Publish and attest container
+    needs: [test-container, publish-pypi]
+    if: >-
+      always() &&
+      needs.test-container.result == 'success' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/pkgs/container/yagami
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: metadata
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=sha,format=long
       - id: build
-        uses: docker/build-push-action@v7
+        name: Publish multi-architecture image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Attest container image
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  publish-pypi:
+    name: Publish Python package to PyPI
+    if: vars.PYPI_PUBLISH_ENABLED == 'true'
+    needs: [build-python, test-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/yagami
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-distributions
+          path: dist
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+
+  github-release:
+    name: Publish GitHub release
+    needs: [build-python, publish-container, publish-pypi]
+    if: >-
+      always() &&
+      needs.build-python.result == 'success' &&
+      needs.publish-container.result == 'success' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-distributions
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-metadata
+          path: release-metadata
+      - name: Create checksums and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_DIGEST: ${{ needs.publish-container.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s@%s\n' "${IMAGE_NAME}" "${CONTAINER_DIGEST}" > release-metadata/container-digest.txt
+          find dist release-metadata -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/* release-metadata/* SHA256SUMS \
+            --generate-notes \
+            --verify-tag \
+            --title "Yagami ${GITHUB_REF_NAME#v}"
+          if [ "${{ needs.publish-pypi.result }}" = "skipped" ]; then
+            echo "PyPI publication was disabled; GitHub artifacts and GHCR were published." >> "${GITHUB_STEP_SUMMARY}"
+          fi

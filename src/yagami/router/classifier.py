@@ -60,7 +60,7 @@ Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
 User: My SSN is 123-45-6789, what should I do about identity theft?
 Output: {"intent":"simple_qa","sensitivity":"phi","complexity":"low"}
 
-User: here is my key sk-NsqqVgaZIcLYxcdjvXdR0nHOQyn08RyUMasFjs93i3UfHuvd, please rotate it
+User: here is my API key <REDACTED_OPENAI_KEY>, please rotate it
 Output: {"intent":"simple_qa","sensitivity":"secret","complexity":"low"}
 
 User: Walk me through the trade-offs between optimistic and pessimistic concurrency control in distributed databases, with concrete examples and failure modes for each.

@@ -8,6 +8,8 @@ shipped.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-14
+
 ### Added
 - OpenAI-compatible `POST /v1/chat/completions`, `GET /v1/models`, and a core
   `POST /v1/responses` text/streaming surface for headless integrations.
@@ -31,9 +33,13 @@ shipped.
   tool-governance cases, benign controls, and JSON/JUnit output.
 - Policy passports on gateway ledger rows, privacy-safe OpenTelemetry span
   attributes, and low-cardinality Prometheus metrics.
-- Hardened non-root Docker image, Compose deployment, container CI, and tagged
-  release workflow for wheels and multi-architecture GHCR images with build
-  provenance attestations.
+- Hardened non-root Docker image, Compose deployment, container CI, and an
+  immutable release workflow for wheels and multi-architecture GHCR images.
+- Clean-install and runtime smoke tests, high/critical vulnerability gates,
+  checksums, SPDX SBOMs, license inventory, and GitHub build-provenance
+  attestations for public artifacts.
+- OIDC-only PyPI Trusted Publishing behind a dedicated GitHub environment;
+  no long-lived package-registry token is stored in GitHub.
 
 ### Security
 - Explicit remote backend and slash-command routes now run semantic privacy
