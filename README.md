@@ -81,7 +81,13 @@ Alpha. Working chat, intelligent routing, vision input, image generation, multi-
 Requires [Ollama](https://ollama.com/download), Python 3.11+, and Node 20+.
 Windows is the primary target (the notes below assume it); the Python and
 React halves also run on macOS / Linux, and CI exercises the Python half on
-Ubuntu.
+Windows and Ubuntu with every supported Python version.
+
+Yagami intentionally listens on localhost and has no built-in user
+authentication. A non-loopback `--host` requires the explicit
+`--allow-remote` flag; use that only behind a trusted, authenticated reverse
+proxy. To use the browser UI remotely, also repeat
+`--trusted-origin https://your-yagami-host` for every allowed origin.
 
 ### One command
 
@@ -179,7 +185,7 @@ default                                      -> local Ollama
 
 Two refinements:
 
-- **Per-turn `history_has_phi` gate.** Cloud text routes are refused if any prior turn in the session contained PHI, because we'd ship that history along. Image gen and the local model don't trigger this check (Stability only sees the current prompt; local stays local). Use `/reset <prompt>` for a one-shot bypass after the gate fires.
+- **Per-turn `history_has_phi` gate.** Cloud text routes are refused if any prior turn in the session contained PHI, because we'd ship that history along. Image gen and the local model don't trigger this check (Stability only sees the current prompt; local stays local). Use `/reset <prompt>` to send that prompt with a fresh model context; prior messages stay visible in the chat but are omitted from the backend request.
 - **Sticky retrieval, not sticky sensitivity.** The earlier sticky-floor design was replaced in v0.2.10: each turn is classified on its own merits, and the history gate is what protects cloud routes.
 
 ---
@@ -195,7 +201,7 @@ Type at the start of a message.
 | `/image` | Force this turn to Stability image gen. |
 | `/think` | Force Claude with `complexity=high` hint. |
 | `/code` | Stay local; tag as a code task. |
-| `/reset` | One-shot bypass of the history-PHI gate. |
+| `/reset` | Send this turn with a fresh model context; prior messages are not sent. |
 | `/<backend-name>` | Force this turn to any other configured backend, e.g. `/openai`, `/mistral`, `/groq`, `/openrouter`, `/gemini`. Works for any backend currently in `/api/health` — nothing to register. |
 
 All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an explicit error.
@@ -220,12 +226,14 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 | Auto-retry on transient cloud errors | [`src/yagami/backends/retry.py`](src/yagami/backends/retry.py) |
 | File ingest (PDF / MD / TXT, drag-drop) | [`src/yagami/ingest/extract.py`](src/yagami/ingest/extract.py) |
 | Vision input (Claude, Gemini, OpenAI, OpenRouter) | `ImageAttachment` on `Message`; auto-picks the first configured vision backend |
+| Durable vision history | Input images are stored as message-scoped SQLite blobs and restored on conversation reload |
 | Privacy Ledger panel | [`ui/src/components/PrivacyLedger.tsx`](ui/src/components/PrivacyLedger.tsx) |
 | Settings modal (live config edit) | [`ui/src/components/SettingsModal.tsx`](ui/src/components/SettingsModal.tsx) |
 | Stats dashboard | [`ui/src/components/StatsDashboard.tsx`](ui/src/components/StatsDashboard.tsx) |
 | Memory panel (search / delete) | [`ui/src/components/MemoryPanel.tsx`](ui/src/components/MemoryPanel.tsx) |
 | Thumbs up / down feedback | `/api/decisions/{id}/feedback` |
 | Privacy Ledger CSV export (compliance/audit) | `GET /api/decisions/export`, [`telemetry/decisions.py`](src/yagami/telemetry/decisions.py) |
+| Privacy lifecycle controls | Settings Privacy tab; retention cleanup, complete JSON export, and verified deletion APIs under `/api/privacy` |
 | Config profiles (e.g. strict-PHI work vs. permissive personal) | [`src/yagami/config.py`](src/yagami/config.py) `ProfileOverrides` / `effective_routing`, Settings → Profiles tab |
 
 ---
@@ -452,6 +460,9 @@ Key invariants (one test file each):
 | Cross-session leakage | `history_has_phi` gate refuses cloud text routes when any prior turn contained PHI. |
 | Config profiles | Can change default backend / spend cap / message-length threshold per profile. Cannot change `phi_must_be_local` - that's pinned server-side regardless of profile. |
 | Audit trail | `GET /api/decisions/export` downloads the full Privacy Ledger as CSV (same scrubbing as the UI view, plus cost/token/feedback columns) for compliance review. |
+| Conversation retention | Configurable in the Settings Privacy tab. Stale sessions and their derived memory/vector rows are removed together. `0` keeps data until manual deletion. |
+| Full data control | `GET /api/privacy/export` streams a portable JSON export. Settings can delete chats + memory or everything including indexed documents. |
+| Data at rest | The SQLite database and saved image blobs are not application-encrypted. Protect the drive with BitLocker, FileVault, or equivalent full-disk encryption. |
 
 Compliance note: the Privacy Ledger records which config profile was active for every decision, so an audit export answers not just "what did Yagami do" but "under which policy." See [Configuration](#configuration) for defining profiles.
 
@@ -499,12 +510,18 @@ model = "stable-image-core"
 enabled = true
 embedding_model = "all-minilm"
 
+[privacy]
+session_retention_days = 0      # 0 = keep until manually deleted
+
 [routing]
 default_backend = "ollama"
 phi_must_be_local = true       # locked on; server re-pins this on every PUT
 daily_spend_cap_usd = 5.0      # 0 = no cap
 long_message_token_threshold = 1500
 active_profile = ""            # "" = none; else a key under [profiles.*]
+
+[routing.local_model_overrides]
+phi = "phi4-mini"               # local administrative/private-data tasks
 
 # Named profiles override a subset of [routing] above - default_backend,
 # daily_spend_cap_usd, long_message_token_threshold, block_cloud.

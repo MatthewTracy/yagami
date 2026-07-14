@@ -8,12 +8,17 @@ on:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
         run: |
@@ -25,6 +30,16 @@ jobs:
         run: ruff format --check src tests
       - name: Test
         run: pytest -q
+      - name: Verify installed dependencies
+        run: pip check
+      - name: Build wheel
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: pip wheel . --no-deps --wheel-dir dist
+      - name: Audit Python dependencies
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          pip install pip-audit
+          pip-audit --local
 
   ui:
     runs-on: ubuntu-latest
@@ -39,4 +54,5 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run build

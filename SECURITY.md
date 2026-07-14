@@ -5,6 +5,18 @@ Yagami's core pitch is keeping PHI, secrets, and clinical content on-device
 table in the README). Reports about routing, memory, or storage paths that
 could leak that content off-device are treated as high priority.
 
+Yagami is designed to listen on localhost. It has no built-in user
+authentication. Binding to a non-loopback address requires the explicit
+`--allow-remote` flag and should only be done behind a trusted, authenticated
+reverse proxy. Browser WebSocket connections are restricted to local origins
+plus exact origins explicitly configured with `--trusted-origin`.
+
+The local SQLite database is not application-encrypted. Users handling PHI or
+other sensitive content should enable BitLocker, FileVault, or equivalent
+full-disk encryption. The Settings Privacy tab provides full JSON export,
+retention, and deletion controls; deleting a conversation also removes its
+saved images and derived cross-session memory rows.
+
 ## Supported versions
 
 Yagami is pre-1.0 (alpha). Only `main` is supported — there are no
