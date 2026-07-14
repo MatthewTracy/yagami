@@ -3,7 +3,7 @@
 **One OpenAI-compatible endpoint that decides what data may leave the device, which models and tools may receive it, what may be remembered, and records evidence for every decision.**
 
 [![CI](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml/badge.svg)](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/MatthewTracy/yagami/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Routing eval](https://img.shields.io/badge/routing%20eval-48%2F48-brightgreen.svg)](#tests-and-quality)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
@@ -12,7 +12,7 @@ Yagami is a local-first policy gateway for applications and agents that use a mi
 
 Existing OpenAI SDK applications can use Yagami by changing `base_url`. The included React chat remains a useful demo and local control surface, but the gateway works headlessly in Docker or directly from Python.
 
-> Detection is probabilistic; enforcement after a sensitive label is deterministic. Strict deployments should supply `metadata.sensitivity`, use a local-only policy, or both. See [Threat model](docs/threat-model.md).
+> Detection is probabilistic; enforcement after a sensitive label is deterministic. Strict deployments should supply `metadata.sensitivity`, use a local-only policy, or both. See [Threat model](https://github.com/MatthewTracy/yagami/blob/main/docs/threat-model.md).
 
 ## Demo
 
@@ -86,18 +86,18 @@ Alpha. OpenAI-compatible Chat Completions (including caller function tools) plus
 Install the Python CLI and server from PyPI:
 
 ```bash
-pip install yagami==0.4.1
+pip install yagami==0.4.2
 ```
 
 Or pull the immutable multi-architecture container tag:
 
 ```bash
-docker pull ghcr.io/matthewtracy/yagami:0.4.1
+docker pull ghcr.io/matthewtracy/yagami:0.4.2
 ```
 
 Published wheels, source archives, and container digests include checksums,
 SBOMs, license inventory, and GitHub build-provenance attestations. See
-[Release integrity and verification](docs/releases.md) before promoting an
+[Release integrity and verification](https://github.com/MatthewTracy/yagami/blob/main/docs/releases.md) before promoting an
 artifact into a production environment.
 
 ### Docker Compose
@@ -147,7 +147,7 @@ Useful endpoints:
 - `GET /healthz`
 - `GET /metrics`
 
-See [Gateway API](docs/gateway.md), [Policy configuration](docs/policies.md), and [Deployment](docs/deployment.md).
+See [Gateway API](https://github.com/MatthewTracy/yagami/blob/main/docs/gateway.md), [Policy configuration](https://github.com/MatthewTracy/yagami/blob/main/docs/policies.md), and [Deployment](https://github.com/MatthewTracy/yagami/blob/main/docs/deployment.md).
 
 ---
 
@@ -241,7 +241,7 @@ shorter to type.
 
 ## How it routes
 
-[`src/yagami/router/policy.py`](src/yagami/router/policy.py) applies, in order:
+[`src/yagami/router/policy.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/router/policy.py) applies, in order:
 
 1. **Slash override** ([`/cloud /local /image /think /code /reset /openai`](#slash-commands)) wins immediately, with one exception: PHI / secret content refuses cloud overrides with an explicit error.
 2. **Programmatic `force_backend`** from the WebSocket message wins next, same PHI guard.
@@ -289,33 +289,33 @@ All overrides honor the PHI guard. `/cloud` on a PHI prompt is refused with an e
 | Capability | Where it lives |
 |---|---|
 | OpenAI-compatible headless gateway + caller function tools | `POST /v1/chat/completions`, core `/v1/responses` |
-| Versioned policy, preview/replay, and content-free passports | [`src/yagami/policy/`](src/yagami/policy), `/v1/policy/*` |
-| Project service accounts, limits, scopes, and one-time tool approvals | [`src/yagami/auth.py`](src/yagami/auth.py), [`src/yagami/projects.py`](src/yagami/projects.py) |
-| Context lineage, AES-GCM tokenization, and output DLP | [`src/yagami/governance/`](src/yagami/governance) |
-| Verifiable SHA-256/HMAC audit chain + NDJSON export | [`src/yagami/telemetry/audit.py`](src/yagami/telemetry/audit.py), `/v1/audit/*` |
-| Streaming chat over WebSocket | [`src/yagami/chat/stream.py`](src/yagami/chat/stream.py) |
-| Per-turn classification (Phi-4 Mini, JSON mode) | [`src/yagami/router/classifier.py`](src/yagami/router/classifier.py) |
-| Fast-path bypass with PHI / secret / image regexes | [`src/yagami/router/fast_path.py`](src/yagami/router/fast_path.py) |
-| Backend registry (drop-in plugins) | [`src/yagami/backends/registry.py`](src/yagami/backends/registry.py) |
-| 9 backends out of the box (Ollama, llama.cpp local; Anthropic, OpenAI, Mistral, Groq, OpenRouter, Gemini, Stability cloud) | [`src/yagami/backends/`](src/yagami/backends) |
-| Multi-turn tool-use loop (Anthropic) | [`src/yagami/router/tool_loop.py`](src/yagami/router/tool_loop.py) |
-| First-party skills (`calc.eval`, `web.fetch`) | [`src/yagami/skills/`](src/yagami/skills) |
-| Cross-session memory with sqlite-vec + FTS5 fallback | [`src/yagami/memory/`](src/yagami/memory) |
-| Folder-indexed document knowledge base (`kb.recall` skill) | [`src/yagami/memory/documents.py`](src/yagami/memory/documents.py), `POST /api/kb/index` |
-| Governed stdio/Streamable HTTP MCP client with bearer/OAuth auth | [`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py), `GET /api/mcp` |
-| Cost meter + daily spend cap | [`src/yagami/telemetry/costs.py`](src/yagami/telemetry/costs.py) |
-| Auto-retry on transient cloud errors | [`src/yagami/backends/retry.py`](src/yagami/backends/retry.py) |
-| File ingest (PDF / MD / TXT, drag-drop) | [`src/yagami/ingest/extract.py`](src/yagami/ingest/extract.py) |
+| Versioned policy, preview/replay, and content-free passports | [`src/yagami/policy/`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/policy), `/v1/policy/*` |
+| Project service accounts, limits, scopes, and one-time tool approvals | [`src/yagami/auth.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/auth.py), [`src/yagami/projects.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/projects.py) |
+| Context lineage, AES-GCM tokenization, and output DLP | [`src/yagami/governance/`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/governance) |
+| Verifiable SHA-256/HMAC audit chain + NDJSON export | [`src/yagami/telemetry/audit.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/telemetry/audit.py), `/v1/audit/*` |
+| Streaming chat over WebSocket | [`src/yagami/chat/stream.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/chat/stream.py) |
+| Per-turn classification (Phi-4 Mini, JSON mode) | [`src/yagami/router/classifier.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/router/classifier.py) |
+| Fast-path bypass with PHI / secret / image regexes | [`src/yagami/router/fast_path.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/router/fast_path.py) |
+| Backend registry (drop-in plugins) | [`src/yagami/backends/registry.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/backends/registry.py) |
+| 9 backends out of the box (Ollama, llama.cpp local; Anthropic, OpenAI, Mistral, Groq, OpenRouter, Gemini, Stability cloud) | [`src/yagami/backends/`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/backends) |
+| Multi-turn tool-use loop (Anthropic) | [`src/yagami/router/tool_loop.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/router/tool_loop.py) |
+| First-party skills (`calc.eval`, `web.fetch`) | [`src/yagami/skills/`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/skills) |
+| Cross-session memory with sqlite-vec + FTS5 fallback | [`src/yagami/memory/`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/memory) |
+| Folder-indexed document knowledge base (`kb.recall` skill) | [`src/yagami/memory/documents.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/memory/documents.py), `POST /api/kb/index` |
+| Governed stdio/Streamable HTTP MCP client with bearer/OAuth auth | [`src/yagami/skills/mcp_manager.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/skills/mcp_manager.py), `GET /api/mcp` |
+| Cost meter + daily spend cap | [`src/yagami/telemetry/costs.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/telemetry/costs.py) |
+| Auto-retry on transient cloud errors | [`src/yagami/backends/retry.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/backends/retry.py) |
+| File ingest (PDF / MD / TXT, drag-drop) | [`src/yagami/ingest/extract.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/ingest/extract.py) |
 | Vision input (Claude, Gemini, OpenAI, OpenRouter) | `ImageAttachment` on `Message`; auto-picks the first configured vision backend |
 | Durable vision history | Input images are stored as message-scoped SQLite blobs and restored on conversation reload |
-| Privacy Ledger panel | [`ui/src/components/PrivacyLedger.tsx`](ui/src/components/PrivacyLedger.tsx) |
-| Settings modal (live config edit) | [`ui/src/components/SettingsModal.tsx`](ui/src/components/SettingsModal.tsx) |
-| Stats dashboard | [`ui/src/components/StatsDashboard.tsx`](ui/src/components/StatsDashboard.tsx) |
-| Memory panel (search / delete) | [`ui/src/components/MemoryPanel.tsx`](ui/src/components/MemoryPanel.tsx) |
+| Privacy Ledger panel | [`ui/src/components/PrivacyLedger.tsx`](https://github.com/MatthewTracy/yagami/blob/main/ui/src/components/PrivacyLedger.tsx) |
+| Settings modal (live config edit) | [`ui/src/components/SettingsModal.tsx`](https://github.com/MatthewTracy/yagami/blob/main/ui/src/components/SettingsModal.tsx) |
+| Stats dashboard | [`ui/src/components/StatsDashboard.tsx`](https://github.com/MatthewTracy/yagami/blob/main/ui/src/components/StatsDashboard.tsx) |
+| Memory panel (search / delete) | [`ui/src/components/MemoryPanel.tsx`](https://github.com/MatthewTracy/yagami/blob/main/ui/src/components/MemoryPanel.tsx) |
 | Thumbs up / down feedback | `/api/decisions/{id}/feedback` |
-| Privacy Ledger CSV export (compliance/audit) | `GET /api/decisions/export`, [`telemetry/decisions.py`](src/yagami/telemetry/decisions.py) |
+| Privacy Ledger CSV export (compliance/audit) | `GET /api/decisions/export`, [`telemetry/decisions.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/telemetry/decisions.py) |
 | Privacy lifecycle controls | Settings Privacy tab; retention cleanup, complete JSON export, and verified deletion APIs under `/api/privacy` |
-| Config profiles (e.g. strict-PHI work vs. permissive personal) | [`src/yagami/config.py`](src/yagami/config.py) `ProfileOverrides` / `effective_routing`, Settings → Profiles tab |
+| Config profiles (e.g. strict-PHI work vs. permissive personal) | [`src/yagami/config.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/config.py) `ProfileOverrides` / `effective_routing`, Settings → Profiles tab |
 
 ---
 
@@ -390,9 +390,9 @@ Three operating principles:
 Yagami ships Anthropic, OpenAI, Mistral, Groq, OpenRouter, and Gemini out of
 the box (plus local Ollama / llama.cpp). The last four are ~30-line files
 because their APIs all speak the same OpenAI-compatible wire format — see
-[`src/yagami/backends/openai_compat.py`](src/yagami/backends/openai_compat.py)
+[`src/yagami/backends/openai_compat.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/backends/openai_compat.py)
 for the shared `generate()`/`health()` implementation, and
-[`src/yagami/backends/groq.py`](src/yagami/backends/groq.py) for the
+[`src/yagami/backends/groq.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/backends/groq.py) for the
 shortest real example of subclassing it. If your provider is
 OpenAI-compatible too (most are, or offer a compatibility endpoint), that's
 the pattern to copy.
@@ -438,7 +438,7 @@ backend name works as a slash command automatically, nothing to wire up).
 
 Note: the auto-router's `needs_tools` / `complexity=high` escalation path
 (`RoutingPolicy._apply_rules` in
-[`src/yagami/router/policy.py`](src/yagami/router/policy.py)) currently only
+[`src/yagami/router/policy.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/router/policy.py)) currently only
 escalates to `anthropic` specifically, since it's the only backend wired
 into `tool_loop`. A new backend is reachable immediately via `/`, the
 Settings default-backend dropdown, or `force_backend` — just not via that
@@ -500,7 +500,7 @@ No UI panel for this yet - it's API/curl-only for now. A couple of things worth 
 
 ## MCP client support
 
-Yagami connects to external [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio or Streamable HTTP and exposes every tool they offer as a regular Yagami skill - `mcp.<server>.<tool>` - through the exact same `Skill` protocol calc.eval and web.fetch use ([`src/yagami/skills/mcp_manager.py`](src/yagami/skills/mcp_manager.py)). That's the point: any MCP server in the ecosystem becomes usable through Yagami's existing PHI-aware tool-loop gating for free, no per-server integration code.
+Yagami connects to external [Model Context Protocol](https://modelcontextprotocol.io) servers over stdio or Streamable HTTP and exposes every tool they offer as a regular Yagami skill - `mcp.<server>.<tool>` - through the exact same `Skill` protocol calc.eval and web.fetch use ([`src/yagami/skills/mcp_manager.py`](https://github.com/MatthewTracy/yagami/blob/main/src/yagami/skills/mcp_manager.py)). That's the point: any MCP server in the ecosystem becomes usable through Yagami's existing PHI-aware tool-loop gating for free, no per-server integration code.
 
 Configure one or more servers in `config/yagami.toml`:
 
@@ -577,13 +577,13 @@ Key invariants (one test file each):
 | Full data control | `GET /api/privacy/export` streams a portable JSON export. Settings can delete chats + memory or everything including indexed documents. |
 | Data at rest | The SQLite database and saved image blobs are not application-encrypted. Protect the drive with BitLocker, FileVault, or equivalent full-disk encryption. |
 
-Compliance note: Yagami supplies technical controls and evidence; it does not make a deployment compliant by itself. The Privacy Ledger records the exact policy hash and matched rules for gateway decisions. See [Threat model](docs/threat-model.md).
+Compliance note: Yagami supplies technical controls and evidence; it does not make a deployment compliant by itself. The Privacy Ledger records the exact policy hash and matched rules for gateway decisions. See [Threat model](https://github.com/MatthewTracy/yagami/blob/main/docs/threat-model.md).
 
 ---
 
 ## Configuration
 
-Editable in the UI Settings modal, or by hand in [`config/yagami.toml`](config/yagami.toml):
+Editable in the UI Settings modal, or by hand in [`config/yagami.toml`](https://github.com/MatthewTracy/yagami/blob/main/config/yagami.toml):
 
 ```toml
 [ollama]
@@ -673,16 +673,16 @@ Model and URL changes need a uvicorn restart. Routing changes (default backend, 
 
 ## Roadmap
 
-The private-AI policy plane now includes lineage, tokenization/rehydration, policy replay, governed remote MCP, scoped service accounts, durable one-time approvals, output DLP, and tamper-evident audit export. The next milestones focus on OIDC/workload identity, managed multi-node storage and keys, route canaries, and production design partners. See [Product roadmap](docs/roadmap.md).
+The private-AI policy plane now includes lineage, tokenization/rehydration, policy replay, governed remote MCP, scoped service accounts, durable one-time approvals, output DLP, and tamper-evident audit export. The next milestones focus on OIDC/workload identity, managed multi-node storage and keys, route canaries, and production design partners. See [Product roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md).
 
 ---
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the
+PRs welcome. See [CONTRIBUTING.md](https://github.com/MatthewTracy/yagami/blob/main/CONTRIBUTING.md) for dev setup, the
 pre-PR checklist, and the rules for adding a backend or skill. This project
-follows the [Contributor Covenant](CODE_OF_CONDUCT.md). For security issues,
-see [SECURITY.md](SECURITY.md) rather than opening a public issue.
+follows the [Contributor Covenant](https://github.com/MatthewTracy/yagami/blob/main/CODE_OF_CONDUCT.md). For security issues,
+see [SECURITY.md](https://github.com/MatthewTracy/yagami/blob/main/SECURITY.md) rather than opening a public issue.
 
 ---
 
@@ -696,4 +696,4 @@ Memory uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for vector storag
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/MatthewTracy/yagami/blob/main/LICENSE).

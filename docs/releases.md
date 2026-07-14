@@ -35,7 +35,7 @@ sha256sum --check SHA256SUMS
 Verify a wheel or source archive against this repository's GitHub attestation:
 
 ```bash
-gh attestation verify yagami-0.4.1-py3-none-any.whl \
+gh attestation verify yagami-0.4.2-py3-none-any.whl \
   --repo MatthewTracy/yagami
 ```
 
@@ -80,8 +80,8 @@ password to GitHub secrets.
    ```bash
    git switch main
    git pull --ff-only
-   git tag -a v0.4.1 -m "Yagami 0.4.1"
-   git push origin v0.4.1
+   git tag -a v0.4.2 -m "Yagami 0.4.2"
+   git push origin v0.4.2
    ```
 
 4. Do not create or upload release artifacts by hand. Wait for the `Release`
