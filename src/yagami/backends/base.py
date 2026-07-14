@@ -82,7 +82,7 @@ class Backend(Protocol):
     is_local: bool
     pricing: Pricing
 
-    async def generate(
+    def generate(
         self, messages: list[Message], *, options: BackendOptions
     ) -> AsyncIterator[BackendChunk]: ...
 

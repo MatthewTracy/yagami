@@ -17,7 +17,7 @@ class Sensitivity(str, Enum):
     NONE = "none"
     PHI = "phi"
     PHI_MEDICAL = "phi_medical"
-    SECRET = "secret"
+    SECRET = "secret"  # noqa: S105 - data classification label, not a credential
 
 
 class Complexity(str, Enum):

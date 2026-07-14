@@ -47,8 +47,12 @@ async def _data_counts(db: aiosqlite.Connection) -> dict[str, int]:
         "audit_events",
         "tool_approvals",
     ):
-        async with db.execute(f"SELECT COUNT(*) FROM {name}") as cur:
+        async with db.execute(  # noqa: S608 -- name comes from the fixed table tuple above
+            f"SELECT COUNT(*) FROM {name}"  # noqa: S608 -- fixed internal table tuple
+        ) as cur:
             row = await cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"count query for {name} returned no row")
         counts[name] = int(row[0])
     return counts
 
@@ -66,7 +70,10 @@ async def cleanup_expired_sessions(retention_days: int) -> int:
         async with db.execute(
             "SELECT COUNT(*) FROM sessions WHERE updated_at < ?", (cutoff,)
         ) as cur:
-            count = int((await cur.fetchone())[0])
+            row = await cur.fetchone()
+            if row is None:
+                raise RuntimeError("session count query returned no row")
+            count = int(row[0])
         if count == 0:
             return 0
         await db.execute(
@@ -101,8 +108,8 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         return {name: before[name] - after[name] for name in before}
 
 
-def _json_record(row: object, *, table: str) -> str:
-    record = dict(row)  # type: ignore[arg-type]
+def _json_record(row: aiosqlite.Row, *, table: str) -> str:
+    record = {key: row[key] for key in row.keys()}
     if table == "message_attachments":
         record["data_b64"] = base64.b64encode(record.pop("data")).decode("ascii")
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))

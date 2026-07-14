@@ -58,7 +58,7 @@ async def _load_sqlite_vec(conn: aiosqlite.Connection) -> None:
     "SQLite objects created in a thread can only be used in that same thread".
     """
     try:
-        import sqlite_vec  # type: ignore[import-not-found]
+        import sqlite_vec
     except ImportError:
         log.warning("sqlite-vec not installed; vector memory disabled")
         return

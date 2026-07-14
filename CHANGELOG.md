@@ -8,6 +8,51 @@ shipped.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-14
+
+### Added
+- Authenticated Streamable HTTP MCP server exposing governed chat and policy
+  preview tools, with project and scope enforcement inherited from the gateway.
+- Broader OpenAI Responses API compatibility, including native function calls,
+  function outputs, multimodal input, and streaming tool events.
+- OIDC/JWT workload identity with strict JWKS, issuer, audience, scope, and
+  project-claim validation.
+- Deterministic Ed25519-signed policy bundles, declarative policy regression
+  tests, schema pinning, and context-firewall injection/trust signals.
+- Optional Microsoft Presidio analysis, environment/file/keyring secret
+  references, Slack/Teams approval notifications, and generic or Splunk HEC
+  audit streaming with configurable fail-closed behavior.
+- OpenTelemetry GenAI spans and metrics without prompt or completion content.
+- Secure Helm deployment templates, MkDocs documentation, and published API,
+  integration, benchmark, deployment, and release-integrity guidance.
+- First-class `yagami init`, `doctor`, `demo`, and policy-management commands;
+  wheels now include the web control surface and starter configuration.
+
+### Changed
+- Unified browser chat and OpenAI-compatible endpoints on one gateway pipeline,
+  so routing, policy, lineage, approvals, privacy controls, and persistence are
+  applied consistently.
+- Expanded support and CI coverage to Python 3.11 through 3.14, raised branch
+  coverage enforcement to 80%, and added mypy, CodeQL, dependency review,
+  browser tests, Helm validation, and release artifact smoke tests.
+- Upgraded the UI to the current Vite/React/Tailwind toolchain and hardened
+  HTTP/WebSocket error handling.
+
+### Security
+- Prevent sensitive tool results from being sent to a non-local model and add
+  untrusted-output containment around retrieved/tool-provided instructions.
+- Require authentication for remote admin routes, reject unsafe remote binds,
+  constrain knowledge-base paths and uploads, sanitize external errors, and
+  harden URL-fetch, middleware, origin, and request-size boundaries.
+- Support content-free outbound operational notifications and audit records so
+  prompts, completions, tokens, and secrets do not enter collaboration or SIEM
+  systems.
+
+### Fixed
+- Package all runtime templates and UI assets needed by a clean PyPI install.
+- Make headless secret resolution deterministic without probing an unavailable
+  desktop keyring.
+
 ## [0.4.2] - 2026-07-14
 
 ### Fixed

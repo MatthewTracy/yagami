@@ -6,13 +6,13 @@ Fires a fixed bag of prompts (short non-PHI / PHI / code), measures
 time-to-routing and time-to-first-token per turn, writes CSV, prints p50/p95
 by category. Compare before and after a perf change to confirm the win.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import csv
 import json
-import statistics
 import sys
 import time
 from pathlib import Path
@@ -20,14 +20,26 @@ from pathlib import Path
 from websockets.asyncio.client import connect
 
 SHORT_NON_PHI = [
-    "hi", "hello", "what is 2+2", "what's the capital of France",
-    "tell me a joke", "good morning", "thanks!", "lol",
-    "who wrote hamlet", "what's the speed of sound",
-    "convert 5 miles to km", "what year was Apollo 11",
-    "spell encyclopedia", "what's a synonym for happy",
-    "name three primary colors", "what's pi to 3 places",
-    "is the sky blue", "what's 100 / 4",
-    "how many continents", "longest river in the world",
+    "hi",
+    "hello",
+    "what is 2+2",
+    "what's the capital of France",
+    "tell me a joke",
+    "good morning",
+    "thanks!",
+    "lol",
+    "who wrote hamlet",
+    "what's the speed of sound",
+    "convert 5 miles to km",
+    "what year was Apollo 11",
+    "spell encyclopedia",
+    "what's a synonym for happy",
+    "name three primary colors",
+    "what's pi to 3 places",
+    "is the sky blue",
+    "what's 100 / 4",
+    "how many continents",
+    "longest river in the world",
 ]
 
 PHI_PROMPTS = [
@@ -84,7 +96,13 @@ async def one_turn(url: str, prompt: str) -> dict:
                 break
 
     if t_send is None or t_route is None:
-        return {"backend": backend, "source": source, "route_ms": None, "ttft_ms": None, "total_ms": None}
+        return {
+            "backend": backend,
+            "source": source,
+            "route_ms": None,
+            "ttft_ms": None,
+            "total_ms": None,
+        }
     return {
         "backend": backend,
         "source": source,
@@ -133,13 +151,23 @@ async def main() -> int:
     with out_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(
             f,
-            fieldnames=["category", "prompt", "backend", "source", "route_ms", "ttft_ms", "total_ms"],
+            fieldnames=[
+                "category",
+                "prompt",
+                "backend",
+                "source",
+                "route_ms",
+                "ttft_ms",
+                "total_ms",
+            ],
         )
         w.writeheader()
         w.writerows(rows)
 
     print(f"\nwrote {len(rows)} rows -> {out_path}\n", file=sys.stderr)
-    print(f"{'category':16s} {'n':>3s}  {'route p50':>9s} {'route p95':>9s}  {'ttft p50':>9s} {'ttft p95':>9s}  {'total p50':>9s}")
+    print(
+        f"{'category':16s} {'n':>3s}  {'route p50':>9s} {'route p95':>9s}  {'ttft p50':>9s} {'ttft p95':>9s}  {'total p50':>9s}"
+    )
     for cat, _ in CATEGORIES:
         cat_rows = [r for r in rows if r["category"] == cat]
         rmedian = pct([r["route_ms"] for r in cat_rows], 50)

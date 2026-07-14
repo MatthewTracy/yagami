@@ -3,14 +3,15 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..auth import Principal, require_scope
 from ..backends.base import ImageAttachment, Message
@@ -20,6 +21,12 @@ from ..policy import PolicyContext, replay_decisions
 from ..router.schema import Sensitivity
 
 router = APIRouter(prefix="/v1", tags=["OpenAI compatibility"])
+log = logging.getLogger("yagami.openai_compat")
+_MAX_MESSAGE_CHARS = 1_000_000
+_MAX_REQUEST_TEXT_CHARS = 4_000_000
+_MAX_MESSAGES = 256
+_MAX_CONTENT_PARTS = 64
+_MAX_METADATA_BYTES = 16_384
 _gateway_invoke = require_scope("gateway:invoke")
 _gateway_read = require_scope("gateway:read")
 _policy_read = require_scope("policy:read")
@@ -31,14 +38,14 @@ _tool_approve = require_scope("tools:approve")
 
 
 class ImageURL(BaseModel):
-    url: str
+    url: str = Field(min_length=1, max_length=28_000_000)
 
 
 class ContentPart(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     type: Literal["text", "image_url", "input_text", "input_image"]
-    text: str | None = None
+    text: str | None = Field(default=None, max_length=_MAX_MESSAGE_CHARS)
     image_url: ImageURL | str | None = None
 
 
@@ -51,17 +58,48 @@ class OpenAIMessage(BaseModel):
     name: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
 
+    @model_validator(mode="after")
+    def content_is_bounded(self):
+        if isinstance(self.content, str) and len(self.content) > _MAX_MESSAGE_CHARS:
+            raise ValueError("message content exceeds 1,000,000 characters")
+        if isinstance(self.content, list) and len(self.content) > _MAX_CONTENT_PARTS:
+            raise ValueError("message content supports at most 64 parts")
+        if self.tool_calls is not None:
+            if len(self.tool_calls) > 64:
+                raise ValueError("message supports at most 64 tool calls")
+            if len(json.dumps(self.tool_calls, separators=(",", ":"))) > 262_144:
+                raise ValueError("message tool calls exceed 256 KiB")
+        return self
+
+
+def _messages_text_size(messages: list[OpenAIMessage]) -> int:
+    total = 0
+    for message in messages:
+        if isinstance(message.content, str):
+            total += len(message.content)
+        elif isinstance(message.content, list):
+            total += sum(len(part.text or "") for part in message.content)
+    return total
+
+
+def _validate_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    if len(value) > 32:
+        raise ValueError("metadata supports at most 32 keys")
+    if len(json.dumps(value, separators=(",", ":"), default=str)) > _MAX_METADATA_BYTES:
+        raise ValueError("metadata exceeds 16 KiB")
+    return value
+
 
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    model: str = "yagami-auto"
-    messages: list[OpenAIMessage] = Field(min_length=1)
+    model: str = Field(default="yagami-auto", min_length=1, max_length=128)
+    messages: list[OpenAIMessage] = Field(min_length=1, max_length=_MAX_MESSAGES)
     stream: bool = False
     temperature: float = Field(default=0.7, ge=0, le=2)
-    max_tokens: int | None = Field(default=None, ge=1)
-    max_completion_tokens: int | None = Field(default=None, ge=1)
-    n: int = Field(default=1, ge=1)
+    max_tokens: int | None = Field(default=None, ge=1, le=131_072)
+    max_completion_tokens: int | None = Field(default=None, ge=1, le=131_072)
+    n: int = Field(default=1, ge=1, le=1)
     user: str | None = Field(default=None, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
     tools: list[dict[str, Any]] | None = None
@@ -70,39 +108,91 @@ class ChatCompletionRequest(BaseModel):
     @field_validator("metadata")
     @classmethod
     def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if len(value) > 32:
-            raise ValueError("metadata supports at most 32 keys")
-        return value
+        return _validate_metadata(value)
 
     @field_validator("tools")
     @classmethod
     def tools_are_bounded(cls, value: list[dict[str, Any]] | None):
         return _validate_function_tools(value)
+
+    @model_validator(mode="after")
+    def aggregate_text_is_bounded(self):
+        if _messages_text_size(self.messages) > _MAX_REQUEST_TEXT_CHARS:
+            raise ValueError("aggregate message text exceeds 4,000,000 characters")
+        return self
+
+
+class ResponsesFunctionCall(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["function_call"]
+    call_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    arguments: str = Field(default="{}", max_length=262_144)
+
+
+class ResponsesFunctionCallOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["function_call_output"]
+    call_id: str = Field(min_length=1, max_length=128)
+    output: str | list[ContentPart]
+
+
+ResponsesInputItem = OpenAIMessage | ResponsesFunctionCall | ResponsesFunctionCallOutput
 
 
 class ResponsesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    model: str = "yagami-auto"
-    input: str | list[OpenAIMessage]
-    instructions: str | None = None
+    model: str = Field(default="yagami-auto", min_length=1, max_length=128)
+    input: str | list[ResponsesInputItem]
+    instructions: str | None = Field(default=None, max_length=_MAX_MESSAGE_CHARS)
     stream: bool = False
     temperature: float = Field(default=0.7, ge=0, le=2)
-    max_output_tokens: int | None = Field(default=None, ge=1)
+    max_output_tokens: int | None = Field(default=None, ge=1, le=131_072)
     user: str | None = Field(default=None, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
+    parallel_tool_calls: bool = True
 
     @field_validator("tools")
     @classmethod
     def tools_are_bounded(cls, value: list[dict[str, Any]] | None):
-        return _validate_function_tools(value)
+        return _validate_response_tools(value)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_metadata(value)
+
+    @model_validator(mode="after")
+    def aggregate_text_is_bounded(self):
+        total = len(self.instructions or "")
+        if isinstance(self.input, str):
+            total += len(self.input)
+        else:
+            if len(self.input) > _MAX_MESSAGES:
+                raise ValueError("responses input supports at most 256 messages")
+            messages = [item for item in self.input if isinstance(item, OpenAIMessage)]
+            total += _messages_text_size(messages)
+            for item in self.input:
+                if isinstance(item, ResponsesFunctionCall):
+                    total += len(item.arguments)
+                elif isinstance(item, ResponsesFunctionCallOutput):
+                    if isinstance(item.output, str):
+                        total += len(item.output)
+                    else:
+                        total += sum(len(part.text or "") for part in item.output)
+        if total > _MAX_REQUEST_TEXT_CHARS:
+            raise ValueError("aggregate input text exceeds 4,000,000 characters")
+        return self
 
 
 class PolicyPreviewRequest(BaseModel):
-    model: str = "yagami-auto"
-    messages: list[OpenAIMessage] = Field(min_length=1)
+    model: str = Field(default="yagami-auto", min_length=1, max_length=128)
+    messages: list[OpenAIMessage] = Field(min_length=1, max_length=_MAX_MESSAGES)
     user: str | None = Field(default=None, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
     tools: list[dict[str, Any]] | None = None
@@ -111,6 +201,12 @@ class PolicyPreviewRequest(BaseModel):
     @classmethod
     def tools_are_bounded(cls, value: list[dict[str, Any]] | None):
         return _validate_function_tools(value)
+
+    @model_validator(mode="after")
+    def aggregate_text_is_bounded(self):
+        if _messages_text_size(self.messages) > _MAX_REQUEST_TEXT_CHARS:
+            raise ValueError("aggregate message text exceeds 4,000,000 characters")
+        return self
 
 
 class PrivacyTransformRequest(BaseModel):
@@ -192,6 +288,60 @@ def _validate_function_tools(
     return tools
 
 
+def _validate_response_tools(
+    tools: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if tools is None:
+        return None
+    if len(tools) > 64:
+        raise ValueError("at most 64 function tools are supported")
+    if len(json.dumps(tools, separators=(",", ":"))) > 262_144:
+        raise ValueError("tool definitions exceed the 256 KiB limit")
+    seen: set[str] = set()
+    for tool in tools:
+        if tool.get("type") != "function":
+            raise ValueError("only Responses API function tools are supported")
+        function = tool.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            parameters = function.get("parameters", {"type": "object"})
+        else:
+            name = tool.get("name")
+            parameters = tool.get("parameters", {"type": "object"})
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", name):
+            raise ValueError("function tool names must be 1-128 safe identifier characters")
+        if name in seen:
+            raise ValueError(f"duplicate function tool name {name!r}")
+        seen.add(name)
+        if not isinstance(parameters, dict):
+            raise ValueError(f"parameters for function tool {name!r} must be an object")
+    return tools
+
+
+def _responses_chat_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    normalized: list[dict[str, Any]] = []
+    for tool in tools or []:
+        if isinstance(tool.get("function"), dict):
+            normalized.append(tool)
+            continue
+        function: dict[str, Any] = {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool.get("parameters", {"type": "object"}),
+        }
+        if "strict" in tool:
+            function["strict"] = tool["strict"]
+        normalized.append({"type": "function", "function": function})
+    return normalized or None
+
+
+def _responses_tool_choice(choice: Any) -> Any:
+    if isinstance(choice, dict) and choice.get("type") == "function":
+        name = choice.get("name")
+        return {"type": "function", "function": {"name": name}}
+    return choice
+
+
 def _decode_data_url(url: str) -> ImageAttachment:
     if not url.startswith("data:image/") or ";base64," not in url:
         raise GatewayError(
@@ -206,7 +356,12 @@ def _decode_data_url(url: str) -> ImageAttachment:
     except (binascii.Error, ValueError) as exc:
         raise GatewayError("invalid base64 image data", code="invalid_image") from exc
     try:
-        return ImageAttachment(media_type=media_type, data_b64=encoded)  # type: ignore[arg-type]
+        return ImageAttachment(
+            media_type=cast(
+                Literal["image/png", "image/jpeg", "image/gif", "image/webp"], media_type
+            ),
+            data_b64=encoded,
+        )
     except ValueError as exc:
         raise GatewayError(str(exc), code="invalid_image") from exc
 
@@ -214,11 +369,13 @@ def _decode_data_url(url: str) -> ImageAttachment:
 def _convert_messages(messages: list[OpenAIMessage]) -> list[Message]:
     converted: list[Message] = []
     for message in messages:
-        role = "system" if message.role == "developer" else message.role
+        role: Literal["system", "user", "assistant", "tool"] = (
+            "system" if message.role == "developer" else message.role
+        )
         if message.content is None:
             converted.append(
                 Message(
-                    role=role,  # type: ignore[arg-type]
+                    role=role,
                     content="",
                     tool_call_id=message.tool_call_id,
                     name=message.name,
@@ -229,7 +386,7 @@ def _convert_messages(messages: list[OpenAIMessage]) -> list[Message]:
         if isinstance(message.content, str):
             converted.append(
                 Message(
-                    role=role,  # type: ignore[arg-type]
+                    role=role,
                     content=message.content,
                     tool_call_id=message.tool_call_id,
                     name=message.name,
@@ -251,9 +408,7 @@ def _convert_messages(messages: list[OpenAIMessage]) -> list[Message]:
                 images.append(_decode_data_url(image_value))
                 continue
             raise GatewayError("image content is missing image_url", code="invalid_image")
-        converted.append(
-            Message(role=role, content="\n".join(texts), images=images or None)  # type: ignore[arg-type]
-        )
+        converted.append(Message(role=role, content="\n".join(texts), images=images or None))
     return converted
 
 
@@ -529,18 +684,83 @@ async def chat_completions(
 
 
 def _responses_messages(body: ResponsesRequest) -> list[OpenAIMessage]:
-    messages = (
-        [OpenAIMessage(role="user", content=body.input)]
-        if isinstance(body.input, str)
-        else list(body.input)
-    )
+    if isinstance(body.input, str):
+        messages = [OpenAIMessage(role="user", content=body.input)]
+    else:
+        messages = []
+        for item in body.input:
+            if isinstance(item, OpenAIMessage):
+                messages.append(item)
+            elif isinstance(item, ResponsesFunctionCall):
+                messages.append(
+                    OpenAIMessage(
+                        role="assistant",
+                        content=None,
+                        tool_calls=[
+                            {
+                                "id": item.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": item.name,
+                                    "arguments": item.arguments,
+                                },
+                            }
+                        ],
+                    )
+                )
+            else:
+                messages.append(
+                    OpenAIMessage(
+                        role="tool",
+                        tool_call_id=item.call_id,
+                        content=item.output,
+                    )
+                )
     if body.instructions:
         messages.insert(0, OpenAIMessage(role="developer", content=body.instructions))
     return messages
 
 
-def _response_object(*, response_id: str, created: int, result, metadata: dict) -> dict:
+def _response_output(*, response_id: str, text: str, tool_calls: list[dict]) -> list[dict]:
     message_id = "msg_" + uuid4().hex
+    output: list[dict] = []
+    if text or not tool_calls:
+        output.append(
+            {
+                "id": message_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": text, "annotations": [], "logprobs": []}
+                ],
+            }
+        )
+    for index, call in enumerate(tool_calls):
+        function = call.get("function", {})
+        output.append(
+            {
+                "id": f"fc_{response_id.removeprefix('resp_')}_{index}",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": call.get("id") or f"call_{index}",
+                "name": function.get("name", ""),
+                "arguments": function.get("arguments", ""),
+            }
+        )
+    return output
+
+
+def _response_object(
+    *,
+    response_id: str,
+    created: int,
+    result,
+    metadata: dict,
+    tools: list[dict] | None,
+    tool_choice: Any,
+    parallel_tool_calls: bool,
+) -> dict:
     return {
         "id": response_id,
         "object": "response",
@@ -550,21 +770,13 @@ def _response_object(*, response_id: str, created: int, result, metadata: dict) 
         "incomplete_details": None,
         "instructions": None,
         "model": result.backend,
-        "output": [
-            {
-                "id": message_id,
-                "type": "message",
-                "status": "completed",
-                "role": "assistant",
-                "content": [
-                    {"type": "output_text", "text": result.text, "annotations": [], "logprobs": []}
-                ],
-            }
-        ],
-        "parallel_tool_calls": False,
+        "output": _response_output(
+            response_id=response_id, text=result.text, tool_calls=result.tool_calls
+        ),
+        "parallel_tool_calls": parallel_tool_calls,
         "temperature": None,
-        "tool_choice": "auto",
-        "tools": [],
+        "tool_choice": tool_choice or "auto",
+        "tools": tools or [],
         "metadata": metadata,
         "usage": {
             "input_tokens": result.input_tokens,
@@ -583,15 +795,8 @@ async def create_response(
     request: Request,
     principal: Principal = Depends(_gateway_invoke),
 ):
-    if body.tools:
-        return _openai_error(
-            GatewayError(
-                "caller-defined tools are not yet supported on this compatibility endpoint",
-                code="unsupported_parameter",
-                param="tools",
-            )
-        )
     runtime = request.app.state.runtime
+    chat_tools = _responses_chat_tools(body.tools)
     try:
         prepared = await runtime.gateway.prepare(
             messages=_convert_messages(_responses_messages(body)),
@@ -600,11 +805,13 @@ async def create_response(
                 principal=principal,
                 metadata=body.metadata,
                 user=body.user,
-                tools=body.tools,
+                tools=chat_tools,
             ),
             options=_options(
                 temperature=body.temperature,
                 max_tokens=body.max_output_tokens,
+                tools=chat_tools,
+                tool_choice=_responses_tool_choice(body.tool_choice),
             ),
         )
     except GatewayError as exc:
@@ -616,6 +823,7 @@ async def create_response(
 
         async def events():
             sequence = 0
+            item_id = "msg_" + prepared.request_id.removeprefix("ygm_")
             created_event = {
                 "type": "response.created",
                 "sequence_number": sequence,
@@ -631,19 +839,78 @@ async def create_response(
             }
             yield "data: " + json.dumps(created_event, separators=(",", ":")) + "\n\n"
             text_parts: list[str] = []
+            tool_calls: dict[int, dict[str, Any]] = {}
+            text_item_added = False
             async for chunk in runtime.gateway.stream(prepared):
                 if chunk["type"] == "text":
+                    if not text_item_added:
+                        sequence += 1
+                        added = {
+                            "type": "response.output_item.added",
+                            "sequence_number": sequence,
+                            "output_index": 0,
+                            "item": {
+                                "id": item_id,
+                                "type": "message",
+                                "status": "in_progress",
+                                "role": "assistant",
+                                "content": [],
+                            },
+                        }
+                        yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
+                        text_item_added = True
                     text_parts.append(chunk["content"])
                     sequence += 1
                     event = {
                         "type": "response.output_text.delta",
                         "sequence_number": sequence,
-                        "item_id": "msg_" + prepared.request_id.removeprefix("ygm_"),
+                        "item_id": item_id,
                         "output_index": 0,
                         "content_index": 0,
                         "delta": chunk["content"],
                     }
                     yield "data: " + json.dumps(event, separators=(",", ":")) + "\n\n"
+                elif (
+                    chunk["type"] == "tool_call"
+                    and chunk.get("meta", {}).get("kind") == "caller_function"
+                ):
+                    meta = chunk["meta"]
+                    index = int(meta.get("index") or 0)
+                    call = tool_calls.get(index)
+                    if call is None:
+                        call = {
+                            "id": f"fc_{prepared.request_id.removeprefix('ygm_')}_{index}",
+                            "type": "function_call",
+                            "status": "in_progress",
+                            "call_id": str(meta.get("id") or f"call_{index}"),
+                            "name": str(meta.get("name") or ""),
+                            "arguments": "",
+                        }
+                        tool_calls[index] = call
+                        sequence += 1
+                        added = {
+                            "type": "response.output_item.added",
+                            "sequence_number": sequence,
+                            "output_index": index,
+                            "item": dict(call),
+                        }
+                        yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
+                    if meta.get("id"):
+                        call["call_id"] = str(meta["id"])
+                    if meta.get("name"):
+                        call["name"] += str(meta["name"])
+                    arguments = str(meta.get("arguments") or "")
+                    call["arguments"] += arguments
+                    if arguments:
+                        sequence += 1
+                        delta = {
+                            "type": "response.function_call_arguments.delta",
+                            "sequence_number": sequence,
+                            "item_id": call["id"],
+                            "output_index": index,
+                            "delta": arguments,
+                        }
+                        yield "data: " + json.dumps(delta, separators=(",", ":")) + "\n\n"
                 elif chunk["type"] == "error":
                     sequence += 1
                     yield (
@@ -658,22 +925,39 @@ async def create_response(
                         )
                         + "\n\n"
                     )
-            sequence += 1
-            yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "type": "response.output_text.done",
-                        "sequence_number": sequence,
-                        "item_id": "msg_" + prepared.request_id.removeprefix("ygm_"),
-                        "output_index": 0,
-                        "content_index": 0,
-                        "text": "".join(text_parts),
-                    },
-                    separators=(",", ":"),
+            if text_item_added:
+                sequence += 1
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "response.output_text.done",
+                            "sequence_number": sequence,
+                            "item_id": item_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "text": "".join(text_parts),
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n\n"
                 )
-                + "\n\n"
-            )
+            for index, call in sorted(tool_calls.items()):
+                sequence += 1
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "response.function_call_arguments.done",
+                            "sequence_number": sequence,
+                            "item_id": call["id"],
+                            "output_index": index,
+                            "arguments": call["arguments"],
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n\n"
+                )
             sequence += 1
             yield (
                 "data: "
@@ -687,7 +971,18 @@ async def create_response(
                             "created_at": created,
                             "status": "completed",
                             "model": prepared.decision.backend.name,
-                            "output": [],
+                            "output": [
+                                *(
+                                    _response_output(
+                                        response_id=response_id,
+                                        text="".join(text_parts),
+                                        tool_calls=[],
+                                    )
+                                    if text_item_added
+                                    else []
+                                ),
+                                *(dict(call, status="completed") for call in tool_calls.values()),
+                            ],
                             "metadata": body.metadata,
                         },
                     },
@@ -712,6 +1007,9 @@ async def create_response(
             created=created,
             result=result,
             metadata=body.metadata,
+            tools=body.tools,
+            tool_choice=body.tool_choice,
+            parallel_tool_calls=body.parallel_tool_calls,
         ),
     )
 
@@ -787,8 +1085,15 @@ async def privacy_transform(
     )
     try:
         transformed = await runtime.transformer.transform_text(body.text, session=session)
-    except TransformationError as exc:
-        return _openai_error(GatewayError(str(exc), code="transformation_failed", status_code=422))
+    except TransformationError:
+        log.warning("privacy transformation failed", exc_info=True)
+        return _openai_error(
+            GatewayError(
+                "privacy transformation could not be completed",
+                code="transformation_failed",
+                status_code=422,
+            )
+        )
     await runtime.gateway.append_audit(
         project_id=principal.project_id,
         request_id=tokenization_id,
@@ -854,8 +1159,15 @@ async def privacy_rehydrate(
             project_id=principal.project_id,
             delete=body.delete,
         )
-    except TransformationError as exc:
-        return _openai_error(GatewayError(str(exc), code="rehydration_failed", status_code=404))
+    except TransformationError:
+        log.info("privacy rehydration failed", exc_info=True)
+        return _openai_error(
+            GatewayError(
+                "tokenization session was unavailable or invalid",
+                code="rehydration_failed",
+                status_code=404,
+            )
+        )
     await runtime.gateway.append_audit(
         project_id=principal.project_id,
         request_id=body.tokenization_id,

@@ -32,6 +32,17 @@ class OpenAIConfig(BaseModel):
     max_tokens: int = 4096
 
 
+class UpstreamConfig(BaseModel):
+    """Policy-only forwarding to an existing OpenAI-compatible gateway."""
+
+    enabled: bool = False
+    base_url: str = "http://localhost:4000/v1"
+    model: str = ""
+    max_tokens: int = 4096
+    api_key_env: str = "UPSTREAM_API_KEY"
+    allow_unauthenticated: bool = False
+
+
 class MistralConfig(BaseModel):
     model: str = "mistral-large-latest"
     max_tokens: int = 4096
@@ -139,7 +150,7 @@ class McpServerConfig(BaseModel):
     oauth_scopes: list[str] = Field(default_factory=list)
     oauth_resource: str = ""
     oauth_token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
-        "client_secret_basic"
+        "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
     )
 
     @model_validator(mode="after")
@@ -172,6 +183,7 @@ class YagamiConfig(BaseModel):
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    upstream: UpstreamConfig = Field(default_factory=UpstreamConfig)
     mistral: MistralConfig = Field(default_factory=MistralConfig)
     groq: GroqConfig = Field(default_factory=GroqConfig)
     openrouter: OpenRouterConfig = Field(default_factory=OpenRouterConfig)
@@ -221,13 +233,39 @@ class Settings(BaseSettings):
     projects_path: str = Field(
         default="config/projects.yaml", validation_alias=AliasChoices("YAGAMI_PROJECTS_PATH")
     )
+    kb_roots: str = Field(default="", validation_alias=AliasChoices("YAGAMI_KB_ROOTS"))
     api_keys: str = Field(default="", validation_alias=AliasChoices("YAGAMI_API_KEYS"))
     require_auth: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_REQUIRE_AUTH"))
+    oidc_issuer: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OIDC_ISSUER"))
+    oidc_audience: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OIDC_AUDIENCE"))
+    oidc_jwks_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OIDC_JWKS_URL"))
+    oidc_project_claim: str = Field(
+        default="yagami_project", validation_alias=AliasChoices("YAGAMI_OIDC_PROJECT_CLAIM")
+    )
+    oidc_roles_claim: str = Field(
+        default="roles", validation_alias=AliasChoices("YAGAMI_OIDC_ROLES_CLAIM")
+    )
+    oidc_scopes_claim: str = Field(
+        default="scope", validation_alias=AliasChoices("YAGAMI_OIDC_SCOPES_CLAIM")
+    )
     headless: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_HEADLESS"))
+    demo_mode: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_DEMO_MODE"))
+    mcp_server_enabled: bool = Field(
+        default=True, validation_alias=AliasChoices("YAGAMI_MCP_SERVER_ENABLED")
+    )
     metrics_enabled: bool = Field(
         default=True, validation_alias=AliasChoices("YAGAMI_METRICS_ENABLED")
     )
+    max_request_bytes: int = Field(
+        default=32 * 1024 * 1024,
+        ge=1_048_576,
+        le=268_435_456,
+        validation_alias=AliasChoices("YAGAMI_MAX_REQUEST_BYTES"),
+    )
     transform_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY"))
+    transform_key_ref: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_REF")
+    )
     transform_vault_ttl_seconds: int = Field(
         default=3600,
         ge=60,
@@ -235,8 +273,66 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("YAGAMI_TRANSFORM_VAULT_TTL_SECONDS"),
     )
     audit_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY"))
+    audit_key_ref: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY_REF"))
     audit_required: bool = Field(
         default=False, validation_alias=AliasChoices("YAGAMI_AUDIT_REQUIRED")
+    )
+    audit_sink_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_URL"))
+    audit_sink_token: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_TOKEN")
+    )
+    audit_sink_token_ref: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_TOKEN_REF")
+    )
+    audit_sink_format: Literal["json", "splunk_hec"] = Field(
+        default="json", validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_FORMAT")
+    )
+    audit_sink_required: bool = Field(
+        default=False, validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_REQUIRED")
+    )
+    audit_sink_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=30.0,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_TIMEOUT_SECONDS"),
+    )
+    approval_webhook_url: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_APPROVAL_WEBHOOK_URL")
+    )
+    approval_webhook_format: Literal["json", "slack", "teams"] = Field(
+        default="json", validation_alias=AliasChoices("YAGAMI_APPROVAL_WEBHOOK_FORMAT")
+    )
+    approval_webhook_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=30.0,
+        validation_alias=AliasChoices("YAGAMI_APPROVAL_WEBHOOK_TIMEOUT_SECONDS"),
+    )
+    presidio_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_PRESIDIO_URL"))
+    presidio_language: str = Field(
+        default="en", validation_alias=AliasChoices("YAGAMI_PRESIDIO_LANGUAGE")
+    )
+    presidio_score_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("YAGAMI_PRESIDIO_SCORE_THRESHOLD"),
+    )
+    presidio_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=30.0,
+        validation_alias=AliasChoices("YAGAMI_PRESIDIO_TIMEOUT_SECONDS"),
+    )
+    presidio_fail_closed: bool = Field(
+        default=True, validation_alias=AliasChoices("YAGAMI_PRESIDIO_FAIL_CLOSED")
+    )
+    presidio_allow_remote: bool = Field(
+        default=False, validation_alias=AliasChoices("YAGAMI_PRESIDIO_ALLOW_REMOTE")
+    )
+    presidio_token: str = Field(default="", validation_alias=AliasChoices("YAGAMI_PRESIDIO_TOKEN"))
+    presidio_token_ref: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_PRESIDIO_TOKEN_REF")
     )
 
 

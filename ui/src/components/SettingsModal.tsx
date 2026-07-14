@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fetchJson } from "../lib/http";
 import { emitToast } from "./Toast";
 
 type Section = "models" | "routing" | "profiles" | "privacy" | "prompts";
@@ -47,9 +48,8 @@ export function SettingsModal({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((d: Cfg) => {
+    fetchJson<Cfg>("/api/config")
+      .then((d) => {
         setData(d);
         setDirty(false);
       })

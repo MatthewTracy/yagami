@@ -21,7 +21,7 @@ impact is usually a small, focused PR rather than a large one.
 ## Dev setup
 
 See the [Quickstart](README.md#quickstart) in the README. tl;dr: Python
-3.11+, Node 20+, Ollama with three models pulled.
+3.11+, Node 22.12+, Ollama with three models pulled.
 
 ## Adding a backend or skill
 

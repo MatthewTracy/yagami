@@ -8,6 +8,8 @@
 [![Routing eval](https://img.shields.io/badge/routing%20eval-48%2F48-brightgreen.svg)](#tests-and-quality)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
 
+[Documentation](https://matthewtracy.github.io/yagami/) · [60-second demo](https://matthewtracy.github.io/yagami/#try-it-in-60-seconds) · [Integrations](https://matthewtracy.github.io/yagami/integrations/)
+
 Yagami is a local-first policy gateway for applications and agents that use a mix of local and cloud AI. Every request is classified on-device, evaluated against a versioned policy, routed to an allowed backend, and recorded in a privacy-conscious decision ledger. Detected or caller-declared PHI and secrets are forced local.
 
 Existing OpenAI SDK applications can use Yagami by changing `base_url`. The included React chat remains a useful demo and local control surface, but the gateway works headlessly in Docker or directly from Python.
@@ -86,13 +88,25 @@ Alpha. OpenAI-compatible Chat Completions (including caller function tools) plus
 Install the Python CLI and server from PyPI:
 
 ```bash
-pip install yagami==0.4.2
+pip install yagami==0.5.0
+yagami init
+yagami doctor
+yagami serve
 ```
+
+Open <http://127.0.0.1:8000>. The wheel includes the control surface and
+creates configuration under `~/.yagami`; Node.js and a source checkout are
+not required. Existing `yagami --host ...` invocations remain compatible.
+
+Treat routing policy like code: `yagami policy test` runs the included
+regression suite. For promoted environments, `yagami policy keygen`, `bundle`,
+and `verify` create and validate deterministic Ed25519-signed policy bundles;
+keep private signing keys outside the repository.
 
 Or pull the immutable multi-architecture container tag:
 
 ```bash
-docker pull ghcr.io/matthewtracy/yagami:0.4.2
+docker pull ghcr.io/matthewtracy/yagami:0.5.0
 ```
 
 Published wheels, source archives, and container digests include checksums,
@@ -153,7 +167,7 @@ See [Gateway API](https://github.com/MatthewTracy/yagami/blob/main/docs/gateway.
 
 ## Local chat application quickstart
 
-Requires [Ollama](https://ollama.com/download), Python 3.11+, and Node 20+.
+Requires [Ollama](https://ollama.com/download), Python 3.11+, and Node 22.12+.
 Windows is the primary target (the notes below assume it); the Python and
 React halves also run on macOS / Linux, and CI exercises the Python half on
 Windows and Ubuntu with every supported Python version.

@@ -15,10 +15,12 @@ _SERVICE = "yagami"
 
 
 def _backend_available() -> bool:
+    if os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"}:
+        return False
     try:
-        import keyring  # noqa: F401
+        import keyring
 
-        return True
+        return keyring.get_keyring().priority > 0
     except Exception:
         return False
 

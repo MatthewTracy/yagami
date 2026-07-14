@@ -113,7 +113,7 @@ class PrivacyTransformer:
     def __init__(self, *, key: str, ttl_seconds: int = 3600) -> None:
         self._key = _parse_key(key) if key else None
         self._hash_key = (
-            hashlib.sha256(b"yagami-value-hash-v1:" + self._key).digest()
+            hmac.new(self._key, b"yagami-value-hash-v1", hashlib.sha256).digest()
             if self._key is not None
             else None
         )
@@ -173,8 +173,8 @@ class PrivacyTransformer:
         entity_type: str,
         value: str,
     ) -> None:
-        assert self._aesgcm is not None
-        assert self._hash_key is not None
+        if self._aesgcm is None or self._hash_key is None:
+            raise TransformationError("tokenization key is not configured")
         nonce = os.urandom(12)
         aad = f"{request_id}:{project_id}:{placeholder}".encode("utf-8")
         ciphertext = self._aesgcm.encrypt(nonce, value.encode("utf-8"), aad)

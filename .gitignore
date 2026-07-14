@@ -16,6 +16,9 @@ build/
 node_modules/
 ui/dist/
 ui/.vite/
+ui/coverage/
+ui/playwright-report/
+ui/test-results/
 
 models/
 loras/
@@ -40,6 +43,8 @@ Thumbs.db
 
 # Local-only artifacts that should never be committed.
 *.log
+*.policy-bundle.zip
+*.policy-private.pem
 .claude/
 .plans/
 ui/tsconfig.tsbuildinfo

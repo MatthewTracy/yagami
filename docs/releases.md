@@ -12,6 +12,7 @@ CLI, starts the built container, checks its health endpoint, and blocks known
 fixed HIGH or CRITICAL vulnerabilities. The public outputs are:
 
 - A wheel and source distribution on PyPI and the GitHub release.
+- A versioned Helm chart archive on the GitHub release.
 - Linux `amd64` and `arm64` images at
   `ghcr.io/matthewtracy/yagami:<version>` and an immutable `sha-<commit>` tag.
 - SHA-256 checksums, an SPDX Python-environment SBOM, a Python license
@@ -35,7 +36,14 @@ sha256sum --check SHA256SUMS
 Verify a wheel or source archive against this repository's GitHub attestation:
 
 ```bash
-gh attestation verify yagami-0.4.2-py3-none-any.whl \
+gh attestation verify yagami-0.5.0-py3-none-any.whl \
+  --repo MatthewTracy/yagami
+```
+
+Verify the downloaded Helm chart the same way:
+
+```bash
+gh attestation verify yagami-0.5.0.tgz \
   --repo MatthewTracy/yagami
 ```
 
@@ -80,8 +88,8 @@ password to GitHub secrets.
    ```bash
    git switch main
    git pull --ff-only
-   git tag -a v0.4.2 -m "Yagami 0.4.2"
-   git push origin v0.4.2
+   git tag -a v0.5.0 -m "Yagami 0.5.0"
+   git push origin v0.5.0
    ```
 
 4. Do not create or upload release artifacts by hand. Wait for the `Release`

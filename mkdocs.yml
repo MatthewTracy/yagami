@@ -1,0 +1,41 @@
+site_name: Yagami — Private AI Context Firewall
+site_description: Govern what context, models, and tools AI agents may use.
+site_url: https://matthewtracy.github.io/yagami/
+repo_url: https://github.com/MatthewTracy/yagami
+repo_name: MatthewTracy/yagami
+edit_uri: edit/main/docs/
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+nav:
+  - Start here: index.md
+  - Gateway API: gateway.md
+  - Policies: policies.md
+  - Integrations: integrations.md
+  - Deployment: deployment.md
+  - Architecture: architecture.md
+  - Security:
+      - Threat model: threat-model.md
+      - Release integrity: releases.md
+  - Evaluation: benchmarks.md
+  - Roadmap: roadmap.md

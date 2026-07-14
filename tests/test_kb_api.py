@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import tempfile
 import shutil
 from pathlib import Path
 
@@ -20,6 +22,7 @@ def tmp_config(tmp_path, monkeypatch):
         shutil.copy(src, cfg_file)
     monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(cfg_file))
     monkeypatch.setenv("YAGAMI_DB_PATH", str(tmp_path / "yagami.db"))
+    monkeypatch.setenv("YAGAMI_KB_ROOTS", str(tmp_path))
     config_mod.get_settings.cache_clear()
     config_mod.get_config.cache_clear()
     yield cfg_file
@@ -28,12 +31,12 @@ def tmp_config(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_index_nonexistent_folder_rejected(tmp_config):
+async def test_index_nonexistent_folder_rejected(tmp_config, tmp_path):
     app = build_app()
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
-            r = await c.post("/api/kb/index", json={"path": "/definitely/not/a/real/path"})
+            r = await c.post("/api/kb/index", json={"path": str(tmp_path / "missing")})
             assert r.status_code == 400
 
 
@@ -47,6 +50,17 @@ async def test_index_file_instead_of_folder_rejected(tmp_config, tmp_path):
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             r = await c.post("/api/kb/index", json={"path": str(f)})
             assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_index_folder_outside_configured_roots_rejected(tmp_config, tmp_path):
+    app = build_app()
+    with tempfile.TemporaryDirectory(dir=tmp_path.parent) as outside:
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                r = await c.post("/api/kb/index", json={"path": outside})
+                assert r.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -66,12 +80,14 @@ async def test_index_folder_end_to_end_without_live_ollama(tmp_config, tmp_path)
     the connection error and returns None (see memory/embedder.py), so
     indexing should still complete (rows just land 'failed', not crash the
     request). Confirms the endpoint degrades instead of 500ing."""
-    (tmp_path / "doc.txt").write_text("some indexable content")
+    folder = tmp_path / "documents"
+    folder.mkdir()
+    (folder / "doc.txt").write_text("some indexable content")
     app = build_app()
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
-            r = await c.post("/api/kb/index", json={"path": str(tmp_path)})
+            r = await c.post("/api/kb/index", json={"path": str(folder), "wait": True})
             assert r.status_code == 200
             data = r.json()
             assert data["files_indexed"] == 1
@@ -79,6 +95,27 @@ async def test_index_folder_end_to_end_without_live_ollama(tmp_config, tmp_path)
 
             listed = await c.get("/api/kb")
             assert listed.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_index_folder_runs_as_background_job(tmp_config, tmp_path):
+    (tmp_path / "doc.txt").write_text("background content")
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            accepted = await c.post("/api/kb/index", json={"path": str(tmp_path)})
+            assert accepted.status_code == 202
+            job_id = accepted.json()["job_id"]
+            deadline = asyncio.get_running_loop().time() + 10
+            while True:
+                status = (await c.get(f"/api/kb/jobs/{job_id}")).json()
+                if status["status"] not in {"queued", "running"}:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    pytest.fail(f"knowledge-base job timed out: {status}")
+                await asyncio.sleep(0.05)
+            assert status["status"] == "completed"
 
 
 @pytest.mark.asyncio

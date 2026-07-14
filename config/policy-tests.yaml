@@ -1,0 +1,37 @@
+version: 1
+cases:
+  - name: ordinary requests use automatic routing
+    input:
+      context:
+        project_id: default
+        purpose: general
+      detected_sensitivity: none
+      candidate_backend: local
+    expect:
+      route: auto
+      denied: false
+      retention_days: 30
+
+  - name: secrets stay local with shorter retention
+    input:
+      context:
+        project_id: default
+        purpose: general
+      detected_sensitivity: secret
+      candidate_backend: openai
+    expect:
+      route: local
+      retention_days: 7
+      matched_rules_contain: [sensitive-data-local]
+
+  - name: destructive tools require approval
+    input:
+      context:
+        project_id: default
+        purpose: automation
+        requested_tools: [email.send]
+      detected_sensitivity: none
+      candidate_backend: local
+    expect:
+      approval_tools_contain: [email.send]
+      matched_rules_contain: [destructive-tools-need-approval]

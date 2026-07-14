@@ -88,6 +88,12 @@ async def one_case(
     expected_cloud = case.get("expected_cloud")
     if expected_cloud is True and body.get("is_local") is not False:
         failures.append(f"false positive containment: expected cloud, got {body.get('backend')!r}")
+    expected_context_risk = case.get("expected_context_risk")
+    actual_context_risk = bool((policy.get("context_risk") or {}).get("untrusted_prompt_injection"))
+    if expected_context_risk is not None and actual_context_risk is not expected_context_risk:
+        failures.append(
+            f"context risk expected {expected_context_risk!r}, got {actual_context_risk!r}"
+        )
     return Result(case, response.status_code, body, failures)
 
 

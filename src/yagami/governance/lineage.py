@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..backends.base import Message
 from .transform import detect_entity_types
+from .context_firewall import TrustLevel, inspect_context, trust_for_message
 from ..router.fast_path import _has_phi, _has_secret
 from ..router.policy import stickier
 from ..router.schema import Sensitivity
@@ -32,6 +33,9 @@ class LineageItem(BaseModel):
     role: str | None = None
     sensitivity: Sensitivity
     detector: str
+    trust: TrustLevel
+    injection_signals: list[str] = Field(default_factory=list)
+    injection_score: int = 0
     content_fingerprint: str
     parents: list[str] = Field(default_factory=list)
     metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
@@ -63,16 +67,21 @@ class LineageGraph:
         content: str,
         sensitivity: Sensitivity,
         detector: str,
+        trust: TrustLevel = TrustLevel.UNTRUSTED,
         role: str | None = None,
         parents: list[str] | None = None,
         metadata: dict[str, str | int | float | bool | None] | None = None,
     ) -> LineageItem:
+        context_inspection = inspect_context(content)
         item = LineageItem(
             id="lin_" + uuid4().hex[:16],
             source=source,
             role=role,
             sensitivity=sensitivity,
             detector=detector,
+            trust=trust,
+            injection_signals=list(context_inspection.signals),
+            injection_score=context_inspection.score,
             content_fingerprint=self._fingerprint(content),
             parents=parents or [],
             metadata=metadata or {},
@@ -117,6 +126,11 @@ class LineageGraph:
                 content=message.content,
                 sensitivity=sensitivity,
                 detector=detector,
+                trust=trust_for_message(
+                    role=message.role,
+                    content=message.content,
+                    is_current_user=index == last_user,
+                ),
                 role=message.role,
                 parents=list(prior_ids[-1:]),
             )
@@ -132,6 +146,7 @@ class LineageGraph:
                     content=tool_call_content,
                     sensitivity=_rules_sensitivity(tool_call_content),
                     detector="rules",
+                    trust=TrustLevel.MODEL,
                     role=message.role,
                     parents=[item.id],
                     metadata={"kind": "function_arguments", "count": len(message.tool_calls)},
@@ -143,6 +158,11 @@ class LineageGraph:
                     content=image.data_b64,
                     sensitivity=sensitivity,
                     detector="inherited",
+                    trust=trust_for_message(
+                        role=message.role,
+                        content=message.content,
+                        is_current_user=index == last_user,
+                    ),
                     role=message.role,
                     parents=[item.id],
                     metadata={"media_type": image.media_type, "index": image_index},
@@ -159,10 +179,30 @@ class LineageGraph:
 
     def summary(self) -> dict:
         counts: dict[str, int] = {}
+        trust_counts: dict[str, int] = {}
         for item in self.items:
             counts[item.sensitivity.value] = counts.get(item.sensitivity.value, 0) + 1
+            trust_counts[item.trust.value] = trust_counts.get(item.trust.value, 0) + 1
         return {
             "effective_sensitivity": self.effective_sensitivity.value,
             "counts": counts,
+            "trust_counts": trust_counts,
+            "untrusted_injection": self.has_untrusted_injection,
+            "injection_signals": sorted(
+                {
+                    signal
+                    for item in self.items
+                    if item.trust == TrustLevel.UNTRUSTED
+                    for signal in item.injection_signals
+                }
+            ),
             "items": [item.model_dump(mode="json") for item in self.items],
         }
+
+    @property
+    def has_untrusted_injection(self) -> bool:
+        return any(
+            item.trust == TrustLevel.UNTRUSTED
+            and (item.injection_score >= 4 or len(item.injection_signals) >= 2)
+            for item in self.items
+        )

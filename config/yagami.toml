@@ -14,6 +14,16 @@ max_tokens = 4096
 [stability]
 model = "stable-image-core"
 
+# Optional policy-only upstream. This lets Yagami enforce privacy and tool
+# policy in front of LiteLLM, Portkey, Kong, Envoy, or another compatible API.
+[upstream]
+enabled = false
+base_url = "http://localhost:4000/v1"
+model = ""
+max_tokens = 4096
+api_key_env = "UPSTREAM_API_KEY"
+allow_unauthenticated = false
+
 [routing]
 long_message_token_threshold = 1500
 phi_must_be_local = true

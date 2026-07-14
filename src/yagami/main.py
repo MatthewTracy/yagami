@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 
 from .api import config as config_api
 from .api import costs as costs_api
@@ -25,18 +26,24 @@ from .api import openai_compat as openai_compat_api
 from .api import privacy as privacy_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
+from .api import tool_schemas as tool_schemas_api
 from .backends.registry import build_all
-from .auth import Authenticator, Principal, require_scope
+from .auth import Authenticator, Principal, require_admin, require_scope
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint, set_memory_worker, set_retriever
 from .memory.embedder import Embedder
 from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
+from .middleware import RequestSizeLimitMiddleware
+from .mcp_gateway import build_mcp_server
+from .paths import configure_default_state, project_root, ui_dist
 from .privacy import cleanup_expired_sessions
 from . import secrets
 from .config import effective_routing, get_config, get_settings
 from .gateway import GatewayService
-from .governance import ApprovalStore, PrivacyTransformer
+from .key_management import resolve_secret
+from .governance import ApprovalNotifier, ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
+from .governance.presidio import PresidioInspector
 from .policy import PolicyEngine
 from .projects import ProjectGovernor, ProjectRegistry
 from .router.classifier import OllamaJSONClassifier
@@ -46,11 +53,15 @@ from .skills.mcp_manager import McpManager
 from .storage.db import close_db, open_db
 from .runtime import AppRuntime
 from .telemetry.observability import GatewayMetrics
-from .telemetry.audit import AuditLedger
+from .telemetry.audit import AuditLedger, HttpAuditSink
 from . import __version__
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("yagami")
+
+# Installed wheels use ~/.yagami after `yagami init`; source checkouts keep
+# their repository-local config unless the operator explicitly overrides it.
+configure_default_state()
 
 
 def _normalize_web_origin(origin: str) -> tuple[str, str, int] | None:
@@ -113,9 +124,10 @@ async def _close_resource(name: str, resource: object) -> None:
         log.exception("failed to close %s", name)
 
 
-def _project_root() -> Path:
-    configured = os.getenv("YAGAMI_PROJECT_ROOT")
-    return Path(configured).resolve() if configured else Path(__file__).resolve().parents[2]
+def _log_safe(value: str | None, *, limit: int = 512) -> str:
+    if value is None:
+        return "<missing>"
+    return value.replace("\r", "\\r").replace("\n", "\\n")[:limit]
 
 
 def build_app() -> FastAPI:
@@ -124,10 +136,14 @@ def build_app() -> FastAPI:
     load_dotenv()
     cfg = get_config()
     settings = get_settings()  # also picks up YAGAMI_* env overrides for non-secret config
+    if settings.demo_mode:
+        cfg.routing.default_backend = "echo"
+        cfg.routing.block_cloud = True
+        cfg.memory.enabled = False
     sessions = SessionStore()
     db_path = Path(settings.db_path)
     if not db_path.is_absolute():
-        db_path = _project_root() / db_path
+        db_path = project_root() / db_path
 
     # Backend registry: discovers every module under yagami.backends/, calls
     # each one's build(cfg, secrets.get) and keeps the non-None results.
@@ -140,24 +156,83 @@ def build_app() -> FastAPI:
         log.info("backends not loaded: %s (missing key or model)", sorted(missing))
     log.info("backends loaded: %s", sorted(backends.keys()))
 
-    classifier = OllamaJSONClassifier(cfg.ollama)
-    policy = RoutingPolicy(config=effective_routing(cfg), backends=backends, classifier=classifier)
+    classifier = None if settings.demo_mode else OllamaJSONClassifier(cfg.ollama)
+    presidio = (
+        PresidioInspector(
+            settings.presidio_url,
+            language=settings.presidio_language,
+            score_threshold=settings.presidio_score_threshold,
+            timeout_seconds=settings.presidio_timeout_seconds,
+            fail_closed=settings.presidio_fail_closed,
+            bearer_token=resolve_secret(
+                settings.presidio_token,
+                settings.presidio_token_ref,
+                label="YAGAMI_PRESIDIO_TOKEN_REF",
+            ),
+            allow_remote=settings.presidio_allow_remote,
+        )
+        if settings.presidio_url
+        else None
+    )
+    policy = RoutingPolicy(
+        config=effective_routing(cfg),
+        backends=backends,
+        classifier=classifier,
+        sensitivity_inspector=presidio,
+    )
     config_api.set_policy(policy)
     policy_path = Path(settings.policy_path)
     if not policy_path.is_absolute():
-        policy_path = _project_root() / policy_path
+        policy_path = project_root() / policy_path
     policy_engine = PolicyEngine(policy_path)
     projects_path = Path(settings.projects_path)
     if not projects_path.is_absolute():
-        projects_path = _project_root() / projects_path
+        projects_path = project_root() / projects_path
     projects = ProjectRegistry(projects_path)
     governor = ProjectGovernor(projects)
     authenticator = Authenticator(settings)
     metrics = GatewayMetrics()
-    audit = AuditLedger(key=settings.audit_key, required=settings.audit_required)
-    approvals = ApprovalStore()
+    audit_key = resolve_secret(
+        settings.audit_key, settings.audit_key_ref, label="YAGAMI_AUDIT_KEY_REF"
+    )
+    sink_token = resolve_secret(
+        settings.audit_sink_token,
+        settings.audit_sink_token_ref,
+        label="YAGAMI_AUDIT_SINK_TOKEN_REF",
+    )
+    audit_sink = (
+        HttpAuditSink(
+            settings.audit_sink_url,
+            token=sink_token,
+            sink_format=settings.audit_sink_format,
+            timeout_seconds=settings.audit_sink_timeout_seconds,
+        )
+        if settings.audit_sink_url
+        else None
+    )
+    audit = AuditLedger(
+        key=audit_key,
+        required=settings.audit_required,
+        sink=audit_sink,
+        sink_required=settings.audit_sink_required,
+    )
+    approval_notifier = (
+        ApprovalNotifier(
+            settings.approval_webhook_url,
+            format=settings.approval_webhook_format,
+            timeout_seconds=settings.approval_webhook_timeout_seconds,
+        )
+        if settings.approval_webhook_url
+        else None
+    )
+    approvals = ApprovalStore(approval_notifier)
+    tool_schemas = ToolSchemaRegistry()
     transformer = PrivacyTransformer(
-        key=settings.transform_key,
+        key=resolve_secret(
+            settings.transform_key,
+            settings.transform_key_ref,
+            label="YAGAMI_TRANSFORM_KEY_REF",
+        ),
         ttl_seconds=settings.transform_vault_ttl_seconds,
     )
     gateway = GatewayService(
@@ -170,7 +245,12 @@ def build_app() -> FastAPI:
         governor=governor,
         audit=audit,
         approvals=approvals,
+        tool_schemas=tool_schemas,
     )
+    mcp_http_app = None
+    mcp_endpoint = None
+    if settings.mcp_server_enabled:
+        _mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
 
     embedding_worker: EmbeddingWorker | None = None
     embedder: Embedder | None = None
@@ -180,6 +260,8 @@ def build_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         nonlocal embedding_worker, embedder, mcp_manager, retention_task
+        mcp_lifespan_task: asyncio.Task | None = None
+        mcp_lifespan_stop = asyncio.Event()
         await open_db(db_path)
         try:
             expired_tokens = await transformer.cleanup_expired()
@@ -221,8 +303,31 @@ def build_app() -> FastAPI:
                         log.exception("session retention cleanup failed")
 
             retention_task = asyncio.create_task(retention_loop())
+            if mcp_http_app is not None:
+                mcp_lifespan_ready = asyncio.Event()
+                mcp_lifespan_errors: list[BaseException] = []
+
+                async def run_mcp_lifespan() -> None:
+                    try:
+                        async with mcp_http_app.router.lifespan_context(mcp_http_app):
+                            mcp_lifespan_ready.set()
+                            await mcp_lifespan_stop.wait()
+                    except BaseException as exc:
+                        mcp_lifespan_errors.append(exc)
+                        mcp_lifespan_ready.set()
+                        raise
+
+                mcp_lifespan_task = asyncio.create_task(run_mcp_lifespan())
+                await mcp_lifespan_ready.wait()
+                if mcp_lifespan_errors:
+                    await asyncio.gather(mcp_lifespan_task, return_exceptions=True)
+                    raise mcp_lifespan_errors[0]
             yield
         finally:
+            if mcp_lifespan_task is not None:
+                mcp_lifespan_stop.set()
+                await asyncio.gather(mcp_lifespan_task, return_exceptions=True)
+            await kb_api.shutdown_jobs()
             if retention_task is not None:
                 retention_task.cancel()
                 await asyncio.gather(retention_task, return_exceptions=True)
@@ -242,7 +347,9 @@ def build_app() -> FastAPI:
                 finally:
                     set_memory_worker(None)
                     set_retriever(None)
-            resources = [("classifier", classifier), *backends.items()]
+            resources: list[tuple[str, object]] = [("classifier", classifier), *backends.items()]
+            if presidio is not None:
+                resources.append(("presidio", presidio))
             if embedder is not None:
                 resources.append(("embedder", embedder))
             await asyncio.gather(*(_close_resource(name, resource) for name, resource in resources))
@@ -268,6 +375,7 @@ def build_app() -> FastAPI:
         metrics=metrics,
         transformer=transformer,
         approvals=approvals,
+        tool_schemas=tool_schemas,
         projects=projects,
         governor=governor,
         audit=audit,
@@ -279,19 +387,26 @@ def build_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 
     app.include_router(openai_compat_api.router)
+    if mcp_endpoint is not None:
+        app.router.routes.append(
+            Route("/mcp", endpoint=mcp_endpoint, methods=None, include_in_schema=False)
+        )
     if not settings.headless:
-        app.include_router(decisions_api.router)
-        app.include_router(sessions_api.router)
-        app.include_router(costs_api.router)
-        app.include_router(ingest_api.router)
-        app.include_router(stats_api.router)
-        app.include_router(config_api.router)
-        app.include_router(memory_api.router)
-        app.include_router(privacy_api.router)
-        app.include_router(kb_api.router)
-        app.include_router(mcp_api.router)
+        admin_dependencies = [Depends(require_admin)]
+        app.include_router(decisions_api.router, dependencies=admin_dependencies)
+        app.include_router(sessions_api.router, dependencies=admin_dependencies)
+        app.include_router(costs_api.router, dependencies=admin_dependencies)
+        app.include_router(ingest_api.router, dependencies=admin_dependencies)
+        app.include_router(stats_api.router, dependencies=admin_dependencies)
+        app.include_router(config_api.router, dependencies=admin_dependencies)
+        app.include_router(memory_api.router, dependencies=admin_dependencies)
+        app.include_router(privacy_api.router, dependencies=admin_dependencies)
+        app.include_router(kb_api.router, dependencies=admin_dependencies)
+        app.include_router(mcp_api.router, dependencies=admin_dependencies)
+        app.include_router(tool_schemas_api.router, dependencies=admin_dependencies)
 
     @app.get("/healthz", tags=["operations"])
     async def healthz() -> dict:
@@ -341,13 +456,13 @@ def build_app() -> FastAPI:
         async def ws_chat(ws: WebSocket) -> None:
             origin = ws.headers.get("origin")
             if not _is_allowed_websocket_origin(origin):
-                log.warning("rejected WebSocket connection from origin %r", origin)
+                log.warning("rejected WebSocket connection from origin %s", _log_safe(origin))
                 await ws.close(code=1008, reason="untrusted origin")
                 return
-            await chat_endpoint(ws, sessions, policy)
+            await chat_endpoint(ws, sessions, gateway)
 
-    dist = _project_root() / "ui" / "dist"
-    if not settings.headless and dist.exists():
+    dist = ui_dist()
+    if not settings.headless and dist is not None:
         app.mount("/", StaticFiles(directory=dist, html=True), name="ui")
 
     return app

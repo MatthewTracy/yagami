@@ -4,11 +4,19 @@ import asyncio
 import fnmatch
 import hashlib
 import json
+import logging
 import secrets
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import uuid4
 
 from ..storage.db import get_db, now_ms
+
+log = logging.getLogger("yagami.approvals")
+
+
+class ApprovalNotificationSink(Protocol):
+    async def notify(self, event: str, details: dict) -> None: ...
 
 
 class ApprovalError(RuntimeError):
@@ -44,8 +52,17 @@ def _matches(patterns: list[str], tool: str) -> bool:
 class ApprovalStore:
     """One-time, project-bound capabilities for governed tool advertisement."""
 
-    def __init__(self) -> None:
+    def __init__(self, notifier: ApprovalNotificationSink | None = None) -> None:
         self._lock = asyncio.Lock()
+        self._notifier = notifier
+
+    async def _notify(self, event: str, details: dict) -> None:
+        if self._notifier is None:
+            return
+        try:
+            await self._notifier.notify(event, details)
+        except Exception:  # noqa: BLE001 - notifications never grant or revoke authority
+            log.exception("approval notification delivery failed")
 
     async def create(
         self,
@@ -78,7 +95,7 @@ class ApprovalStore:
             ),
         )
         await get_db().commit()
-        return ApprovalGrant(
+        grant = ApprovalGrant(
             id=approval_id,
             token=token,
             project_id=project_id,
@@ -88,6 +105,17 @@ class ApprovalStore:
             created_at=created_at,
             expires_at=expires_at,
         )
+        await self._notify(
+            "tool_approval.created",
+            {
+                "approval_id": grant.id,
+                "project_id": grant.project_id,
+                "tools": grant.tools,
+                "purpose": grant.purpose,
+                "expires_at": grant.expires_at,
+            },
+        )
+        return grant
 
     async def resolve(
         self,
@@ -140,7 +168,7 @@ class ApprovalStore:
             if consume and approval_ids:
                 placeholders = ",".join("?" for _ in approval_ids)
                 cursor = await db.execute(
-                    f"UPDATE tool_approvals SET consumed_at=?, consumed_request_id=?"
+                    f"UPDATE tool_approvals SET consumed_at=?, consumed_request_id=?"  # noqa: S608 -- placeholders are generated, values remain bound
                     f" WHERE id IN ({placeholders}) AND consumed_at IS NULL AND revoked_at IS NULL",
                     (current, request_id, *approval_ids),
                 )
@@ -184,7 +212,13 @@ class ApprovalStore:
             (now_ms(), approval_id, project_id),
         )
         await get_db().commit()
-        return cursor.rowcount == 1
+        revoked = cursor.rowcount == 1
+        if revoked:
+            await self._notify(
+                "tool_approval.revoked",
+                {"approval_id": approval_id, "project_id": project_id},
+            )
+        return revoked
 
     async def cleanup_expired(self) -> int:
         cursor = await get_db().execute(

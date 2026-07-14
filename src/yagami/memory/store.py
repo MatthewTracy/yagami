@@ -87,7 +87,8 @@ async def queue_observation(
             ),
         )
         new_id = cur.lastrowid
-        assert new_id is not None
+        if new_id is None:
+            raise RuntimeError("observation insert did not return a row id")
         if i == 0:
             parent_id = new_id
         ids.append(new_id)
@@ -162,7 +163,13 @@ async def delete_expired(now_ms: int | None = None) -> int:
     if not ids:
         return 0
     qmarks = ",".join("?" * len(ids))
-    await db.execute(f"DELETE FROM observations_vec WHERE rowid IN ({qmarks})", ids)
-    await db.execute(f"DELETE FROM observations WHERE id IN ({qmarks})", ids)
+    await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+        f"DELETE FROM observations_vec WHERE rowid IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+        ids,
+    )
+    await db.execute(  # noqa: S608 -- qmarks contains only generated placeholders
+        f"DELETE FROM observations WHERE id IN ({qmarks})",  # noqa: S608 -- generated placeholders only
+        ids,
+    )
     await db.commit()
     return len(ids)
