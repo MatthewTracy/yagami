@@ -70,7 +70,7 @@ packages = ["src/yagami"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--basetemp=.tmp/pytest"
+addopts = "--basetemp=.pytest-tmp"
 
 [tool.ruff]
 line-length = 100
