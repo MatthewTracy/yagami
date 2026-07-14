@@ -113,7 +113,7 @@ class PrivacyTransformer:
     def __init__(self, *, key: str, ttl_seconds: int = 3600) -> None:
         self._key = _parse_key(key) if key else None
         self._hash_key = (
-            hashlib.sha256(b"yagami-value-hash-v1:" + self._key).digest()
+            hmac.new(self._key, b"yagami-value-hash-v1", hashlib.sha256).digest()
             if self._key is not None
             else None
         )

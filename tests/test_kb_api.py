@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import shutil
 from pathlib import Path
 
@@ -30,12 +31,12 @@ def tmp_config(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_index_nonexistent_folder_rejected(tmp_config):
+async def test_index_nonexistent_folder_rejected(tmp_config, tmp_path):
     app = build_app()
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
-            r = await c.post("/api/kb/index", json={"path": "/definitely/not/a/real/path"})
+            r = await c.post("/api/kb/index", json={"path": str(tmp_path / "missing")})
             assert r.status_code == 400
 
 
@@ -49,6 +50,17 @@ async def test_index_file_instead_of_folder_rejected(tmp_config, tmp_path):
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             r = await c.post("/api/kb/index", json={"path": str(f)})
             assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_index_folder_outside_configured_roots_rejected(tmp_config, tmp_path):
+    app = build_app()
+    with tempfile.TemporaryDirectory(dir=tmp_path.parent) as outside:
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                r = await c.post("/api/kb/index", json={"path": outside})
+                assert r.status_code == 403
 
 
 @pytest.mark.asyncio

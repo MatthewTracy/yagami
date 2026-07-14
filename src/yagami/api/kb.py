@@ -55,14 +55,24 @@ def _configured_roots() -> list[Path]:
 
 
 def _resolve_allowed_folder(raw_path: str) -> Path:
+    candidate = os.path.realpath(os.path.expanduser(raw_path))
+    allowed = False
+    for root in _configured_roots():
+        try:
+            allowed = os.path.commonpath((str(root), candidate)) == str(root)
+        except ValueError:
+            # Different drives on Windows cannot share a common path.
+            continue
+        if allowed:
+            break
+    if not allowed:
+        raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
     try:
-        folder = Path(raw_path).expanduser().resolve(strict=True)
+        folder = Path(candidate).resolve(strict=True)
     except OSError as exc:
         raise HTTPException(400, "not a readable directory") from exc
     if not folder.is_dir():
         raise HTTPException(400, "not a directory")
-    if not any(folder == root or folder.is_relative_to(root) for root in _configured_roots()):
-        raise HTTPException(403, "directory is outside YAGAMI_KB_ROOTS")
     return folder
 
 

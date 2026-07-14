@@ -72,7 +72,8 @@ class AuditLedger:
         self._sink = sink
         self._sink_required = sink_required
         self.key_id = (
-            "hmac-sha256:" + hashlib.sha256(self._key).hexdigest()[:12]
+            "hmac-sha256:"
+            + hmac.new(self._key, b"yagami-audit-key-id-v1", hashlib.sha256).hexdigest()[:12]
             if self._key is not None
             else "sha256:unkeyed"
         )
