@@ -289,6 +289,7 @@ jobs:
             | xargs -0 sha256sum > SHA256SUMS
           gh release create "${GITHUB_REF_NAME}" \
             dist/* release-metadata/* SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
             --generate-notes \
             --verify-tag \
             --title "Yagami ${GITHUB_REF_NAME#v}"
