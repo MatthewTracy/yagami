@@ -20,7 +20,7 @@ export type RecallHit = {
 };
 
 type Bubble =
-  | { role: "user"; text: string; attachments?: Attachment[] }
+  | { role: "user"; text: string; payloadText?: string; attachments?: Attachment[] }
   | {
       role: "assistant";
       text: string;
@@ -136,36 +136,40 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     try {
       const list = Array.from(files);
       for (const f of list) {
-        const fd = new FormData();
-        fd.append("file", f);
-        const resp = await fetch("/api/ingest", { method: "POST", body: fd });
-        if (!resp.ok) {
-          emitToast("error", `Upload failed: ${await resp.text()}`);
-          continue;
-        }
-        const data = await resp.json();
-        if (data.kind === "image") {
-          setAttachments((a) => [
-            ...a,
-            {
-              kind: "image",
-              filename: data.filename,
-              media_type: data.media_type,
-              data_b64: data.data_b64,
-              preview_url: `data:${data.media_type};base64,${data.data_b64}`,
-            },
-          ]);
-        } else {
-          setAttachments((a) => [
-            ...a,
-            {
-              kind: "document",
-              filename: data.filename,
-              text: data.text,
-              chars: data.chars,
-              truncated: data.truncated,
-            },
-          ]);
+        try {
+          const fd = new FormData();
+          fd.append("file", f);
+          const resp = await fetch("/api/ingest", { method: "POST", body: fd });
+          if (!resp.ok) {
+            emitToast("error", `Upload failed: ${await resp.text()}`);
+            continue;
+          }
+          const data = await resp.json();
+          if (data.kind === "image") {
+            setAttachments((a) => [
+              ...a,
+              {
+                kind: "image",
+                filename: data.filename,
+                media_type: data.media_type,
+                data_b64: data.data_b64,
+                preview_url: `data:${data.media_type};base64,${data.data_b64}`,
+              },
+            ]);
+          } else {
+            setAttachments((a) => [
+              ...a,
+              {
+                kind: "document",
+                filename: data.filename,
+                text: data.text,
+                chars: data.chars,
+                truncated: data.truncated,
+              },
+            ]);
+          }
+        } catch {
+          emitToast("error", `Upload failed: could not reach the server (${f.name})`);
         }
       }
     } finally {
@@ -200,18 +204,46 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
 
   useEffect(() => {
     if (loadSessionId && wsRef.current?.readyState === WebSocket.OPEN) {
+      let cancelled = false;
       setBubbles([]);
       sendChat(wsRef.current, { type: "load_session", session_id: loadSessionId });
       fetch(`/api/sessions/${loadSessionId}`)
-        .then((r) => r.json())
+        .then((r) => {
+          if (!r.ok) throw new Error(`session load failed (${r.status})`);
+          return r.json();
+        })
         .then((d) => {
-          const loaded: Bubble[] = (d.messages || []).map((m: { role: string; content: string }) =>
-            m.role === "user"
-              ? { role: "user", text: m.content }
-              : { role: "assistant", text: m.content, pending: false }
+          if (cancelled) return;
+          const loaded: Bubble[] = (d.messages || []).map(
+            (m: {
+              role: string;
+              content: string;
+              images?: { media_type: string; data_b64: string }[];
+            }) => {
+              if (m.role !== "user") {
+                return { role: "assistant", text: m.content, pending: false };
+              }
+              const savedImages: Attachment[] = (m.images || []).map((image, index) => ({
+                kind: "image",
+                filename: `Saved image ${index + 1}`,
+                media_type: image.media_type,
+                data_b64: image.data_b64,
+                preview_url: `data:${image.media_type};base64,${image.data_b64}`,
+              }));
+              return {
+                role: "user",
+                text: m.content || "(attached images)",
+                payloadText: m.content,
+                attachments: savedImages,
+              };
+            },
           );
           setBubbles(loaded);
-        });
+        })
+        .catch(() => !cancelled && emitToast("error", "Failed to load conversation"));
+      return () => {
+        cancelled = true;
+      };
     }
   }, [loadSessionId]);
 
@@ -311,7 +343,10 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       .map((a) => (a.kind === "image" ? { media_type: a.media_type, data_b64: a.data_b64 } : null!))
       .filter(Boolean);
 
-    setBubbles((b) => [...b, { role: "user", text: text || "(attached files)", attachments }]);
+    setBubbles((b) => [
+      ...b,
+      { role: "user", text: text || "(attached files)", payloadText: composed, attachments },
+    ]);
     const payload: { content: string; force_backend?: string; images?: ClientImage[] } = {
       content: composed,
     };
@@ -336,18 +371,24 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     // Find the last user message; drop the trailing assistant bubble if any;
     // resend the same content (the server records a new turn - sticky floor
     // and force_backend still apply).
-    let userText: string | null = null;
+    let userBubble: Extract<Bubble, { role: "user" }> | null = null;
     setBubbles((b) => {
       const copy = [...b];
       while (copy.length && copy[copy.length - 1].role === "assistant") copy.pop();
       const last = copy[copy.length - 1];
-      if (last && last.role === "user") userText = last.text;
+      if (last && last.role === "user") userBubble = last;
       return copy;
     });
     setTimeout(() => {
-      if (!userText || !wsRef.current) return;
-      const payload: { content: string; force_backend?: string } = { content: userText };
+      if (!userBubble || !wsRef.current) return;
+      const images: ClientImage[] = (userBubble.attachments || [])
+        .filter((a) => a.kind === "image")
+        .map((a) => ({ media_type: a.media_type, data_b64: a.data_b64 }));
+      const payload: { content: string; force_backend?: string; images?: ClientImage[] } = {
+        content: userBubble.payloadText ?? userBubble.text,
+      };
       if (forceBackend) payload.force_backend = forceBackend;
+      if (images.length) payload.images = images;
       sendChat(wsRef.current, payload);
       setInFlight(true);
     }, 0);
@@ -373,6 +414,20 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                 className="max-w-2xl px-3 py-2 rounded-lg text-sm whitespace-pre-wrap bg-zinc-800 ml-auto"
               >
                 {b.text}
+                {b.attachments?.some((a) => a.kind === "image") && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {b.attachments.map((a, attachmentIndex) =>
+                      a.kind === "image" ? (
+                        <img
+                          key={attachmentIndex}
+                          src={a.preview_url}
+                          alt={a.filename}
+                          className="max-h-40 max-w-48 rounded border border-zinc-700 object-contain"
+                        />
+                      ) : null,
+                    )}
+                  </div>
+                )}
               </div>
             );
           }
@@ -414,6 +469,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           onClick={() => fileInputRef.current?.click()}
           disabled={!connected || inFlight || uploading}
           title="Attach file (PDF, MD, TXT, image) - or drag-drop / paste"
+          aria-label="Attach file"
           className="px-2 py-2 text-zinc-400 hover:text-zinc-100 text-base disabled:opacity-50"
         >
           {uploading ? "…" : "📎"}
@@ -436,6 +492,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                     onClick={() => setAttachments((arr) => arr.filter((_, j) => j !== i))}
                     className="text-zinc-500 hover:text-red-400"
                     title="Remove"
+                    aria-label={`Remove ${a.filename}`}
                   >
                     ×
                   </button>

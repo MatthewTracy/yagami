@@ -44,16 +44,20 @@ export function AssistantBubble({
   async function sendFeedback(r: -1 | 1) {
     if (!decisionId) return;
     const next = rating === r ? 0 : r; // toggle off if clicked again
+    const previous = rating;
     setRating(next);
-    if (next === 0) return; // nothing to post; we don't have a delete endpoint
     try {
-      await fetch(`/api/decisions/${decisionId}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating: next }),
-      });
+      const response =
+        next === 0
+          ? await fetch(`/api/decisions/${decisionId}/feedback`, { method: "DELETE" })
+          : await fetch(`/api/decisions/${decisionId}/feedback`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ rating: next }),
+            });
+      if (!response.ok) throw new Error(`feedback request failed (${response.status})`);
     } catch {
-      /* fire and forget; user can re-click if they care */
+      setRating(previous);
     }
   }
 

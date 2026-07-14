@@ -15,7 +15,7 @@ const SLASH: { cmd: string; desc: string }[] = [
   { cmd: "/image", desc: "Force this turn to image generation (Stability)" },
   { cmd: "/think", desc: "Send to Claude with high-complexity hint" },
   { cmd: "/code", desc: "Stay local; tag as a code task" },
-  { cmd: "/reset", desc: "One-shot bypass of history-PHI gate for this turn" },
+  { cmd: "/reset", desc: "Send this turn without prior chat context" },
 ];
 
 export function ShortcutSheet() {

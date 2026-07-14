@@ -51,6 +51,7 @@ export default function App() {
             <button
               onClick={() => setMemoryOpen(true)}
               title="Cross-session memory"
+              aria-label="Cross-session memory"
               className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
             >
               🧠
@@ -58,6 +59,7 @@ export default function App() {
             <button
               onClick={() => setStatsOpen(true)}
               title="Stats dashboard"
+              aria-label="Stats dashboard"
               className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
             >
               📊
@@ -65,6 +67,7 @@ export default function App() {
             <button
               onClick={() => setSettingsOpen(true)}
               title="Settings"
+              aria-label="Settings"
               className="px-2 py-1 text-zinc-400 hover:text-zinc-100 text-base leading-none"
             >
               ⚙

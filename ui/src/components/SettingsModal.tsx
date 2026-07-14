@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { emitToast } from "./Toast";
 
-type Section = "models" | "routing" | "profiles" | "prompts";
+type Section = "models" | "routing" | "profiles" | "privacy" | "prompts";
 
 type ProfileOverrides = {
   daily_spend_cap_usd?: number;
@@ -20,15 +20,17 @@ type Cfg = {
       phi_must_be_local: boolean;
       default_backend: string;
       lora_variants: Record<string, string>;
+      local_model_overrides: Record<string, string>;
       daily_spend_cap_usd: number;
       block_cloud: boolean;
       active_profile: string;
     };
     profiles: Record<string, ProfileOverrides>;
+    privacy: { session_retention_days: number };
   };
   defaults: Cfg["config"];
-  prompts: { phi_medical_default: string };
-  notes: { phi_must_be_local: string; live_reload: string };
+  prompts: { phi_default: string; phi_medical_default: string };
+  notes: { phi_must_be_local: string; live_reload: string; storage_encryption: string };
 };
 
 type Props = {
@@ -122,8 +124,8 @@ export function SettingsModal({ open, onClose }: Props) {
     setDirty(true);
   }
 
-  async function save() {
-    if (!data) return;
+  async function save(): Promise<boolean> {
+    if (!data) return false;
     setSaving(true);
     try {
       const r = await fetch("/api/config", {
@@ -135,18 +137,55 @@ export function SettingsModal({ open, onClose }: Props) {
           stability: data.config.stability,
           routing: data.config.routing,
           profiles: data.config.profiles,
+          privacy: data.config.privacy,
         }),
       });
       if (!r.ok) {
         emitToast("error", `Save failed (${r.status}): ${await r.text()}`);
-        return;
+        return false;
       }
       const next = (await r.json()) as Cfg;
       setData(next);
       setDirty(false);
       emitToast("info", "Settings saved. Routing changes apply next turn.");
+      return true;
+    } catch {
+      emitToast("error", "Save failed: could not reach the server");
+      return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function cleanupExpired() {
+    if (dirty && !(await save())) return;
+    try {
+      const r = await fetch("/api/privacy/cleanup", { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const result = await r.json();
+      emitToast("info", `Retention cleanup removed ${result.sessions_deleted} conversation(s).`);
+    } catch {
+      emitToast("error", "Retention cleanup failed");
+    }
+  }
+
+  async function purgeData(scope: "conversations" | "everything") {
+    const label =
+      scope === "everything"
+        ? "all conversations, memory, and indexed documents"
+        : "all conversations and cross-session memory";
+    if (!confirm(`Permanently delete ${label}? This cannot be undone.`)) return;
+    if (prompt('Type DELETE to confirm') !== "DELETE") return;
+    try {
+      const r = await fetch("/api/privacy/data", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: "DELETE", scope }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      window.location.reload();
+    } catch {
+      emitToast("error", "Data deletion failed");
     }
   }
 
@@ -164,7 +203,7 @@ export function SettingsModal({ open, onClose }: Props) {
         </button>
       </div>
       <div className="flex gap-1 mb-3 border-b border-zinc-800">
-        {(["models", "routing", "profiles", "prompts"] as Section[]).map((s) => (
+        {(["models", "routing", "profiles", "privacy", "prompts"] as Section[]).map((s) => (
           <button
             key={s}
             onClick={() => setTab(s)}
@@ -197,6 +236,15 @@ export function SettingsModal({ open, onClose }: Props) {
                 label="Classifier model"
                 value={c.ollama.classifier_model}
                 onChange={(v) => update("ollama", { classifier_model: v })}
+              />
+              <Field
+                label="Private-data model"
+                value={c.routing.local_model_overrides.phi ?? ""}
+                onChange={(v) =>
+                  update("routing", {
+                    local_model_overrides: { ...c.routing.local_model_overrides, phi: v },
+                  })
+                }
               />
             </Group>
             <Group title="Anthropic (Claude)">
@@ -383,8 +431,78 @@ export function SettingsModal({ open, onClose }: Props) {
           </>
         )}
 
+        {tab === "privacy" && (
+          <>
+            <Group title="Conversation retention">
+              <NumField
+                label="Retention (days)"
+                value={c.privacy.session_retention_days}
+                onChange={(v) => update("privacy", { session_retention_days: v })}
+              />
+              <p className="text-[10px] text-zinc-500">
+                0 keeps conversations until you delete them. A positive value removes inactive
+                conversations and their derived cross-session memories. Cleanup runs at startup
+                and every six hours.
+              </p>
+              <button
+                onClick={cleanupExpired}
+                className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+              >
+                {dirty ? "Save and clean up now" : "Clean up now"}
+              </button>
+            </Group>
+            <Group title="Export and deletion">
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href="/api/privacy/export"
+                  className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
+                >
+                  Export all data (JSON)
+                </a>
+                <button
+                  onClick={() => purgeData("conversations")}
+                  className="px-2 py-1 rounded bg-red-950 hover:bg-red-900 text-red-200"
+                >
+                  Delete chats + memory
+                </button>
+                <button
+                  onClick={() => purgeData("everything")}
+                  className="px-2 py-1 rounded bg-red-800 hover:bg-red-700 text-white"
+                >
+                  Delete everything
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500">
+                “Everything” also removes document chunks you explicitly indexed. Configuration
+                and API keys are retained.
+              </p>
+            </Group>
+            <Group title="Encryption at rest">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-zinc-300">Application-managed encryption</span>
+                <span className="px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 font-medium">
+                  NOT ENABLED
+                </span>
+              </div>
+              <p className="text-[10px] text-zinc-500">{data.notes.storage_encryption}</p>
+            </Group>
+          </>
+        )}
+
         {tab === "prompts" && (
           <>
+            <Group title="Private-data system prompt">
+              <p className="text-[10px] text-zinc-500">
+                Sent to local Ollama for non-medical PHI so authorized administrative tasks do
+                not get refused merely because private identifiers are present.
+              </p>
+              <textarea
+                readOnly
+                value={data.prompts.phi_default}
+                rows={8}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-[11px] text-zinc-300 font-mono"
+              />
+            </Group>
             <Group title="PHI / clinical system prompt">
               <p className="text-[10px] text-zinc-500">
                 Sent to local Ollama whenever a turn is classified as

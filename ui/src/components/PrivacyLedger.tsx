@@ -77,13 +77,13 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
             <div className="font-medium">Session contains sensitive content</div>
             <div className="text-amber-200/70 mt-0.5">
               Cloud text routes are blocked. Image gen still works (only the
-              prompt is sent). Use Reset to bypass for one turn.
+              prompt is sent). Reset starts a fresh model context for one turn.
             </div>
           </div>
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("yagami:reset-phi"))}
             className="shrink-0 text-amber-100 hover:text-white underline underline-offset-2"
-            title="Prefill input with /reset"
+            title="Send the next prompt without prior chat context"
           >
             Reset
           </button>
