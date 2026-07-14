@@ -26,7 +26,7 @@ class OllamaBackend(Backend):
     async def generate(
         self, messages: list[Message], *, options: BackendOptions
     ) -> AsyncIterator[BackendChunk]:
-        model = options.lora_variant or self._config.model
+        model = options.model_override or options.lora_variant or self._config.model
         wire_msgs = _build_wire_messages(messages, options.system_prompt)
         body = {
             "model": model,
@@ -56,6 +56,9 @@ class OllamaBackend(Backend):
             return r.status_code == 200
         except httpx.HTTPError:
             return False
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
 
 def _build_wire_messages(messages: list[Message], system_prompt: str | None) -> list[dict]:

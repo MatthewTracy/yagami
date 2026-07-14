@@ -38,6 +38,8 @@ REFUSAL_PHRASES = [
     "i cannot directly review",
     "i can't access",
     "i cannot access",
+    "i can't provide delivery services",
+    "i cannot provide delivery services",
 ]
 
 

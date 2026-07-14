@@ -19,11 +19,21 @@ long_message_token_threshold = 1500
 phi_must_be_local = true
 default_backend = "ollama"
 # Daily cap on cloud spend in USD. Cloud routing is refused once exceeded
-# in the last 24h. Set to 0 to disable.
+# during the current local calendar day. Set to 0 to disable.
 daily_spend_cap_usd = 5.0
+
+[privacy]
+# 0 keeps conversations until manually deleted. Positive values delete stale
+# sessions and their derived cross-session memories together.
+session_retention_days = 0
 
 [routing.lora_variants]
 # PHI-medical now uses a per-request system prompt (router/prompts.py) - no
 # named variant needed. Uncomment after building any future LoRA-backed variants
 # with `ollama create <name> -f config/Modelfile.<x>`.
 # code = "yagami-code"
+
+[routing.local_model_overrides]
+# Phi-4 Mini is less likely than the small general generator to refuse an
+# authorized administrative task merely because it contains private data.
+phi = "phi4-mini"

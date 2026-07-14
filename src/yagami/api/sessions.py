@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..chat.session import SessionStore
 
@@ -35,12 +35,21 @@ async def get_one(session_id: str) -> dict:
     history = await store.history(session_id)
     return {
         "session_id": session_id,
-        "messages": [{"role": m.role, "content": m.content} for m in history],
+        "messages": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "images": [image.model_dump(mode="json") for image in m.images or []],
+            }
+            for m in history
+        ],
     }
 
 
 class RenameBody(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
 
 
 @router.patch("/{session_id}")

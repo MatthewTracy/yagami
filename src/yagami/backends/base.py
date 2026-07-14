@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 from enum import Enum
 from typing import AsyncIterator, Literal, Protocol, TypedDict, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class Capability(str, Enum):
@@ -32,8 +34,20 @@ class Pricing:
 
 
 class ImageAttachment(BaseModel):
-    media_type: str  # "image/png" / "image/jpeg" / etc.
-    data_b64: str  # raw base64, no data: prefix
+    media_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp"]
+    data_b64: str = Field(min_length=1, max_length=27_962_028)
+
+    @field_validator("data_b64")
+    @classmethod
+    def validate_base64(cls, value: str) -> str:
+        """Reject malformed or over-20MB image payloads at the WS boundary."""
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("image data must be valid base64") from exc
+        if len(decoded) > 20 * 1024 * 1024:
+            raise ValueError("decoded image exceeds 20 MB")
+        return value
 
 
 class Message(BaseModel):
@@ -46,6 +60,7 @@ class BackendOptions(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     lora_variant: str | None = None
+    model_override: str | None = None
     system_prompt: str | None = None
 
 

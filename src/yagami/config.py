@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -63,11 +65,16 @@ class LlamaCppConfig(BaseModel):
 
 
 class RoutingConfig(BaseModel):
-    long_message_token_threshold: int = 1500
+    long_message_token_threshold: int = Field(default=1500, ge=1)
     phi_must_be_local: bool = True
     default_backend: str = "ollama"
     lora_variants: dict[str, str] = Field(default_factory=dict)
-    daily_spend_cap_usd: float = 5.0  # 0 = no cap; cloud routes refused over cap
+    # Optional per-sensitivity local model choices. Phi-4 Mini follows
+    # authorized administrative PHI instructions more reliably than the
+    # small general generator while remaining entirely on-device.
+    local_model_overrides: dict[str, str] = Field(default_factory=lambda: {"phi": "phi4-mini"})
+    # 0 means no cap; positive values block cloud routes after the cap.
+    daily_spend_cap_usd: float = Field(default=5.0, ge=0, allow_inf_nan=False)
     # Refuse ALL cloud routes, unconditionally - the "zero cloud" switch.
     # Distinct from daily_spend_cap_usd=0, which means NO cap (a trap that
     # used to be mis-documented as "no cloud spend").
@@ -90,15 +97,22 @@ class ProfileOverrides(BaseModel):
     already allows.
     """
 
-    daily_spend_cap_usd: float | None = None
+    daily_spend_cap_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     default_backend: str | None = None
-    long_message_token_threshold: int | None = None
+    long_message_token_threshold: int | None = Field(default=None, ge=1)
     block_cloud: bool | None = None
 
 
 class MemoryConfig(BaseModel):
     enabled: bool = True
     embedding_model: str = "all-minilm"  # Ollama model name (384 dim)
+
+
+class PrivacyConfig(BaseModel):
+    # Zero preserves conversations until the user deletes them. Positive
+    # values remove sessions (and their derived cross-session memories) once
+    # they have not been updated for this many days.
+    session_retention_days: int = Field(default=0, ge=0, le=3650)
 
 
 class McpServerConfig(BaseModel):
@@ -126,6 +140,7 @@ class YagamiConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
@@ -191,14 +206,45 @@ def _format_toml_value(v: Any) -> str:
     if isinstance(v, (int, float)):
         return str(v)
     if isinstance(v, str):
-        # Quote with double-quotes, escape backslashes + quotes.
-        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        # TOML basic strings must escape quotes, backslashes, and controls.
+        escapes = {
+            '"': '\\"',
+            "\\": "\\\\",
+            "\b": "\\b",
+            "\t": "\\t",
+            "\n": "\\n",
+            "\f": "\\f",
+            "\r": "\\r",
+        }
+        encoded: list[str] = []
+        for char in v:
+            if char in escapes:
+                encoded.append(escapes[char])
+            elif ord(char) <= 0x1F or ord(char) == 0x7F:
+                encoded.append(f"\\u{ord(char):04X}")
+            else:
+                encoded.append(char)
+        return '"' + "".join(encoded) + '"'
     if isinstance(v, list):
         return "[" + ", ".join(_format_toml_value(x) for x in v) + "]"
     if isinstance(v, dict):
         # Inline table: { k = v, ... }
-        return "{" + ", ".join(f"{k} = {_format_toml_value(val)}" for k, val in v.items()) + "}"
+        return (
+            "{"
+            + ", ".join(
+                f"{_format_toml_key(k)} = {_format_toml_value(val)}" for k, val in v.items()
+            )
+            + "}"
+        )
     raise TypeError(f"unsupported TOML value type: {type(v).__name__}")
+
+
+_BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _format_toml_key(key: str) -> str:
+    """Quote dynamic TOML keys that would otherwise change table nesting."""
+    return key if _BARE_TOML_KEY.fullmatch(key) else _format_toml_value(key)
 
 
 def _serialize_config(cfg: YagamiConfig) -> str:
@@ -216,12 +262,12 @@ def _serialize_config(cfg: YagamiConfig) -> str:
     for section, body in data.items():
         if not isinstance(body, dict):
             continue
-        out.append(f"[{section}]")
+        out.append(f"[{_format_toml_key(section)}]")
         for key, val in body.items():
             if isinstance(val, dict):
                 # Nested table - emit as `[section.key]` block of its own.
                 continue
-            out.append(f"{key} = {_format_toml_value(val)}")
+            out.append(f"{_format_toml_key(key)} = {_format_toml_value(val)}")
         out.append("")
         # Handle nested-dict children after the parent block. Emit even when
         # empty (e.g. a profile with no overrides set yet) - dropping empty
@@ -229,9 +275,9 @@ def _serialize_config(cfg: YagamiConfig) -> str:
         # not just its (absent) contents.
         for key, val in body.items():
             if isinstance(val, dict):
-                out.append(f"[{section}.{key}]")
+                out.append(f"[{_format_toml_key(section)}.{_format_toml_key(key)}]")
                 for k2, v2 in val.items():
-                    out.append(f"{k2} = {_format_toml_value(v2)}")
+                    out.append(f"{_format_toml_key(k2)} = {_format_toml_value(v2)}")
                 out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -243,6 +289,13 @@ def write_config(cfg: YagamiConfig) -> Path:
     """
     path = Path(get_settings().config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_serialize_config(cfg), encoding="utf-8")
+    # Replace atomically from the same directory so a crash or power loss
+    # cannot leave a half-written config file behind.
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(_serialize_config(cfg), encoding="utf-8")
+        tmp_path.replace(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
     get_config.cache_clear()
     return path

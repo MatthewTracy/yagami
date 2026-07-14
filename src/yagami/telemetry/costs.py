@@ -7,6 +7,8 @@ lives on the backend so future plugins price themselves.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from ..backends.base import Backend, Pricing
 from ..storage.db import get_db
 
@@ -56,14 +58,26 @@ def rough_token_count(text: str) -> int:
 
 
 async def spend_today_usd() -> float:
-    """Sum cost_usd for decisions created in the last 24h."""
+    """Sum cost_usd since midnight in the machine's local timezone."""
+    cutoff_ms = _local_day_start_ms()
     db = get_db()
     async with db.execute(
-        "SELECT COALESCE(SUM(cost_usd), 0) FROM decisions"
-        " WHERE created_at >= (strftime('%s', 'now', '-1 day') * 1000)"
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM decisions WHERE created_at >= ?",
+        (cutoff_ms,),
     ) as cur:
         row = await cur.fetchone()
     return float(row[0]) if row and row[0] is not None else 0.0
+
+
+def _local_day_start_ms(now: datetime | None = None) -> int:
+    if now is None:
+        local_now = datetime.now().astimezone()
+    elif now.tzinfo is None:
+        local_now = now.astimezone()
+    else:
+        local_now = now
+    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(midnight.timestamp() * 1000)
 
 
 async def spend_session_usd(session_id: str) -> float:

@@ -29,6 +29,17 @@ async def test_phi_medical_attaches_clinical_system_prompt(make_policy, classifi
     decision = await policy.decide(classified_user_msg("patient note ..."))
     assert decision.backend.is_local is True
     assert decision.system_prompt == PHI_MEDICAL_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_nonmedical_phi_attaches_private_data_system_prompt(make_policy, classified_user_msg):
+    from yagami.router.prompts import PHI_SYSTEM_PROMPT
+
+    policy = make_policy(Classification(intent=Intent.SIMPLE_QA, sensitivity=Sensitivity.PHI))
+    decision = await policy.decide(classified_user_msg("summarize delivery address"))
+    assert decision.backend.is_local
+    assert decision.system_prompt == PHI_SYSTEM_PROMPT
+    assert decision.model_override == "phi4-mini"
     assert decision.lora_variant is None
 
 

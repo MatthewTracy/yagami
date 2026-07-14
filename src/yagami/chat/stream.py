@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..backends.base import BackendOptions, ImageAttachment, Message
+from ..backends.base import BackendOptions, Capability, ImageAttachment, Message
 from ..backends.retry import generate_with_retry
 from ..config import effective_routing, get_config
 from ..memory import store as memory_store
@@ -28,13 +28,13 @@ _memory_worker: "object | None" = None
 _retriever: Retriever | None = None
 
 
-def set_memory_worker(worker) -> None:
+def set_memory_worker(worker: object | None) -> None:
     """Called from main.py's lifespan once the worker is up."""
     global _memory_worker
     _memory_worker = worker
 
 
-def set_retriever(retriever: Retriever) -> None:
+def set_retriever(retriever: Retriever | None) -> None:
     """Called from main.py's lifespan once the retriever is constructed."""
     global _retriever
     _retriever = retriever
@@ -69,15 +69,33 @@ async def chat_endpoint(
     session_id: str | None = None
     history_cache: list[Message] = []
     gen_task: asyncio.Task | None = None
+    decide_task: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
     inbox: asyncio.Queue = asyncio.Queue()
+    connection_closed = asyncio.Event()
 
     async def receive_loop():
         try:
             while True:
                 msg = await ws.receive_json()
+                if isinstance(msg, dict) and msg.get("type") == "cancel":
+                    # Active work is awaited by the main loop, so queueing a
+                    # cancel behind it can never interrupt it. Cancel the live
+                    # task directly from this receiver task instead.
+                    for task in (decide_task, gen_task):
+                        if task is not None and not task.done():
+                            task.cancel()
+                    continue
                 await inbox.put(msg)
         except WebSocketDisconnect:
+            pass
+        except Exception:  # noqa: BLE001 - malformed frames must not strand the handler
+            log.exception("websocket receive failed")
+        finally:
+            connection_closed.set()
+            for task in (decide_task, gen_task):
+                if task is not None and not task.done():
+                    task.cancel()
             await inbox.put(None)
 
     receiver = asyncio.create_task(receive_loop())
@@ -92,6 +110,9 @@ async def chat_endpoint(
             payload = await inbox.get()
             if payload is None:
                 break
+            if not isinstance(payload, dict):
+                await _refuse_turn(ws, "message payload must be a JSON object")
+                continue
             ptype = payload.get("type")
             if ptype == "cancel":
                 if gen_task and not gen_task.done():
@@ -103,25 +124,50 @@ async def chat_endpoint(
                     session_id = sid
                     history_cache = await sessions.history(session_id)
                     await _send(ws, {"type": "session", "session_id": session_id})
+                else:
+                    await _send(
+                        ws,
+                        {"type": "error", "content": "session not found", "meta": {}},
+                    )
+                continue
+            if ptype is not None:
+                await _refuse_turn(ws, f"unknown message type {ptype!r}")
                 continue
 
             user_text = payload.get("content", "")
             images_raw = payload.get("images") or []
-            if (not user_text and not images_raw) or session_id is None:
+            force_backend = payload.get("force_backend")
+            if not isinstance(user_text, str):
+                await _refuse_turn(ws, "content must be a string")
+                continue
+            if not isinstance(images_raw, list):
+                await _refuse_turn(ws, "images must be a list")
+                continue
+            if force_backend is not None and not isinstance(force_backend, str):
+                await _refuse_turn(ws, "force_backend must be a string or null")
+                continue
+            if session_id is None:
                 continue
 
             attachments: list[ImageAttachment] = []
+            invalid_attachment = False
             for img in images_raw:
                 try:
                     attachments.append(
                         ImageAttachment(media_type=img["media_type"], data_b64=img["data_b64"])
                     )
-                except (KeyError, TypeError):
-                    continue
+                except (KeyError, TypeError, ValueError):
+                    invalid_attachment = True
+                    break
+            if invalid_attachment:
+                await _refuse_turn(ws, "invalid image attachment")
+                continue
+            if not user_text and not attachments:
+                await _refuse_turn(ws, "message must include text or a valid image")
+                continue
 
             user_msg = Message(role="user", content=user_text, images=attachments or None)
             history_cache.append(user_msg)
-            force_backend = payload.get("force_backend")
             # Images require a vision-capable backend. Force_backend wins for
             # explicit user choice; otherwise pick the first configured
             # vision backend (anthropic preferred, then gemini/openai/
@@ -158,39 +204,64 @@ async def chat_endpoint(
                 spend_blocked = today >= eff.daily_spend_cap_usd
 
             history_has_phi = _history_has_phi(history_cache)
-            # `/reset` is a one-shot opt-out of the history-PHI gate. It
-            # strips the prefix so the policy's fast-path / classifier sees
-            # the clean prompt. Routing then runs normally - `/reset` alone
-            # doesn't pick a backend.
+            # `/reset` starts a fresh model context for this turn. It strips
+            # the prefix so the policy sees the clean prompt, and the backend
+            # receives only that prompt (never the PHI-tainted prior history).
+            # The visible/persisted conversation remains intact.
             reset_override = parse_override(user_text)
-            if reset_override.bypass_history_phi:
+            reset_context = reset_override.bypass_history_phi
+            if reset_context:
                 history_has_phi = False
                 cleaned = reset_override.stripped_text or ""
                 history_cache[-1] = Message(
                     role="user", content=cleaned, images=attachments or None
                 )
+            decision_history = _messages_for_backend(history_cache, reset_context=reset_context)
             decide_task = asyncio.create_task(
                 policy.decide(
-                    history_cache,
+                    decision_history,
                     force_backend=force_backend,
                     spend_blocked=spend_blocked,
                     history_has_phi=history_has_phi,
                 )
             )
-            await append_task
+            message_id = await append_task
             try:
                 decision = await decide_task
-            except OverrideRefused as exc:
-                await _send(ws, {"type": "error", "content": str(exc), "meta": {"refused": True}})
-                await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
+            except asyncio.CancelledError:
+                decide_task = None
+                await _send(ws, {"type": "error", "content": "cancelled", "meta": {}})
+                await _send(ws, {"type": "done", "content": "", "meta": {"cancelled": True}})
                 continue
+            except OverrideRefused as exc:
+                decide_task = None
+                await _refuse_turn(ws, str(exc))
+                continue
+            decide_task = None
+            if connection_closed.is_set():
+                break
             t_classify_ms = int((time.perf_counter() - t_start) * 1000)
 
+            if attachments and Capability.VISION not in decision.backend.capabilities:
+                # The message text is persisted, but the refused attachment
+                # must not hitch a ride on a later turn's history.
+                history_cache[-1] = Message(role="user", content=history_cache[-1].content)
+                await sessions.delete_message_images(message_id)
+                await _refuse_turn(
+                    ws,
+                    f"backend {decision.backend.name!r} cannot accept image attachments",
+                )
+                continue
+
             # If the policy stripped a slash command, swap the last user message
-            # so the backend sees the cleaned text. History cache stays as-is
-            # (the user's original message is preserved in the chat).
+            # so the backend sees the cleaned text. The original message was
+            # already persisted for display in the chat.
             if decision.effective_user_text and decision.effective_user_text != user_text:
-                history_cache[-1] = Message(role="user", content=decision.effective_user_text)
+                history_cache[-1] = Message(
+                    role="user",
+                    content=decision.effective_user_text,
+                    images=attachments or None,
+                )
 
             # Image-prompt auto-enhancement: if the chosen backend is an image
             # generator and the prompt is short, prepend a quality hint.
@@ -272,7 +343,9 @@ async def chat_endpoint(
                     )
 
             options = BackendOptions(
+                temperature=0.2 if decision.system_prompt else 0.7,
                 lora_variant=decision.lora_variant,
+                model_override=decision.model_override,
                 system_prompt=decision.system_prompt,
             )
             t_gen_start = time.perf_counter()
@@ -282,7 +355,7 @@ async def chat_endpoint(
             # v0.2.16: build the per-turn message list for the backend. Recall
             # context is prepended HERE so it doesn't pollute the session
             # history_cache that future turns inherit.
-            messages_for_backend: list[Message] = list(history_cache)
+            messages_for_backend = _messages_for_backend(history_cache, reset_context=reset_context)
             if recall_hits:
                 messages_for_backend = [recall_msg, *messages_for_backend]
 
@@ -290,7 +363,6 @@ async def chat_endpoint(
             # chosen backend supports them, drive through tool_loop instead
             # of the plain generate path.
             from ..backends.anthropic import ClaudeBackend
-            from ..backends.base import Capability
             from ..router.schema import Sensitivity as _Sens
 
             use_tool_loop = (
@@ -378,10 +450,18 @@ async def chat_endpoint(
         except Exception:
             pass
     finally:
+        pending_tasks: list[asyncio.Task] = []
         if receiver and not receiver.done():
             receiver.cancel()
+            pending_tasks.append(receiver)
         if gen_task and not gen_task.done():
             gen_task.cancel()
+            pending_tasks.append(gen_task)
+        if decide_task and not decide_task.done():
+            decide_task.cancel()
+            pending_tasks.append(decide_task)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
 async def _stream_generation(
@@ -435,6 +515,24 @@ async def _stream_tool_loop(
 
 async def _send(ws: WebSocket, msg: dict[str, Any]) -> None:
     await ws.send_text(json.dumps(msg))
+
+
+async def _refuse_turn(ws: WebSocket, content: str) -> None:
+    await _send(ws, {"type": "error", "content": content, "meta": {"refused": True}})
+    await _send(ws, {"type": "done", "content": "", "meta": {"refused": True}})
+
+
+def _messages_for_backend(history: list[Message], *, reset_context: bool = False) -> list[Message]:
+    """Return the model-visible history for the current turn.
+
+    `/reset` is deliberately implemented by removing earlier messages from
+    the backend request, not merely by disabling the policy's history-PHI
+    flag. Otherwise a cloud route could still receive the sensitive history
+    the gate was meant to protect.
+    """
+    if reset_context and history:
+        return [history[-1]]
+    return list(history)
 
 
 async def _maybe_queue_memory(

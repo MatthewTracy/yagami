@@ -28,7 +28,7 @@ class OverrideResult:
     hint_intent: str | None  # "code", "image", or None
     hint_complex: bool  # True if /think
     stripped_text: str  # user text with the command prefix removed
-    bypass_history_phi: bool = False  # /reset - one-shot opt-out of history-PHI gate
+    bypass_history_phi: bool = False  # /reset - use a fresh model context for this turn
 
 
 def parse(text: str, backend_names: Iterable[str] = ()) -> OverrideResult:
@@ -55,9 +55,10 @@ def parse(text: str, backend_names: Iterable[str] = ()) -> OverrideResult:
     if cmd == "code":
         return OverrideResult("ollama", "code", False, remaining)
     if cmd == "reset":
-        # One-shot bypass of the history-PHI check for THIS turn only. The
-        # next turn re-evaluates. Doesn't force a backend - normal routing
-        # applies to the stripped message.
+        # Use a fresh model context for this turn. The chat layer removes
+        # earlier messages from the backend request, so bypassing the
+        # history-PHI gate cannot leak that history. The next turn
+        # re-evaluates normally. This doesn't force a backend.
         return OverrideResult(None, None, False, remaining, bypass_history_phi=True)
     by_name = {n.lower(): n for n in backend_names}
     if cmd in by_name:

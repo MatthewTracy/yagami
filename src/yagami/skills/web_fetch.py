@@ -13,7 +13,7 @@ remote host's logs.
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -26,6 +26,8 @@ _DEFAULT_ALLOWLIST = {
     "wikipedia.org",
 }
 _MAX_BYTES = 200_000  # truncate response to keep tool result LLM-friendly
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 def _strip_html(html: str) -> str:
@@ -56,44 +58,91 @@ class WebFetch:
     requires_network = True
     sensitivity_ceiling = Sensitivity.NONE  # PHI / secret sessions refuse
 
-    def __init__(self, allowlist: set[str] | None = None) -> None:
-        self._allowlist = allowlist or _DEFAULT_ALLOWLIST
+    def __init__(
+        self,
+        allowlist: set[str] | None = None,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._allowlist = allowlist if allowlist is not None else _DEFAULT_ALLOWLIST
+        self._transport = transport
+
+    def _validate_url(self, url: str) -> str | None:
+        try:
+            parsed = urlparse(url)
+        except ValueError as exc:
+            return f"invalid URL: {exc}"
+        if parsed.scheme != "https":
+            return "only https:// URLs are allowed"
+        host = (parsed.hostname or "").lower()
+        if host not in self._allowlist:
+            return f"host {host!r} not in allowlist. Allowed: {sorted(self._allowlist)}"
+        return None
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
         url = (args.get("url") or "").strip()
         if not url:
             return SkillResult(ok=False, error="missing 'url'")
-        try:
-            parsed = urlparse(url)
-        except ValueError as exc:
-            return SkillResult(ok=False, error=f"invalid URL: {exc}")
-        if parsed.scheme != "https":
-            return SkillResult(ok=False, error="only https:// URLs are allowed")
-        host = (parsed.hostname or "").lower()
-        if host not in self._allowlist:
-            return SkillResult(
-                ok=False,
-                error=(f"host {host!r} not in allowlist. Allowed: {sorted(self._allowlist)}"),
-            )
+        validation_error = self._validate_url(url)
+        if validation_error:
+            return SkillResult(ok=False, error=validation_error)
 
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(15.0),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers={"User-Agent": "Yagami/0.2 (local-first AI orchestrator)"},
+                transport=self._transport,
             ) as client:
-                r = await client.get(url)
-                r.raise_for_status()
-                body = r.text[:_MAX_BYTES]
+                current_url = url
+                redirect_count = 0
+                while True:
+                    validation_error = self._validate_url(current_url)
+                    if validation_error:
+                        return SkillResult(
+                            ok=False,
+                            error=f"redirect refused: {validation_error}",
+                        )
+                    async with client.stream("GET", current_url) as response:
+                        if response.status_code in _REDIRECT_STATUSES:
+                            location = response.headers.get("location")
+                            if not location:
+                                return SkillResult(
+                                    ok=False, error="redirect missing Location header"
+                                )
+                            if redirect_count >= _MAX_REDIRECTS:
+                                return SkillResult(ok=False, error="too many redirects")
+                            current_url = urljoin(current_url, location)
+                            redirect_count += 1
+                            continue
+
+                        response.raise_for_status()
+                        encoding = response.charset_encoding or "utf-8"
+                        body_bytes = bytearray()
+                        response_truncated = False
+                        async for chunk in response.aiter_bytes():
+                            remaining = _MAX_BYTES - len(body_bytes)
+                            if len(chunk) > remaining:
+                                body_bytes.extend(chunk[:remaining])
+                                response_truncated = True
+                                break
+                            body_bytes.extend(chunk)
+                        body = bytes(body_bytes).decode(encoding, errors="replace")
+                        break
         except (httpx.HTTPError, ValueError) as exc:
             return SkillResult(ok=False, error=f"fetch failed: {exc}")
 
         stripped = _strip_html(body)
-        truncated = len(stripped) >= _MAX_BYTES
+        truncated = response_truncated or len(stripped) > _MAX_BYTES
         return SkillResult(
             ok=True,
             content=stripped[:_MAX_BYTES] + ("\n\n... [truncated]" if truncated else ""),
-            artifacts={"url": url, "bytes": len(body)},
+            artifacts={
+                "url": url,
+                "final_url": current_url,
+                "bytes": len(body_bytes),
+                "redirects": redirect_count,
+            },
         )
 
 

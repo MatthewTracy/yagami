@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from yagami.backends.base import Message
+from yagami.chat.stream import _messages_for_backend
 from yagami.router.policy import OverrideRefused
 from yagami.router.schema import Classification, Complexity, Intent, Sensitivity
 
@@ -125,3 +126,26 @@ async def test_per_turn_classification_no_floor(make_policy):
     # per-turn" stance - image gen is always allowed regardless.
     decision = await policy.decide(history, history_has_phi=False)
     assert decision.backend.name == "stability"
+
+
+def test_reset_context_never_sends_prior_phi_to_backend():
+    """Disabling the routing gate is safe only if the old context is omitted."""
+    history = [
+        Message(role="user", content="Patient Jenny DOB 1962-04-12 has CHF"),
+        Message(role="assistant", content="noted"),
+        Message(role="user", content="what is 2+2"),
+    ]
+
+    visible = _messages_for_backend(history, reset_context=True)
+
+    assert visible == [history[-1]]
+    assert all("Jenny" not in message.content for message in visible)
+
+
+def test_normal_context_still_includes_history():
+    history = [
+        Message(role="user", content="hello"),
+        Message(role="assistant", content="hi"),
+        Message(role="user", content="continue"),
+    ]
+    assert _messages_for_backend(history) == history

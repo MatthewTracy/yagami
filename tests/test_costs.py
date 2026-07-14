@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from yagami.api import costs as costs_api
 from yagami.backends.anthropic import ClaudeBackend
 from yagami.backends.echo import EchoBackend
 from yagami.backends.ollama import OllamaBackend
 from yagami.backends.stability import StabilityImageBackend
-from yagami.config import AnthropicConfig, OllamaConfig, StabilityConfig
-from yagami.telemetry.costs import estimate_cost, rough_token_count
+from yagami.config import (
+    AnthropicConfig,
+    OllamaConfig,
+    ProfileOverrides,
+    StabilityConfig,
+    YagamiConfig,
+)
+from yagami.telemetry.costs import _local_day_start_ms, estimate_cost, rough_token_count
 
 
 def test_ollama_is_free():
@@ -42,3 +53,33 @@ def test_rough_token_count_4_char_rule():
     assert rough_token_count("hi") == 1
     assert rough_token_count("hello world!") == 3
     assert rough_token_count("a" * 4000) == 1000
+
+
+def test_local_day_start_uses_local_calendar_midnight():
+    tz = timezone(timedelta(hours=-5))
+    now = datetime(2026, 7, 13, 15, 42, 10, tzinfo=tz)
+    expected = datetime(2026, 7, 13, 0, 0, 0, tzinfo=tz)
+    assert _local_day_start_ms(now) == int(expected.timestamp() * 1000)
+
+
+@pytest.mark.asyncio
+async def test_cost_api_uses_active_profile_cap(monkeypatch):
+    cfg = YagamiConfig()
+    cfg.routing.daily_spend_cap_usd = 10
+    cfg.routing.active_profile = "work"
+    cfg.profiles["work"] = ProfileOverrides(daily_spend_cap_usd=2)
+
+    async def today() -> float:
+        return 1.25
+
+    async def session(_session_id: str) -> float:
+        return 0.5
+
+    monkeypatch.setattr(costs_api, "get_config", lambda: cfg)
+    monkeypatch.setattr(costs_api, "spend_today_usd", today)
+    monkeypatch.setattr(costs_api, "spend_session_usd", session)
+
+    result = await costs_api.costs("s1")
+
+    assert result["daily_cap_usd"] == 2
+    assert result["cap_remaining_usd"] == 0.75

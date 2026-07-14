@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from fastapi import HTTPException
+
+from yagami.api.ingest import _MAX_BYTES, ingest
 from yagami.ingest.extract import extract
 
 
@@ -60,3 +64,36 @@ def test_extract_pdf_real_minimal():
     # accept either a successful extraction OR a graceful empty extract
     # (no exception).
     assert doc.error is None or doc.error == ""
+
+
+class _FakeUpload:
+    filename = "notes.txt"
+    content_type = "text/plain"
+
+    def __init__(self, blob: bytes) -> None:
+        self.blob = blob
+        self.read_size: int | None = None
+
+    async def read(self, size: int = -1) -> bytes:
+        self.read_size = size
+        return self.blob[:size]
+
+
+@pytest.mark.asyncio
+async def test_ingest_uses_bounded_read():
+    upload = _FakeUpload(b"hello")
+
+    result = await ingest(upload)  # type: ignore[arg-type]
+
+    assert upload.read_size == _MAX_BYTES + 1
+    assert result["text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_file_over_limit():
+    upload = _FakeUpload(b"x" * (_MAX_BYTES + 1))
+
+    with pytest.raises(HTTPException) as exc:
+        await ingest(upload)  # type: ignore[arg-type]
+
+    assert exc.value.status_code == 413

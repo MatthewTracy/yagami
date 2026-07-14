@@ -7,7 +7,7 @@ from ..backends.base import Backend, Capability, Message
 from ..config import RoutingConfig
 from .fast_path import can_bypass
 from .overrides import OverrideResult, parse as parse_override
-from .prompts import PHI_MEDICAL_SYSTEM_PROMPT
+from .prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
 from .schema import Classification, Complexity, Intent, Sensitivity
 
 Classifier = Callable[[str], Awaitable[Classification]]
@@ -43,12 +43,21 @@ def _is_cloud_text(backend: Backend) -> bool:
     return not backend.is_local and Capability.TEXT in backend.capabilities
 
 
+def _privacy_system_prompt(sensitivity: Sensitivity | None) -> str | None:
+    if sensitivity == Sensitivity.PHI_MEDICAL:
+        return PHI_MEDICAL_SYSTEM_PROMPT
+    if sensitivity == Sensitivity.PHI:
+        return PHI_SYSTEM_PROMPT
+    return None
+
+
 @dataclass
 class RoutingDecision:
     backend: Backend
     reason: str
     classification: dict
     lora_variant: str | None = None
+    model_override: str | None = None
     system_prompt: str | None = None
     effective_user_text: str | None = None  # set when override stripped a prefix
     use_tools: bool = False  # v0.2.14: stream branches into tool_loop when True
@@ -204,12 +213,15 @@ class RoutingPolicy:
         )
         cls_dict = cls.model_dump(mode="json")
         cls_dict["source"] = "slash-override"
-        sysprompt = PHI_MEDICAL_SYSTEM_PROMPT if sensitive == Sensitivity.PHI_MEDICAL else None
+        sysprompt = _privacy_system_prompt(sensitive)
         return RoutingDecision(
             backend=backend,
             reason=f"slash override → {backend.name}",
             classification=cls_dict,
             system_prompt=sysprompt,
+            model_override=self._config.local_model_overrides.get(sensitive.value)
+            if sensitive
+            else None,
             effective_user_text=override.stripped_text or None,
         )
 
@@ -244,12 +256,15 @@ class RoutingPolicy:
         cls = Classification(sensitivity=sensitive or Sensitivity.NONE)
         cls_dict = cls.model_dump(mode="json")
         cls_dict["source"] = "force_backend"
-        sysprompt = PHI_MEDICAL_SYSTEM_PROMPT if sensitive == Sensitivity.PHI_MEDICAL else None
+        sysprompt = _privacy_system_prompt(sensitive)
         return RoutingDecision(
             backend=backend,
             reason=f"force_backend → {backend.name}",
             classification=cls_dict,
             system_prompt=sysprompt,
+            model_override=self._config.local_model_overrides.get(sensitive.value)
+            if sensitive
+            else None,
         )
 
     def _apply_rules(
@@ -271,16 +286,15 @@ class RoutingPolicy:
         )
         if sensitive and self._config.phi_must_be_local:
             backend = self._preferred_local()
-            sysprompt = (
-                PHI_MEDICAL_SYSTEM_PROMPT
-                if classification.sensitivity == Sensitivity.PHI_MEDICAL
-                else None
-            )
+            sysprompt = _privacy_system_prompt(classification.sensitivity)
             return RoutingDecision(
                 backend=backend,
                 reason=f"sensitivity={classification.sensitivity.value}; forced local ({backend.name})",
                 classification=cls_dict,
                 system_prompt=sysprompt,
+                model_override=self._config.local_model_overrides.get(
+                    classification.sensitivity.value
+                ),
             )
 
         # Image gen routes to Stability - it only sends the current user prompt

@@ -65,3 +65,14 @@ async def post_feedback(decision_id: int, payload: FeedbackPayload) -> dict:
     )
     await db.commit()
     return {"ok": True, "decision_id": decision_id, "rating": payload.rating}
+
+
+@router.delete("/{decision_id}/feedback")
+async def delete_feedback(decision_id: int) -> dict:
+    db = get_db()
+    async with db.execute("SELECT 1 FROM decisions WHERE id = ?", (decision_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(404, f"decision {decision_id} not found")
+    cur = await db.execute("DELETE FROM feedback WHERE decision_id = ?", (decision_id,))
+    await db.commit()
+    return {"ok": True, "decision_id": decision_id, "deleted": cur.rowcount > 0}

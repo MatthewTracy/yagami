@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import httpx
 import pytest
 
 from yagami.router.schema import Sensitivity
@@ -91,6 +92,46 @@ async def test_web_fetch_missing_url():
     res = await WebFetch().run({}, _ctx())
     assert res.ok is False
     assert "url" in res.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_refuses_redirect_to_non_allowlisted_host():
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(302, headers={"Location": "https://metadata.internal/secret"})
+
+    fetch = WebFetch(
+        allowlist={"trusted.example"},
+        transport=httpx.MockTransport(handler),
+    )
+    res = await fetch.run({"url": "https://trusted.example/start"}, _ctx())
+
+    assert res.ok is False
+    assert "redirect refused" in res.error.lower()
+    assert requests == ["https://trusted.example/start"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_limits_response_bytes():
+    from yagami.skills.web_fetch import _MAX_BYTES
+
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, content=b"x" * (_MAX_BYTES + 100))
+    )
+    fetch = WebFetch(allowlist={"trusted.example"}, transport=transport)
+
+    res = await fetch.run({"url": "https://trusted.example/large"}, _ctx())
+
+    assert res.ok is True
+    assert res.artifacts["bytes"] == _MAX_BYTES
+    assert res.content.endswith("... [truncated]")
+
+
+def test_web_fetch_accepts_explicit_empty_allowlist():
+    fetch = WebFetch(allowlist=set())
+    assert fetch._allowlist == set()
 
 
 # ---- adapters ----

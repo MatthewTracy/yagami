@@ -22,7 +22,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..config import YagamiConfig, effective_routing, get_config, write_config
 from ..router.policy import RoutingPolicy
-from ..router.prompts import PHI_MEDICAL_SYSTEM_PROMPT
+from ..router.prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -43,6 +43,7 @@ def _config_payload() -> dict:
         "config": cfg.model_dump(mode="json"),
         "defaults": YagamiConfig().model_dump(mode="json"),
         "prompts": {
+            "phi_default": PHI_SYSTEM_PROMPT,
             "phi_medical_default": PHI_MEDICAL_SYSTEM_PROMPT,
         },
         "notes": {
@@ -55,6 +56,11 @@ def _config_payload() -> dict:
                 "long_message_token_threshold, active_profile) take effect on "
                 "the next turn. Backend model name / URL changes require "
                 "restarting uvicorn."
+            ),
+            "storage_encryption": (
+                "Yagami does not apply application-level database encryption. "
+                "Use BitLocker, FileVault, or full-disk encryption to protect "
+                "the local database and saved image attachments at rest."
             ),
         },
     }
@@ -86,6 +92,7 @@ class ConfigPatch(BaseModel):
     gemini: dict | None = None
     routing: dict | None = None
     profiles: dict[str, dict] | None = None
+    privacy: dict | None = None
 
 
 @router.put("")

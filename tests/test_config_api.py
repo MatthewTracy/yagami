@@ -64,6 +64,20 @@ async def test_put_config_persists_routing_changes(tmp_config):
 
 
 @pytest.mark.asyncio
+async def test_put_config_persists_privacy_retention(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put("/api/config", json={"privacy": {"session_retention_days": 30}})
+            assert r.status_code == 200
+            assert r.json()["config"]["privacy"]["session_retention_days"] == 30
+
+            r = await c.put("/api/config", json={"privacy": {"session_retention_days": -1}})
+            assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_put_config_pins_phi_must_be_local_on(tmp_config):
     """Defense in depth: even if the UI somehow PUTs phi_must_be_local=false,
     the server pins it on. Disabling would defeat the local-first guarantee."""
@@ -86,6 +100,23 @@ async def test_put_config_rejects_invalid_types(tmp_config):
                 "/api/config",
                 json={"routing": {"daily_spend_cap_usd": "not-a-number"}},
             )
+            assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "routing_patch",
+    [
+        {"daily_spend_cap_usd": -1},
+        {"long_message_token_threshold": 0},
+    ],
+)
+async def test_put_config_rejects_values_that_disable_safety_gates(tmp_config, routing_patch):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put("/api/config", json={"routing": routing_patch})
             assert r.status_code == 422
 
 
@@ -114,3 +145,24 @@ async def test_toml_round_trip_preserves_fields(tmp_config):
         assert on_disk["anthropic"]["max_tokens"] == 8192
         assert on_disk["routing"]["daily_spend_cap_usd"] == 7.25
         assert on_disk["routing"]["phi_must_be_local"] is True
+
+
+def test_toml_round_trip_quotes_dynamic_table_and_inline_keys():
+    import tomllib
+
+    from yagami.config import McpServerConfig, ProfileOverrides, YagamiConfig, _serialize_config
+
+    cfg = YagamiConfig(
+        profiles={"work.home": ProfileOverrides(daily_spend_cap_usd=2.5)},
+        mcp_servers={
+            "server one": McpServerConfig(
+                command="example",
+                env={"API.KEY": "line one\nline two"},
+            )
+        },
+    )
+
+    parsed = tomllib.loads(_serialize_config(cfg))
+
+    assert parsed["profiles"]["work.home"]["daily_spend_cap_usd"] == 2.5
+    assert parsed["mcp_servers"]["server one"]["env"]["API.KEY"] == "line one\nline two"

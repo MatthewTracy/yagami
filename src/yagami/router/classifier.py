@@ -119,3 +119,6 @@ class OllamaJSONClassifier:
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("classifier failed (%s); raising so policy falls back", exc)
             raise
+
+    async def close(self) -> None:
+        await self._client.aclose()

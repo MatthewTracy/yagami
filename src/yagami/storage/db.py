@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import aiosqlite
@@ -24,18 +26,24 @@ async def open_db(path: Path) -> aiosqlite.Connection:
         return _db
     if _db is not None:
         await _db.close()
+        _db = None
+        _db_path = None
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = await aiosqlite.connect(str(path))
-    conn.row_factory = aiosqlite.Row
-    # Load sqlite-vec extension before migrations - they create vec0 virtual
-    # tables. Silently no-op if the package isn't installed (memory features
-    # degrade to FTS5 / disabled).
-    await _load_sqlite_vec(conn)
-    await conn.execute("PRAGMA journal_mode=WAL")
-    await conn.execute("PRAGMA foreign_keys=ON")
-    await conn.execute("PRAGMA synchronous=NORMAL")
-    await conn.commit()
-    await _run_migrations(conn)
+    try:
+        conn.row_factory = aiosqlite.Row
+        # Load sqlite-vec extension before migrations - they create vec0 virtual
+        # tables. Silently no-op if the package isn't installed (memory features
+        # degrade to FTS5 / disabled).
+        await _load_sqlite_vec(conn)
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("PRAGMA synchronous=NORMAL")
+        await conn.commit()
+        await _run_migrations(conn)
+    except BaseException:
+        await conn.close()
+        raise
     _db = conn
     _db_path = path
     return conn
@@ -74,6 +82,51 @@ def get_db() -> aiosqlite.Connection:
     if _db is None:
         raise RuntimeError("DB not opened; call open_db() first")
     return _db
+
+
+@asynccontextmanager
+async def exclusive_db() -> AsyncIterator[aiosqlite.Connection]:
+    """Open a separate write connection and hold an exclusive app transaction.
+
+    Destructive lifecycle operations use this instead of the shared async
+    connection so a chat append or embedding write cannot interleave between
+    their related DELETE statements.
+    """
+    if _db_path is None:
+        raise RuntimeError("DB not opened; call open_db() first")
+    conn = await aiosqlite.connect(str(_db_path))
+    try:
+        conn.row_factory = aiosqlite.Row
+        await _load_sqlite_vec(conn)
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            await conn.rollback()
+            raise
+        else:
+            await conn.commit()
+    finally:
+        await conn.close()
+
+
+@asynccontextmanager
+async def snapshot_db() -> AsyncIterator[aiosqlite.Connection]:
+    """Open a consistent read snapshot suitable for a streamed export."""
+    if _db_path is None:
+        raise RuntimeError("DB not opened; call open_db() first")
+    conn = await aiosqlite.connect(str(_db_path))
+    try:
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA foreign_keys=ON")
+        await conn.execute("BEGIN")
+        try:
+            yield conn
+        finally:
+            await conn.rollback()
+    finally:
+        await conn.close()
 
 
 async def _run_migrations(conn: aiosqlite.Connection) -> None:

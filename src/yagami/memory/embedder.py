@@ -52,3 +52,6 @@ class Embedder:
         except httpx.HTTPError as exc:
             log.warning("embed call failed: %s", exc)
             return None
+
+    async def close(self) -> None:
+        await self._client.aclose()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from yagami.backends.base import ImageAttachment, Message
 
 
@@ -26,7 +29,7 @@ def test_anthropic_backend_constructs_vision_content_blocks():
         Message(
             role="user",
             content="what is this?",
-            images=[ImageAttachment(media_type="image/png", data_b64="iVBOR...")],
+            images=[ImageAttachment(media_type="image/png", data_b64="iVBORw0KGgo=")],
         )
     ]
     chat: list[dict] = []
@@ -58,3 +61,16 @@ def test_anthropic_backend_constructs_vision_content_blocks():
     types = [b["type"] for b in content]
     assert types == ["image", "text"]
     assert content[0]["source"]["media_type"] == "image/png"
+
+
+@pytest.mark.parametrize(
+    ("media_type", "data_b64"),
+    [
+        ("image/svg+xml", "aGVsbG8="),
+        ("image/png", "not-base64!"),
+        ("image/png", ""),
+    ],
+)
+def test_image_attachment_rejects_unsupported_or_malformed_data(media_type, data_b64):
+    with pytest.raises(ValidationError):
+        ImageAttachment(media_type=media_type, data_b64=data_b64)

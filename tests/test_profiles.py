@@ -144,3 +144,7 @@ async def test_put_config_profile_switch_reflected_on_next_decide(tmp_config, ma
 
             decision = await live_policy.decide([Message(role="user", content="hi")])
             assert decision.backend.name == "ollama"
+
+            models = await c.get("/api/models")
+            assert models.status_code == 200
+            assert models.json()["default"] == "ollama"

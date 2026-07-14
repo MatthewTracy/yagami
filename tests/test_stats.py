@@ -116,6 +116,17 @@ async def test_feedback_persists_and_overwrites():
             rows = [tuple(r) for r in await cur2.fetchall()]
         assert rows == [(-1, 1)]
 
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.delete(f"/api/decisions/{decision_id}/feedback")
+            assert r.status_code == 200
+            assert r.json()["deleted"] is True
+
+        async with db.execute(
+            "SELECT COUNT(*) FROM feedback WHERE decision_id = ?", (decision_id,)
+        ) as cur3:
+            assert (await cur3.fetchone())[0] == 0
+
 
 @pytest.mark.asyncio
 async def test_feedback_validates_rating():

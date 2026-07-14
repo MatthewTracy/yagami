@@ -61,3 +61,6 @@ class StabilityImageBackend(Backend):
 
     async def health(self) -> bool:
         return True
+
+    async def close(self) -> None:
+        await self._client.aclose()

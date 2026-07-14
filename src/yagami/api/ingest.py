@@ -14,7 +14,9 @@ _IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 @router.post("")
 async def ingest(file: UploadFile = File(...)) -> dict:
-    blob = await file.read()
+    # Read one byte past the limit so oversized uploads are rejected without
+    # first copying an arbitrarily large file into process memory.
+    blob = await file.read(_MAX_BYTES + 1)
     if len(blob) > _MAX_BYTES:
         raise HTTPException(413, f"file too large ({len(blob)} > {_MAX_BYTES} bytes)")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from uuid import uuid4
 
 from ..backends.base import Message
@@ -23,26 +24,73 @@ class SessionStore:
         async with db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)) as cur:
             return (await cur.fetchone()) is not None
 
-    async def append(self, session_id: str, message: Message) -> None:
+    async def append(self, session_id: str, message: Message) -> int:
         ts = now_ms()
+        title = None
+        if message.role == "user":
+            title = message.content.strip()[:80] or ("Image attachment" if message.images else None)
         db = get_db()
-        await db.execute(
+        cur = await db.execute(
             "INSERT INTO messages(session_id, role, content, created_at) VALUES(?, ?, ?, ?)",
             (session_id, message.role, message.content, ts),
         )
+        message_id = cur.lastrowid
+        assert message_id is not None
+        for image in message.images or []:
+            await db.execute(
+                "INSERT INTO message_attachments(message_id, media_type, data, created_at)"
+                " VALUES(?, ?, ?, ?)",
+                (message_id, image.media_type, base64.b64decode(image.data_b64), ts),
+            )
         await db.execute(
             "UPDATE sessions SET updated_at=?, title=COALESCE(title, ?) WHERE id=?",
-            (ts, message.content[:80] if message.role == "user" else None, session_id),
+            (ts, title, session_id),
         )
         await db.commit()
+        return int(message_id)
 
     async def history(self, session_id: str) -> list[Message]:
         db = get_db()
         async with db.execute(
-            "SELECT role, content FROM messages WHERE session_id=? ORDER BY id ASC",
+            """SELECT m.id, m.role, m.content,
+                      a.id AS attachment_id, a.media_type, a.data
+                 FROM messages m
+                 LEFT JOIN message_attachments a ON a.message_id = m.id
+                WHERE m.session_id=?
+                ORDER BY m.id ASC, a.id ASC""",
             (session_id,),
         ) as cur:
-            return [Message(role=row["role"], content=row["content"]) async for row in cur]
+            rows = await cur.fetchall()
+        messages: list[Message] = []
+        current_id: int | None = None
+        current: dict | None = None
+        for row in rows:
+            message_id = int(row["id"])
+            if message_id != current_id:
+                if current is not None:
+                    if not current["images"]:
+                        current["images"] = None
+                    messages.append(Message.model_validate(current))
+                current_id = message_id
+                current = {"role": row["role"], "content": row["content"], "images": []}
+            if row["attachment_id"] is not None and current is not None:
+                current["images"].append(
+                    {
+                        "media_type": row["media_type"],
+                        "data_b64": base64.b64encode(row["data"]).decode("ascii"),
+                    }
+                )
+        if current is not None:
+            if not current["images"]:
+                current["images"] = None
+            messages.append(Message.model_validate(current))
+        return messages
+
+    async def delete_message_images(self, message_id: int) -> None:
+        """Remove persisted images from a turn refused by a text-only backend."""
+        db = get_db()
+        await db.execute("DELETE FROM message_attachments WHERE message_id=?", (message_id,))
+        await db.commit()
 
     async def list_sessions(self, limit: int = 50) -> list[dict]:
         db = get_db()
