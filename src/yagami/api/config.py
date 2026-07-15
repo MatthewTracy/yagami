@@ -57,6 +57,11 @@ def _config_payload() -> dict:
                 "the next turn. Backend model name / URL changes require "
                 "restarting uvicorn."
             ),
+            "ollama_trust_zone": (
+                "Ollama receives classifier input, generation prompts, and embeddings. "
+                "Use private_network only for an endpoint inside an explicitly trusted "
+                "deployment boundary."
+            ),
             "storage_encryption": (
                 "Yagami does not apply application-level database encryption. "
                 "Use BitLocker, FileVault, or full-disk encryption to protect "

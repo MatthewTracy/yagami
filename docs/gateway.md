@@ -85,7 +85,7 @@ evaluation. Only their key names, not their values, are written to the ledger.
 | `n > 1` | Rejected explicitly |
 | Remote image URLs | Rejected; Yagami does not fetch untrusted URLs |
 | Chat Completions caller-defined function tools | Supported on tool-capable OpenAI-compatible and Anthropic backends |
-| Responses API caller-defined tools | Not yet supported |
+| Responses API caller-defined function tools and function outputs | Supported |
 | Audio/realtime/batches/fine-tuning | Not supported |
 
 Unsupported fields produce an OpenAI-shaped error instead of being silently

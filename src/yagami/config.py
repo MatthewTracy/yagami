@@ -9,14 +9,54 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class OllamaConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     url: str = "http://localhost:11434"
     model: str = "llama3.2:3b-instruct-q4_K_M"
     classifier_model: str = "llama3.2:3b-instruct-q4_K_M"
+    trust_zone: Literal["device", "private_network"] = "device"
+
+    @model_validator(mode="after")
+    def validate_trusted_service(self) -> "OllamaConfig":
+        """Prevent an arbitrary network endpoint from silently becoming local.
+
+        Ollama is used for generation, privacy classification, and embeddings,
+        so its address is part of Yagami's trusted computing boundary. Docker's
+        host gateway is still the same physical device; Kubernetes/service-mesh
+        deployments must opt into ``private_network`` explicitly.
+        """
+        try:
+            parsed = urlsplit(self.url)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Ollama url must be a valid HTTP(S) service URL") from exc
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Ollama url must be an absolute HTTP(S) service URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Ollama url cannot contain credentials, query, or fragment")
+        if parsed.path.rstrip("/"):
+            raise ValueError("Ollama url cannot contain a path")
+        if port == 0:
+            raise ValueError("Ollama url requires a valid nonzero port")
+
+        host = parsed.hostname.rstrip(".").casefold()
+        device_host = host in {"localhost", "host.docker.internal", "gateway.docker.internal"}
+        if not device_host:
+            try:
+                device_host = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                device_host = False
+        if self.trust_zone == "device" and not device_host:
+            raise ValueError(
+                "non-device Ollama endpoints require trust_zone='private_network'; "
+                "Ollama receives prompts for classification, generation, and embeddings"
+            )
+        return self
 
 
 class AnthropicConfig(BaseModel):
@@ -274,6 +314,10 @@ class Settings(BaseSettings):
     stability_api_key: str = Field(default="", validation_alias=AliasChoices("STABILITY_API_KEY"))
     ollama_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_URL"))
     ollama_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_MODEL"))
+    ollama_trust_zone: Literal["device", "private_network"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("YAGAMI_OLLAMA_TRUST_ZONE"),
+    )
     claude_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_CLAUDE_MODEL"))
     config_path: str = Field(
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
@@ -402,6 +446,8 @@ def get_config() -> YagamiConfig:
     with path.open("rb") as f:
         data = tomllib.load(f)
     cfg = YagamiConfig.model_validate(data)
+    if settings.ollama_trust_zone is not None:
+        cfg.ollama.trust_zone = settings.ollama_trust_zone
     if settings.ollama_url:
         cfg.ollama.url = settings.ollama_url
     if settings.ollama_model:

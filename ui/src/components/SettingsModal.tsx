@@ -13,7 +13,12 @@ type ProfileOverrides = {
 
 type Cfg = {
   config: {
-    ollama: { url: string; model: string; classifier_model: string };
+    ollama: {
+      url: string;
+      model: string;
+      classifier_model: string;
+      trust_zone: "device" | "private_network";
+    };
     foundry_local: { enabled: boolean; base_url: string; model: string; max_tokens: number };
     anthropic: { model: string; max_tokens: number };
     stability: { model: string };
@@ -229,6 +234,25 @@ export function SettingsModal({ open, onClose }: Props) {
                 value={c.ollama.url}
                 onChange={(v) => update("ollama", { url: v })}
               />
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-400 w-44 shrink-0">Trust zone</span>
+                <select
+                  value={c.ollama.trust_zone}
+                  onChange={(e) =>
+                    update("ollama", {
+                      trust_zone: e.target.value as "device" | "private_network",
+                    })
+                  }
+                  className="flex-1 rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-zinc-200"
+                >
+                  <option value="device">This device</option>
+                  <option value="private_network">Trusted private network</option>
+                </select>
+              </label>
+              <p className="text-[10px] text-zinc-500">
+                Private-network mode explicitly trusts that service with classifier input,
+                generation prompts, and embeddings.
+              </p>
               <Field
                 label="Generation model"
                 value={c.ollama.model}

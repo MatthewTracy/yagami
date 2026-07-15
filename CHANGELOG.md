@@ -8,6 +8,30 @@ shipped.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-14
+
+### Security
+- Make the Ollama trust boundary explicit. Device mode accepts loopback and
+  Docker host-gateway endpoints; other endpoints require an administrator to
+  declare the trusted `private_network` zone because Ollama receives prompts
+  for classification, generation, and embeddings.
+- Revalidate environment-provided Ollama URLs instead of allowing an override
+  to bypass configuration validation, and expose the effective zone through
+  `yagami doctor` and the local settings surface.
+
+### Changed
+- Tighten the PyPI landing page around Yagami's context-firewall positioning,
+  compact provider coverage, use a labeled demo link, and reduce duplicated
+  navigation.
+- Add verified Security and Roadmap project links plus context-firewall,
+  AI-security, and data-governance discovery keywords.
+
+### Fixed
+- Correct the gateway compatibility guide: Responses API caller-defined
+  function tools are implemented and tested.
+- Correct the architecture guide to reflect that browser chat now uses the
+  same governed gateway service as the public APIs.
+
 ## [0.6.0] - 2026-07-14
 
 ### Added

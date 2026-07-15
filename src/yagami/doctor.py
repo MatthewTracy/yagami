@@ -64,7 +64,13 @@ async def main() -> int:
     print(_line("python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0]))
 
     ok, detail = await _check_ollama(cfg.ollama.url, cfg.ollama.model)
-    print(_line(f"Ollama @ {cfg.ollama.url}", ok, detail))
+    print(
+        _line(
+            f"Ollama @ {cfg.ollama.url}",
+            ok,
+            f"trust zone: {cfg.ollama.trust_zone}; {detail}",
+        )
+    )
 
     if cfg.foundry_local.enabled:
         ok, detail = await _check_foundry_local(

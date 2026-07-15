@@ -1,5 +1,32 @@
 # Integrations
 
+## Ollama trust boundary
+
+Ollama supplies Yagami's default generator, privacy classifier, and memory
+embeddings, so its endpoint is inside the trusted computing boundary. Device
+mode accepts loopback addresses and Docker's host-gateway names:
+
+```toml
+[ollama]
+url = "http://localhost:11434"
+trust_zone = "device"
+```
+
+For an Ollama service inside a Kubernetes cluster, private VPC, or service
+mesh, make the wider trust decision explicit:
+
+```toml
+[ollama]
+url = "http://ollama.ai-platform.svc.cluster.local:11434"
+trust_zone = "private_network"
+```
+
+The equivalent environment override is
+`YAGAMI_OLLAMA_TRUST_ZONE=private_network`. Do not use that setting for a
+public or third-party endpoint: prompts are sent there before final routing
+when the classifier runs. Use a cloud or `[upstream]` backend for external
+inference instead.
+
 ## Microsoft Foundry Local (preview)
 
 Yagami can use the OpenAI-compatible web service provided by Microsoft
