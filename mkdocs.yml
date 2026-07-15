@@ -32,7 +32,9 @@ nav:
   - Gateway API: gateway.md
   - Policies: policies.md
   - Integrations: integrations.md
+  - Knowledge base: knowledge-base.md
   - Deployment: deployment.md
+  - Development: development.md
   - Architecture: architecture.md
   - Security:
       - Threat model: threat-model.md

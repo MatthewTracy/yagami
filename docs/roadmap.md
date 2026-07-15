@@ -17,6 +17,8 @@ capabilities from work that still needs production design partners.
   policy passports.
 - Context trust/injection signals, sensitive tool-result containment, local
   tokenization/rehydration, output DLP, and optional Presidio analysis.
+- Microsoft Foundry Local generation through its loopback OpenAI-compatible
+  service, with local-trust validation and health diagnostics.
 - Hash-chained audit evidence, NDJSON/SIEM streaming, approval notifications,
   Prometheus, and content-free OpenTelemetry GenAI telemetry.
 - PyPI, container, Compose, and Helm packaging with checksums, SBOMs,

@@ -2,11 +2,27 @@
 
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions
-below `0.3.0` were backfilled from commit history — see the README's
-[Roadmap](README.md#roadmap) for what's planned next rather than what's
+below `0.3.0` were backfilled from commit history — see the
+[product roadmap](docs/roadmap.md) for what's planned next rather than what's
 shipped.
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-07-14
+
+### Added
+- Optional Microsoft Foundry Local generation backend using its loopback
+  OpenAI-compatible service, including health diagnostics, UI configuration,
+  documentation, and strict local-trust validation.
+
+### Changed
+- Condense the GitHub and PyPI landing page around adoption, guarantees,
+  integrations, and limitations; move contributor and knowledge-base details
+  into the documentation site.
+- Identify the MIT copyright holder as Matthew Tracy and Yagami contributors.
+
+### Fixed
+- Return JSON-safe validation errors from the configuration API.
 
 ## [0.5.0] - 2026-07-14
 

@@ -24,6 +24,16 @@ max_tokens = 4096
 api_key_env = "UPSTREAM_API_KEY"
 allow_unauthenticated = false
 
+# Optional Microsoft Foundry Local generation backend. Run
+# `foundry service status` for the current endpoint; its port can change after
+# a restart. Yagami accepts loopback URLs only because this is a trusted-local
+# route. The CLI and model installation remain user-managed.
+[foundry_local]
+enabled = false
+base_url = ""
+model = "qwen2.5-0.5b-instruct-generic-cpu"
+max_tokens = 4096
+
 [routing]
 long_message_token_threshold = 1500
 phi_must_be_local = true

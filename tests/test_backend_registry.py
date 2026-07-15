@@ -35,6 +35,7 @@ def test_discover_finds_all_real_backends():
     assert "echo" in builders
     assert "ollama" in builders
     assert "llama_cpp" in builders
+    assert "foundry_local" in builders
     for name in ALL_CLOUD_BACKEND_NAMES:
         assert name in builders, f"{name} missing a build() function"
     assert "base" not in builders
@@ -53,6 +54,25 @@ def test_build_all_with_no_keys_still_has_local_backends():
         assert name not in backends
     # llama_cpp has no model_path configured by default → not built.
     assert "llama_cpp" not in backends
+    assert "foundry_local" not in backends
+
+
+def test_foundry_local_builds_as_a_local_backend_when_enabled():
+    cfg = YagamiConfig.model_validate(
+        {
+            "foundry_local": {
+                "enabled": True,
+                "base_url": "http://127.0.0.1:5272/v1",
+                "model": "test-model-generic-cpu",
+            }
+        }
+    )
+    backends = registry.build_all(cfg, secrets_get=lambda _name: None)
+    backend = backends["foundry_local"]
+
+    assert backend.is_local is True
+    assert backend._model == "test-model-generic-cpu"
+    assert Capability.TOOLS in backend.capabilities
 
 
 def test_build_all_with_keys_builds_cloud_backends():

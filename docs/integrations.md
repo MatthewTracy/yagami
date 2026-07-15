@@ -1,5 +1,58 @@
 # Integrations
 
+## Microsoft Foundry Local (preview)
+
+Yagami can use the OpenAI-compatible web service provided by Microsoft
+Foundry Local as a local generation backend. Foundry Local selects an
+optimized CPU, GPU, or NPU model variant for the device and can run without a
+cloud inference account.
+
+Install the Foundry Local CLI using Microsoft's current instructions, then
+load a model and inspect the service:
+
+```powershell
+winget install Microsoft.FoundryLocal
+foundry model load qwen2.5-0.5b-instruct
+foundry service status
+foundry service ps
+```
+
+Copy the endpoint printed by `foundry service status` and the exact model ID
+shown by `foundry service ps` into `~/.yagami/config/yagami.toml`:
+
+```toml
+[foundry_local]
+enabled = true
+base_url = "http://localhost:5272/v1"
+model = "qwen2.5-0.5b-instruct-generic-cpu"
+max_tokens = 4096
+
+[routing]
+default_backend = "foundry_local"
+```
+
+Restart Yagami after changing backend configuration, then run `yagami doctor`
+and check `/api/health`. Foundry assigns a dynamic port whenever its service
+starts, so update `base_url` if that endpoint changes.
+
+Yagami intentionally accepts only `localhost` or a loopback IP here. Policy
+treats this backend as local, and allowing a network host would let a remote
+destination cross the local-only security boundary. Configure `[upstream]`
+instead when an OpenAI-compatible service is hosted elsewhere.
+
+This first integration covers generation, streaming, and model-supported tool
+calls. Ollama remains responsible for Yagami's prompt classifier and memory
+embeddings. Yagami does not install or bundle Foundry Local, download models,
+or accept their license terms on a user's behalf.
+
+The Foundry SDK is MIT-licensed, but the CLI uses separate Microsoft terms and
+each model has its own license. Review a model before use with
+`foundry model info <model> --license`. The CLI's REST surface is currently
+documented as preview and may introduce breaking changes. See Microsoft's
+[CLI reference](https://learn.microsoft.com/en-us/azure/foundry-local/reference/reference-cli),
+[REST reference](https://learn.microsoft.com/en-us/azure/foundry-local/reference/reference-rest),
+and [Foundry Local repository](https://github.com/microsoft/Foundry-Local).
+
 ## Policy delivery pipelines
 
 Run `yagami policy test --policy config/policy.yaml --cases

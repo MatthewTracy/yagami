@@ -78,6 +78,46 @@ async def test_put_config_persists_privacy_retention(tmp_config):
 
 
 @pytest.mark.asyncio
+async def test_put_config_persists_loopback_foundry_local_settings(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={
+                    "foundry_local": {
+                        "enabled": True,
+                        "base_url": "http://localhost:5272/v1",
+                        "model": "test-model-generic-cpu",
+                    }
+                },
+            )
+            assert r.status_code == 200
+            section = r.json()["config"]["foundry_local"]
+            assert section["enabled"] is True
+            assert section["model"] == "test-model-generic-cpu"
+
+
+@pytest.mark.asyncio
+async def test_put_config_rejects_remote_foundry_local_endpoint(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={
+                    "foundry_local": {
+                        "enabled": True,
+                        "base_url": "https://foundry.example.com/v1",
+                    }
+                },
+            )
+            assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_put_config_pins_phi_must_be_local_on(tmp_config):
     """Defense in depth: even if the UI somehow PUTs phi_must_be_local=false,
     the server pins it on. Disabling would defeat the local-first guarantee."""

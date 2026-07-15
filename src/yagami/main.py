@@ -151,6 +151,8 @@ def build_app() -> FastAPI:
     # main.py edit.
     backends = build_all(cfg, secrets.get)
     expected = {"ollama", "echo", "anthropic", "stability", "openai", "llama_cpp"}
+    if cfg.foundry_local.enabled:
+        expected.add("foundry_local")
     missing = expected - set(backends.keys())
     if missing:
         log.info("backends not loaded: %s (missing key or model)", sorted(missing))

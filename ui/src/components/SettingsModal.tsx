@@ -14,6 +14,7 @@ type ProfileOverrides = {
 type Cfg = {
   config: {
     ollama: { url: string; model: string; classifier_model: string };
+    foundry_local: { enabled: boolean; base_url: string; model: string; max_tokens: number };
     anthropic: { model: string; max_tokens: number };
     stability: { model: string };
     routing: {
@@ -133,6 +134,7 @@ export function SettingsModal({ open, onClose }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ollama: data.config.ollama,
+          foundry_local: data.config.foundry_local,
           anthropic: data.config.anthropic,
           stability: data.config.stability,
           routing: data.config.routing,
@@ -247,6 +249,40 @@ export function SettingsModal({ open, onClose }: Props) {
                 }
               />
             </Group>
+            <Group title="Microsoft Foundry Local (preview)">
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-400 w-44 shrink-0">Enabled</span>
+                <input
+                  type="checkbox"
+                  checked={c.foundry_local.enabled}
+                  onChange={(e) =>
+                    update("foundry_local", { enabled: e.target.checked })
+                  }
+                  className="accent-emerald-600"
+                />
+              </label>
+              <Field
+                label="OpenAI endpoint"
+                value={c.foundry_local.base_url}
+                onChange={(v) => update("foundry_local", { base_url: v })}
+                placeholder="http://localhost:5272/v1"
+              />
+              <Field
+                label="Loaded model ID"
+                value={c.foundry_local.model}
+                onChange={(v) => update("foundry_local", { model: v })}
+              />
+              <NumField
+                label="Max tokens"
+                value={c.foundry_local.max_tokens}
+                onChange={(v) => update("foundry_local", { max_tokens: v })}
+              />
+              <p className="text-[10px] text-zinc-500">
+                Copy the current endpoint from `foundry service status`. Its
+                port can change after a service restart. Only localhost and
+                loopback IPs are accepted for this trusted-local backend.
+              </p>
+            </Group>
             <Group title="Anthropic (Claude)">
               <Field
                 label="Model"
@@ -280,6 +316,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 value={c.routing.default_backend}
                 options={[
                   "ollama",
+                  "foundry_local",
                   "anthropic",
                   "openai",
                   "mistral",
@@ -375,6 +412,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   value={p.default_backend ?? c.routing.default_backend}
                   options={[
                   "ollama",
+                  "foundry_local",
                   "anthropic",
                   "openai",
                   "mistral",
@@ -573,10 +611,12 @@ function Field({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="flex items-center gap-2">
@@ -584,6 +624,7 @@ function Field({
       <input
         type="text"
         value={value}
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 font-mono text-[11px]"
       />

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -41,6 +43,55 @@ class UpstreamConfig(BaseModel):
     max_tokens: int = 4096
     api_key_env: str = "UPSTREAM_API_KEY"
     allow_unauthenticated: bool = False
+
+
+class FoundryLocalConfig(BaseModel):
+    """Microsoft Foundry Local's loopback OpenAI-compatible service.
+
+    The loopback restriction is a security boundary: routing policy treats
+    this backend as local, so accepting a remote host here could silently
+    bypass PHI and zero-cloud protections. Use ``upstream`` for a remote or
+    network-hosted OpenAI-compatible service instead.
+    """
+
+    enabled: bool = False
+    base_url: str = ""
+    model: str = "qwen2.5-0.5b-instruct-generic-cpu"
+    max_tokens: int = Field(default=4096, ge=1)
+
+    @model_validator(mode="after")
+    def validate_local_service(self) -> "FoundryLocalConfig":
+        if self.enabled and not self.base_url:
+            raise ValueError("enabled Foundry Local requires base_url")
+        if self.enabled and not self.model.strip():
+            raise ValueError("enabled Foundry Local requires model")
+        if not self.base_url:
+            return self
+
+        parsed = urlsplit(self.base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Foundry Local base_url must be an HTTP(S) loopback URL")
+        if parsed.port == 0:
+            raise ValueError("Foundry Local base_url requires a valid nonzero port")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError(
+                "Foundry Local base_url cannot contain credentials, query, or fragment"
+            )
+
+        host = parsed.hostname.rstrip(".").lower()
+        is_loopback = host == "localhost"
+        if not is_loopback:
+            try:
+                is_loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                is_loopback = False
+        if not is_loopback:
+            raise ValueError(
+                "Foundry Local must use localhost or a loopback IP; use upstream for remote hosts"
+            )
+        if parsed.path.rstrip("/") not in {"", "/v1"}:
+            raise ValueError("Foundry Local base_url path must be empty or /v1")
+        return self
 
 
 class MistralConfig(BaseModel):
@@ -184,6 +235,7 @@ class YagamiConfig(BaseModel):
     stability: StabilityConfig = Field(default_factory=StabilityConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     upstream: UpstreamConfig = Field(default_factory=UpstreamConfig)
+    foundry_local: FoundryLocalConfig = Field(default_factory=FoundryLocalConfig)
     mistral: MistralConfig = Field(default_factory=MistralConfig)
     groq: GroqConfig = Field(default_factory=GroqConfig)
     openrouter: OpenRouterConfig = Field(default_factory=OpenRouterConfig)

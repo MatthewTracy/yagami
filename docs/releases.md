@@ -36,14 +36,14 @@ sha256sum --check SHA256SUMS
 Verify a wheel or source archive against this repository's GitHub attestation:
 
 ```bash
-gh attestation verify yagami-0.5.0-py3-none-any.whl \
+gh attestation verify yagami-0.6.0-py3-none-any.whl \
   --repo MatthewTracy/yagami
 ```
 
 Verify the downloaded Helm chart the same way:
 
 ```bash
-gh attestation verify yagami-0.5.0.tgz \
+gh attestation verify yagami-0.6.0.tgz \
   --repo MatthewTracy/yagami
 ```
 
@@ -88,8 +88,8 @@ password to GitHub secrets.
    ```bash
    git switch main
    git pull --ff-only
-   git tag -a v0.5.0 -m "Yagami 0.5.0"
-   git push origin v0.5.0
+   git tag -a v0.6.0 -m "Yagami 0.6.0"
+   git push origin v0.6.0
    ```
 
 4. Do not create or upload release artifacts by hand. Wait for the `Release`

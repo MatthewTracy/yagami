@@ -14,24 +14,23 @@ impact is usually a small, focused PR rather than a large one.
   everywhere, so they're worth discussing up front.
 - Looking for a first PR? Check issues labeled
   [`good first issue`](https://github.com/MatthewTracy/yagami/labels/good%20first%20issue).
-  The Roadmap section in [`README.md`](README.md) also lists what's planned
+  The [`docs/roadmap.md`](docs/roadmap.md) page also lists what's planned
   next — a new skill (one file in `src/yagami/skills/` plus a test) is
   usually the lowest-friction contribution.
 
 ## Dev setup
 
-See the [Quickstart](README.md#quickstart) in the README. tl;dr: Python
+See [Local development and extensions](docs/development.md). In short: Python
 3.11+, Node 22.12+, Ollama with three models pulled.
 
 ## Adding a backend or skill
 
 Both are filesystem-discovered — drop a file in `src/yagami/backends/` or
-`src/yagami/skills/` that exposes a `build(...)` function, and the registry
-picks it up on boot. No edit to `main.py` or the registry needed. Full
-worked examples (a Mistral backend, a clipboard skill) are in the README's
-["Adding your own backend"](README.md#adding-your-own-backend) and
-["Adding your own skill"](README.md#adding-your-own-skill) sections — read
-those before starting; this file won't duplicate them.
+`src/yagami/skills/` that exposes the appropriate `build(...)` function, and
+the registry picks it up on boot. No edit to `main.py` or the registry is
+needed. Read the extension contracts in
+[`docs/development.md`](docs/development.md) before starting; this file does
+not duplicate them.
 
 A few rules that aren't obvious from the protocol types alone:
 

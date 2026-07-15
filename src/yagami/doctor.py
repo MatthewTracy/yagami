@@ -26,6 +26,38 @@ async def _check_ollama(url: str, model: str) -> tuple[bool, str]:
         return False, f"unreachable: {exc}"
 
 
+async def _check_foundry_local(url: str, model: str) -> tuple[bool, str]:
+    root = url.removesuffix("/").removesuffix("/v1")
+    try:
+        async with httpx.AsyncClient(base_url=root, timeout=5.0) as client:
+            status = await client.get("/openai/status")
+            status.raise_for_status()
+            loaded = await client.get("/openai/loadedmodels")
+            loaded.raise_for_status()
+            payload = loaded.json()
+            if isinstance(payload, list):
+                items = payload
+            elif isinstance(payload, dict):
+                items = payload.get("models", [])
+            else:
+                return False, "invalid loaded-models response"
+            names = {
+                item
+                if isinstance(item, str)
+                else item.get("model") or item.get("name") or item.get("id")
+                for item in items
+                if isinstance(item, (str, dict))
+            }
+            names.discard(None)
+            present = model.casefold() in {str(name).casefold() for name in names}
+            return (
+                present,
+                f"models loaded: {len(names)}; configured present: {present}",
+            )
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        return False, f"unreachable or invalid response: {exc}"
+
+
 async def main() -> int:
     cfg = get_config()
     settings = get_settings()
@@ -33,6 +65,13 @@ async def main() -> int:
 
     ok, detail = await _check_ollama(cfg.ollama.url, cfg.ollama.model)
     print(_line(f"Ollama @ {cfg.ollama.url}", ok, detail))
+
+    if cfg.foundry_local.enabled:
+        ok, detail = await _check_foundry_local(
+            cfg.foundry_local.base_url,
+            cfg.foundry_local.model,
+        )
+        print(_line(f"Foundry Local @ {cfg.foundry_local.base_url}", ok, detail))
 
     print(_line("ANTHROPIC_API_KEY set", bool(settings.anthropic_api_key)))
     print(_line("STABILITY_API_KEY set (optional)", bool(settings.stability_api_key)))

@@ -86,6 +86,7 @@ class ConfigPatch(BaseModel):
     anthropic: dict | None = None
     stability: dict | None = None
     openai: dict | None = None
+    foundry_local: dict | None = None
     mistral: dict | None = None
     groq: dict | None = None
     openrouter: dict | None = None
@@ -110,7 +111,9 @@ async def put_config(patch: ConfigPatch) -> dict:
     try:
         new_cfg = YagamiConfig.model_validate(merged)
     except ValidationError as exc:
-        raise HTTPException(422, exc.errors())
+        # Pydantic's context can contain the original ValueError, which is
+        # not JSON serializable. Keep the useful location/message/type only.
+        raise HTTPException(422, exc.errors(include_context=False, include_url=False))
 
     path = write_config(new_cfg)
     if _policy is not None:
