@@ -1,8 +1,19 @@
 [project]
 name = "yagami"
-version = "0.6.0"
-description = "Private AI policy gateway for governed routing across local models, cloud LLMs, and tools."
-keywords = ["ai-gateway", "llm", "privacy", "policy", "openai", "mcp", "local-ai"]
+version = "0.6.1"
+description = "Open-source AI context firewall for governed model, tool, and retrieval access."
+keywords = [
+    "ai-gateway",
+    "context-firewall",
+    "ai-security",
+    "data-governance",
+    "llm",
+    "privacy",
+    "policy",
+    "openai",
+    "mcp",
+    "local-ai",
+]
 readme = "README.md"
 authors = [{ name = "Matthew Tracy" }]
 license = "MIT"
@@ -46,6 +57,8 @@ Repository = "https://github.com/MatthewTracy/yagami"
 Documentation = "https://matthewtracy.github.io/yagami/"
 Issues = "https://github.com/MatthewTracy/yagami/issues"
 Changelog = "https://github.com/MatthewTracy/yagami/blob/main/CHANGELOG.md"
+Security = "https://github.com/MatthewTracy/yagami/security/policy"
+Roadmap = "https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md"
 
 [project.optional-dependencies]
 dev = [

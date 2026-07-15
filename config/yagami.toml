@@ -2,6 +2,7 @@
 
 [ollama]
 url = "http://localhost:11434"
+trust_zone = "device"
 model = "llama3.2:3b-instruct-q4_K_M"
 # Dedicated classifier - phi4-mini is purpose-trained for structured (JSON)
 # output and consistently outperforms llama3.2:3b on the routing eval.

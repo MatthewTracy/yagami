@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/MatthewTracy/yagami/blob/main/LICENSE)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
 
-[Documentation](https://matthewtracy.github.io/yagami/) | [Gateway API](https://matthewtracy.github.io/yagami/gateway/) | [Integrations](https://matthewtracy.github.io/yagami/integrations/) | [Deployment](https://matthewtracy.github.io/yagami/deployment/) | [Roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
+[Documentation](https://matthewtracy.github.io/yagami/) | [Gateway API](https://matthewtracy.github.io/yagami/gateway/) | [Deployment](https://matthewtracy.github.io/yagami/deployment/) | [Security](https://github.com/MatthewTracy/yagami/security/policy) | [Roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
 
 Yagami sits between your software and local models, cloud LLMs, retrieval
 systems, and tools. It classifies context locally, evaluates versioned policy,
@@ -32,7 +32,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Demo mode uses a local
 echo backend, blocks cloud routing, and exercises the UI, policy, lineage,
 storage, and audit path.
 
-https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2
+[Watch the two-minute demo](https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2).
 
 ## Protect an application
 
@@ -107,57 +107,16 @@ For production authentication, policy, and deployment settings, follow the
 
 ## Models and integrations
 
-Local generation backends:
-
-- [Ollama](https://ollama.com/)
-- llama.cpp through the optional `llama-cpp-python` runtime
-- Microsoft Foundry Local through its loopback OpenAI-compatible service
-
-Cloud backends:
-
-- Anthropic
-- OpenAI
-- Mistral
-- Groq
-- OpenRouter
-- Google Gemini
-- Stability AI image generation
+Local generation works with [Ollama](https://ollama.com/), llama.cpp through
+the optional `llama-cpp-python` runtime, and Microsoft Foundry Local through
+its loopback OpenAI-compatible service. Direct cloud adapters cover Anthropic,
+OpenAI, Mistral, Groq, OpenRouter, Google Gemini, and Stability AI image
+generation.
 
 Yagami also works with LangChain/LangGraph, the Vercel AI SDK, Microsoft
 Presidio, Splunk HEC and generic SIEM webhooks, Slack and Teams approval
 notifications, and upstream gateways such as LiteLLM, Portkey, Kong, or Envoy.
 See the [integration recipes](https://matthewtracy.github.io/yagami/integrations/).
-
-## Microsoft Foundry Local
-
-Foundry Local provides offline, hardware-accelerated inference on supported
-Windows and macOS systems. Yagami connects to its local OpenAI-compatible
-service without bundling the Foundry CLI or any model:
-
-```powershell
-foundry model load qwen2.5-0.5b-instruct
-foundry service status
-```
-
-Copy the reported endpoint and exact loaded model ID into
-`~/.yagami/config/yagami.toml`:
-
-```toml
-[foundry_local]
-enabled = true
-base_url = "http://localhost:5272/v1"
-model = "qwen2.5-0.5b-instruct-generic-cpu"
-max_tokens = 4096
-
-[routing]
-default_backend = "foundry_local"
-```
-
-The port can change after the Foundry service restarts. Yagami accepts only
-localhost and loopback IPs for this trusted-local backend; use `[upstream]` for
-a network-hosted compatible service. Ollama remains the classifier and memory
-embedding service in this first integration. Read the full
-[Foundry Local setup](https://matthewtracy.github.io/yagami/integrations/#microsoft-foundry-local-preview).
 
 ## How enforcement works
 
@@ -191,16 +150,9 @@ requirements before production use.
 
 - [Start here](https://matthewtracy.github.io/yagami/)
 - [Gateway API](https://matthewtracy.github.io/yagami/gateway/)
-- [Policy configuration](https://matthewtracy.github.io/yagami/policies/)
 - [Integrations](https://matthewtracy.github.io/yagami/integrations/)
 - [Deployment](https://matthewtracy.github.io/yagami/deployment/)
-- [Local development and extensions](https://matthewtracy.github.io/yagami/development/)
-- [Knowledge base](https://matthewtracy.github.io/yagami/knowledge-base/)
-- [Architecture](https://matthewtracy.github.io/yagami/architecture/)
-- [Threat model](https://matthewtracy.github.io/yagami/threat-model/)
-- [Release verification](https://matthewtracy.github.io/yagami/releases/)
-- [Benchmarks](https://matthewtracy.github.io/yagami/benchmarks/)
-- [Product roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
+- [Security and threat model](https://matthewtracy.github.io/yagami/threat-model/)
 
 ## Contributing
 

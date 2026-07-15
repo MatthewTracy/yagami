@@ -1,5 +1,11 @@
 # Production deployment
 
+Ollama is part of the trusted privacy boundary because it performs local
+classification and embeddings as well as generation. Non-device service
+addresses must declare `trust_zone = "private_network"`; only do this for a
+network segment authorized to receive the protected context handled by the
+deployment. `yagami doctor` reports the effective trust zone.
+
 Yagami ships a secure-by-default Helm chart in `deploy/helm/yagami`. It runs
 headless with authentication required, a read-only root filesystem, dropped
 Linux capabilities, health probes, explicit resource limits, persistent data,

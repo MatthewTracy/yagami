@@ -10,6 +10,9 @@
 ## Trust boundaries
 
 - The local Yagami host and configured local inference endpoints are trusted.
+  Ollama endpoints outside the device require an explicit `private_network`
+  trust declaration because classification, generation, and embeddings can
+  all send context to that service.
 - Cloud providers and remote tools are external recipients.
 - A caller is trusted only for the project established by its bearer key.
 - Caller sensitivity hints may increase restrictions but cannot downgrade

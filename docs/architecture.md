@@ -17,11 +17,9 @@ Yagami separates an application-facing data plane from local administration.
 9. Content-free decision, privacy, replay, and approval events are appended to
    a project-scoped SHA-256/HMAC chain that can be verified or exported.
 
-The gateway service is shared by Chat Completions and Responses API handlers.
-The legacy WebSocket chat currently uses the underlying routing policy
-directly and remains a local control/demo surface. The externally supported
-policy/data plane is `/v1`; moving the demo surface onto the gateway pipeline
-remains follow-up cleanup.
+The gateway service is shared by Chat Completions, Responses API, MCP, and the
+browser WebSocket chat. The browser remains a local administration/demo
+surface, while `/v1` is the externally supported application data plane.
 
 SQLite is the single-node store. Hidden gateway decision sessions are separated
 from visible chat sessions through a channel field, so stateless API traffic
