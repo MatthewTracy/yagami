@@ -301,10 +301,9 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     if (m.type === "tool_call") {
       const info: ToolCallInfo = {
         name: m.meta.name,
-        input: m.meta.input,
         ok: m.meta.ok,
-        result: m.meta.result ?? null,
-        error: m.meta.error ?? null,
+        errorCode: m.meta.error_code ?? null,
+        resultBytes: m.meta.result_bytes ?? 0,
         artifacts: m.meta.artifacts,
       };
       updateLastAssistant((last) => ({

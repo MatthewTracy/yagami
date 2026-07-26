@@ -106,7 +106,8 @@ async def test_adapter_run_never_raises_on_transport_failure():
 
     res = await adapter.run({}, _ctx())
     assert res.ok is False
-    assert "subprocess died" in res.error
+    assert res.error == "mcp transport unavailable: ConnectionError"
+    assert res.artifacts["error_code"] == "mcp_transport_unavailable"
 
 
 # ---- McpManager against a real subprocess MCP server ----
@@ -275,4 +276,11 @@ async def test_mcp_status_endpoint_when_nothing_configured():
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             r = await c.get("/api/mcp")
             assert r.status_code == 200
-            assert r.json() == {"connected": False, "tools": [], "count": 0}
+            assert r.json() == {
+                "connected": False,
+                "tools": [],
+                "resources": [],
+                "prompts": [],
+                "quarantined": [],
+                "count": 0,
+            }

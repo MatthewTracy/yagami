@@ -35,7 +35,7 @@ from .memory.embedder import EmbedderProtocol, build_embedder
 from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
 from .middleware import RequestSizeLimitMiddleware
-from .mcp_gateway import build_mcp_server
+from .mcp_gateway import build_mcp_server, register_downstream_tools
 from .paths import configure_default_state, project_root, ui_dist
 from .privacy import cleanup_expired_sessions, cleanup_policy_retention
 from . import secrets
@@ -260,8 +260,9 @@ def build_app() -> FastAPI:
     )
     mcp_http_app = None
     mcp_endpoint = None
+    mcp_server = None
     if settings.mcp_server_enabled:
-        _mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
+        mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
 
     embedding_worker: EmbeddingWorker | None = None
     embedder: EmbedderProtocol | None = None
@@ -297,9 +298,17 @@ def build_app() -> FastAPI:
                     embedder.model if embedder is not None else "fts-only",
                 )
             if cfg.mcp_servers:
-                mcp_manager = McpManager()
+                mcp_manager = McpManager(schema_registry=tool_schemas)
                 await mcp_manager.connect_all(cfg.mcp_servers)
                 mcp_manager_mod.set_manager(mcp_manager)
+                if mcp_server is not None:
+                    registered = register_downstream_tools(
+                        mcp_server, gateway, mcp_manager
+                    )
+                    log.info(
+                        "mcp: registered %d governed downstream tool(s)",
+                        len(registered),
+                    )
                 log.info(
                     "mcp: %d server(s) configured, %d tool(s) connected",
                     len(cfg.mcp_servers),

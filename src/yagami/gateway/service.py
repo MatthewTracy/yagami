@@ -14,7 +14,6 @@ from uuid import uuid4
 from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..backends.anthropic import ClaudeBackend
 from ..backends.base import (
     Backend,
     BackendChunk,
@@ -335,6 +334,11 @@ class GatewayService:
         self._apply_policy(routing_decision, evaluation)
 
         if context.approval_tokens:
+            approval_schema_hash = (
+                schema_checks[0].schema_hash
+                if len(context.requested_tools) == 1 and len(schema_checks) == 1
+                else None
+            )
             try:
                 resolution = await self.approvals.resolve(
                     project_id=context.project_id,
@@ -343,6 +347,8 @@ class GatewayService:
                     purpose=context.purpose,
                     request_id=request_id,
                     consume=False,
+                    subject_id=context.subject_id,
+                    schema_hash=approval_schema_hash,
                 )
             except ApprovalError as exc:
                 raise GatewayError(str(exc), code="invalid_tool_approval", status_code=403) from exc
@@ -423,6 +429,12 @@ class GatewayService:
                     purpose=context.purpose,
                     request_id=request_id,
                     consume=True,
+                    subject_id=context.subject_id,
+                    schema_hash=(
+                        schema_checks[0].schema_hash
+                        if len(context.requested_tools) == 1 and len(schema_checks) == 1
+                        else None
+                    ),
                 )
             except ApprovalError as exc:
                 raise GatewayError(str(exc), code="invalid_tool_approval", status_code=403) from exc
@@ -1017,7 +1029,6 @@ class GatewayService:
                 if (
                     prepared.decision.use_tools
                     and not prepared.options.tools
-                    and isinstance(backend, ClaudeBackend)
                     and Capability.TOOLS in backend.capabilities
                 ):
                     async for chunk in tool_loop.run(

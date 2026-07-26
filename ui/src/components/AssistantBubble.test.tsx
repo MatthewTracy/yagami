@@ -24,7 +24,7 @@ describe("AssistantBubble", () => {
         text="answer"
         pending={false}
         isLastAssistant={false}
-        toolCalls={[{ name: "calc.eval", input: { expression: "2+2" }, ok: true, result: "4" }]}
+        toolCalls={[{ name: "calc.eval", ok: true, resultBytes: 1 }]}
         recall={[
           {
             id: 1,

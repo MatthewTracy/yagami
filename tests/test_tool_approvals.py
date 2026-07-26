@@ -89,3 +89,53 @@ async def test_approval_patterns_can_authorize_server_managed_tools(fresh_db) ->
         consume=False,
     )
     assert resolution.approved_tools == ["mcp.finance.*"]
+
+
+@pytest.mark.asyncio
+async def test_approval_can_be_bound_to_identity_and_schema(fresh_db) -> None:
+    store = ApprovalStore()
+    schema_hash = "sha256:" + "a" * 64
+    grant = await store.create(
+        project_id="alpha",
+        tools=["mcp.finance.transfer"],
+        subject_id="operator-7",
+        schema_hash=schema_hash,
+        purpose="billing",
+        ticket="CHG-99",
+        created_by="security-admin",
+        ttl_seconds=600,
+    )
+
+    with pytest.raises(ApprovalError, match="identity"):
+        await store.resolve(
+            project_id="alpha",
+            tokens=[grant.token],
+            requested_tools=["mcp.finance.transfer"],
+            subject_id="operator-8",
+            schema_hash=schema_hash,
+            purpose="billing",
+            request_id="ygm_wrong_identity",
+            consume=False,
+        )
+    with pytest.raises(ApprovalError, match="schema"):
+        await store.resolve(
+            project_id="alpha",
+            tokens=[grant.token],
+            requested_tools=["mcp.finance.transfer"],
+            subject_id="operator-7",
+            schema_hash="sha256:" + "b" * 64,
+            purpose="billing",
+            request_id="ygm_wrong_schema",
+            consume=False,
+        )
+    resolution = await store.resolve(
+        project_id="alpha",
+        tokens=[grant.token],
+        requested_tools=["mcp.finance.transfer"],
+        subject_id="operator-7",
+        schema_hash=schema_hash,
+        purpose="billing",
+        request_id="ygm_bound",
+        consume=True,
+    )
+    assert resolution.approval_ids == [grant.id]

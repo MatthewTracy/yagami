@@ -354,15 +354,38 @@ class McpServerConfig(BaseModel):
     oauth_token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
         "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
     )
+    trust_zone: TrustZone | None = None
+    data_ceiling: Literal["none", "phi", "phi_medical", "secret"] = "none"
+    risk_level: Literal["low", "medium", "high", "critical"] = "medium"
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allow_private_addresses: bool = False
+    max_retries: int = Field(default=2, ge=0, le=5)
+    call_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    reconnect_backoff_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
+    schema_drift: Literal["block", "warn"] = "block"
 
     @model_validator(mode="after")
     def validate_transport(self) -> "McpServerConfig":
+        if self.trust_zone is None:
+            self.trust_zone = (
+                TrustZone.DEVICE if self.transport == "stdio" else TrustZone.EXTERNAL
+            )
+        self.allowed_hosts = list(
+            dict.fromkeys(host.strip().rstrip(".").casefold() for host in self.allowed_hosts if host.strip())
+        )
         if self.transport == "stdio":
             if not self.command:
                 raise ValueError("stdio MCP servers require command")
+            if self.trust_zone not in {TrustZone.DEVICE, TrustZone.PRIVATE_NETWORK}:
+                raise ValueError("stdio MCP servers must use device or private_network trust")
             return self
         if not self.url:
             raise ValueError("streamable_http MCP servers require url")
+        _validate_service_endpoint(
+            self.url,
+            trust_zone=self.trust_zone,
+            label="streamable_http MCP URL",
+        )
         if self.auth == "bearer_env" and not self.bearer_token_env:
             raise ValueError("bearer_env MCP auth requires bearer_token_env")
         if self.auth == "client_credentials":

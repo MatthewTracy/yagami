@@ -233,6 +233,10 @@ class PolicyReplayRequest(BaseModel):
 
 class ToolApprovalRequest(BaseModel):
     tools: list[str] = Field(min_length=1, max_length=100)
+    subject_id: str | None = Field(default=None, min_length=1, max_length=128)
+    schema_hash: str | None = Field(
+        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
     purpose: str | None = Field(default=None, min_length=1, max_length=64)
     ticket: str | None = Field(default=None, min_length=1, max_length=128)
     ttl_seconds: int = Field(default=900, ge=60, le=86_400)
@@ -1220,6 +1224,8 @@ async def create_tool_approval(
     grant = await runtime.approvals.create(
         project_id=principal.project_id,
         tools=body.tools,
+        subject_id=body.subject_id,
+        schema_hash=body.schema_hash,
         purpose=body.purpose,
         ticket=body.ticket,
         created_by=principal.key_fingerprint,
@@ -1231,6 +1237,8 @@ async def create_tool_approval(
         payload={
             "approval_id": grant.id,
             "tools": grant.tools,
+            "subject_id": grant.subject_id,
+            "schema_hash": grant.schema_hash,
             "purpose": grant.purpose,
             "ticket": grant.ticket,
             "expires_at": grant.expires_at,
@@ -1243,6 +1251,8 @@ async def create_tool_approval(
         "token": grant.token,
         "project_id": grant.project_id,
         "tools": grant.tools,
+        "subject_id": grant.subject_id,
+        "schema_hash": grant.schema_hash,
         "purpose": grant.purpose,
         "ticket": grant.ticket,
         "created_at": grant.created_at,

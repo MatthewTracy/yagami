@@ -17,5 +17,13 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 @router.get("")
 async def mcp_status() -> dict:
     manager = get_manager()
-    tools = manager.status() if manager is not None else []
-    return {"connected": manager is not None, "tools": tools, "count": len(tools)}
+    catalog = (
+        manager.catalog()
+        if manager is not None
+        else {"tools": [], "resources": [], "prompts": [], "quarantined": []}
+    )
+    return {
+        "connected": manager is not None,
+        **catalog,
+        "count": len(catalog["tools"]),
+    }
