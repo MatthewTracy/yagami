@@ -9,7 +9,6 @@ type DecisionRow = {
   is_local: boolean;
   reason: string;
   classification: Record<string, unknown>;
-  scrubbed_preview: string;
   source: string;
   t_classify_ms: number | null;
   t_first_token_ms: number | null;
@@ -127,9 +126,6 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
             </span>
           </div>
           <div className="mt-1 text-zinc-400 text-[11px]">{r.reason}</div>
-          <div className="mt-1 text-[10px] text-zinc-500 italic">
-            sent: <span className="text-zinc-400">{r.scrubbed_preview}</span>
-          </div>
           <div className="mt-1 text-[10px] text-zinc-500 flex gap-3">
             <span title="classifier + routing">
               route <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>

@@ -15,7 +15,7 @@ from typing import AsyncIterator
 from openai import APIError, AsyncOpenAI
 
 from ..config import OpenAIConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "OpenAIBackend | None":
@@ -44,6 +44,7 @@ class OpenAIBackend(Backend):
         Capability.VISION,
     }
     is_local = False
+    trust_zone = TrustZone.EXTERNAL
     pricing = _DEFAULT_PRICING
 
     def __init__(self, config: OpenAIConfig, api_key: str) -> None:

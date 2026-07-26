@@ -5,16 +5,17 @@ import logging
 from typing import Protocol
 
 import httpx
+from openai import APIError, AsyncOpenAI
 
-from ..config import OllamaConfig
-from .schema import Classification, Complexity, Intent, Sensitivity
+from ..config import ClassifierConfig, OllamaConfig, YagamiConfig
+from .schema import Classification, Complexity, DataLabel, Intent, Sensitivity
 
 log = logging.getLogger("yagami.classifier")
 
 
 _SYSTEM_PROMPT = """You are a routing classifier. Read the user's most recent message and emit ONLY one strict JSON object matching this exact shape:
 
-{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","complexity":"low|medium|high","needs_tools":true|false,"needs_recall":true|false}
+{"intent":"simple_qa|complex_reasoning|code|creative|image","sensitivity":"none|phi|phi_medical|secret","data_labels":["pii|phi|pci|secret|source_code|confidential"],"complexity":"low|medium|high","needs_tools":true|false,"needs_recall":true|false}
 
 needs_tools: true ONLY when answering requires CALCULATION (arithmetic the model would otherwise approximate, like "14!" or "sqrt(2)*pi") OR a web FETCH of a specific URL/page the user named. Default false - never set true for opinion, summary, code, or "what does X mean" prompts.
 
@@ -32,6 +33,11 @@ Field meanings:
 - sensitivity.phi => personal health/identity info without clinical depth (SSN alone, home address, phone with personal context).
 - sensitivity.secret => API keys (sk-..., ghp_..., AKIA..., JWTs), passwords, credentials.
 - sensitivity.none => none of the above.
+
+data_labels describe the kind of data independently from severity. Use every applicable label:
+- pii for personal identifiers, phi for health data, pci for payment-card data,
+  secret for credentials, source_code for non-public code, and confidential for
+  private business material. Return [] when no label applies.
 
 - complexity.high => genuinely hard task that needs careful multi-step reasoning. Long input alone does NOT mean high - summarizing a long email is low complexity.
 - complexity.medium => moderate task.
@@ -88,6 +94,30 @@ class ClassifierProtocol(Protocol):
     async def __call__(self, text: str) -> Classification: ...
 
 
+def _parse_classification(parsed: dict) -> Classification:
+    raw_labels = parsed.get("data_labels", [])
+    labels: set[DataLabel] = set()
+    if isinstance(raw_labels, list):
+        for value in raw_labels:
+            try:
+                labels.add(DataLabel(value))
+            except (TypeError, ValueError):
+                continue
+    sensitivity = Sensitivity(parsed.get("sensitivity", "none"))
+    if sensitivity in {Sensitivity.PHI, Sensitivity.PHI_MEDICAL}:
+        labels.add(DataLabel.PHI)
+    elif sensitivity == Sensitivity.SECRET:
+        labels.add(DataLabel.SECRET)
+    return Classification(
+        intent=Intent(parsed.get("intent", "simple_qa")),
+        sensitivity=sensitivity,
+        data_labels=labels,
+        complexity=Complexity(parsed.get("complexity", "low")),
+        needs_tools=bool(parsed.get("needs_tools", False)),
+        needs_recall=bool(parsed.get("needs_recall", False)),
+    )
+
+
 class OllamaJSONClassifier:
     def __init__(self, config: OllamaConfig) -> None:
         self._config = config
@@ -109,16 +139,62 @@ class OllamaJSONClassifier:
             r.raise_for_status()
             content = r.json()["message"]["content"]
             parsed = json.loads(content)
-            return Classification(
-                intent=Intent(parsed.get("intent", "simple_qa")),
-                sensitivity=Sensitivity(parsed.get("sensitivity", "none")),
-                complexity=Complexity(parsed.get("complexity", "low")),
-                needs_tools=bool(parsed.get("needs_tools", False)),
-                needs_recall=bool(parsed.get("needs_recall", False)),
-            )
+            return _parse_classification(parsed)
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("classifier failed (%s); raising so policy falls back", exc)
             raise
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class OpenAICompatibleClassifier:
+    """Strict-JSON classifier for Foundry Local and other compatible endpoints."""
+
+    def __init__(self, config: ClassifierConfig, *, api_key: str = "") -> None:
+        self._model = config.model
+        self._client = AsyncOpenAI(
+            base_url=config.url,
+            api_key=api_key or "yagami-local-classifier",
+            timeout=30.0,
+        )
+
+    async def __call__(self, text: str) -> Classification:
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": text[:4000]},
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content or "{}"
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("classifier response must be a JSON object")
+            return _parse_classification(parsed)
+        except (APIError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            log.warning("OpenAI-compatible classifier failed (%s)", exc)
+            raise
+
+    async def close(self) -> None:
+        await self._client.close()
+
+
+def build_classifier(cfg: YagamiConfig, secrets_get) -> ClassifierProtocol | None:
+    """Build the configured privacy classifier without coupling it to Ollama."""
+
+    selected = cfg.classifier
+    if selected.provider == "rules":
+        return None
+    if selected.provider == "ollama":
+        ollama = cfg.ollama.model_copy(deep=True)
+        if selected.url:
+            ollama.url = selected.url
+        if selected.model:
+            ollama.classifier_model = selected.model
+        return OllamaJSONClassifier(ollama)
+    key = secrets_get(selected.api_key_env) if selected.api_key_env else ""
+    return OpenAICompatibleClassifier(selected, api_key=key or "")

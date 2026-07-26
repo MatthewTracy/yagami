@@ -20,7 +20,7 @@ from typing import AsyncIterator
 from pathlib import Path
 
 from ..config import LlamaCppConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(cfg: YagamiConfig, _secrets_get) -> "LlamaCppBackend | None":
@@ -35,6 +35,7 @@ class LlamaCppBackend(Backend):
     name = "llama_cpp"
     capabilities = {Capability.TEXT, Capability.CODE}
     is_local = True
+    trust_zone = TrustZone.DEVICE
     pricing = Pricing()  # local - free
 
     def __init__(self, config: LlamaCppConfig) -> None:

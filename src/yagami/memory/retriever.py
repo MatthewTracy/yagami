@@ -13,46 +13,54 @@ into an unrelated cloud-text turn via injection.
 from __future__ import annotations
 
 import logging
+import json
 import struct
 from dataclasses import dataclass
 
-from ..router.schema import Sensitivity
+from ..router.schema import DataLabel, Sensitivity
 from ..storage.db import get_db
-from .embedder import Embedder
+from .embedder import EmbedderProtocol
 
 log = logging.getLogger("yagami.memory.retriever")
 
 _VEC_QUERY = """
-    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance,
+           o.project_id, o.data_labels, o.provenance
     FROM observations_vec v
     JOIN observations o ON o.id = v.rowid
     WHERE v.embedding MATCH ? AND k = ?
+      AND o.project_id = ? AND o.quarantined = 0
       AND o.embedding_status = 'ready'
     ORDER BY v.distance ASC
     LIMIT ?
 """
 _VEC_QUERY_EXCLUDING_SESSION = """
-    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.distance,
+           o.project_id, o.data_labels, o.provenance
     FROM observations_vec v
     JOIN observations o ON o.id = v.rowid
-    WHERE v.embedding MATCH ? AND k = ? AND o.session_id != ?
+    WHERE v.embedding MATCH ? AND k = ? AND o.project_id = ?
+      AND o.session_id != ? AND o.quarantined = 0
       AND o.embedding_status = 'ready'
     ORDER BY v.distance ASC
     LIMIT ?
 """
 _FTS_QUERY = """
-    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id,
+           o.project_id, o.data_labels, o.provenance
     FROM observations_fts f
     JOIN observations o ON o.id = f.rowid
-    WHERE f.text MATCH ?
+    WHERE f.text MATCH ? AND o.project_id = ? AND o.quarantined = 0
     ORDER BY rank
     LIMIT ?
 """
 _FTS_QUERY_EXCLUDING_SESSION = """
-    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id,
+           o.project_id, o.data_labels, o.provenance
     FROM observations_fts f
     JOIN observations o ON o.id = f.rowid
-    WHERE f.text MATCH ? AND o.session_id != ?
+    WHERE f.text MATCH ? AND o.project_id = ? AND o.session_id != ?
+      AND o.quarantined = 0
     ORDER BY rank
     LIMIT ?
 """
@@ -67,6 +75,9 @@ class Hit:
     session_id: str
     distance: float | None  # smaller = closer; None for FTS hits
     source: str  # "vec" or "fts"
+    project_id: str = "local"
+    data_labels: tuple[DataLabel, ...] = ()
+    provenance: str = "chat"
 
 
 def _vec_blob(vec: list[float]) -> bytes:
@@ -78,6 +89,22 @@ def _sens(value: str) -> Sensitivity:
         return Sensitivity(value)
     except (TypeError, ValueError):
         return Sensitivity.NONE
+
+
+def _labels(value: str) -> tuple[DataLabel, ...]:
+    try:
+        raw = json.loads(value)
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(raw, list):
+        return ()
+    labels: list[DataLabel] = []
+    for item in raw:
+        try:
+            labels.append(DataLabel(item))
+        except (TypeError, ValueError):
+            continue
+    return tuple(labels)
 
 
 def _phi_safe_filter(hits: list[Hit], current_sens: Sensitivity) -> list[Hit]:
@@ -95,11 +122,13 @@ def _phi_safe_filter(hits: list[Hit], current_sens: Sensitivity) -> list[Hit]:
         h
         for h in hits
         if h.sensitivity not in (Sensitivity.PHI, Sensitivity.PHI_MEDICAL, Sensitivity.SECRET)
+        and DataLabel.PHI not in h.data_labels
+        and DataLabel.SECRET not in h.data_labels
     ]
 
 
 class Retriever:
-    def __init__(self, embedder: Embedder) -> None:
+    def __init__(self, embedder: EmbedderProtocol | None) -> None:
         self._embedder = embedder
 
     async def fetch(
@@ -109,6 +138,7 @@ class Retriever:
         k: int = 5,
         exclude_session: str | None = None,
         current_sens: Sensitivity = Sensitivity.NONE,
+        project_id: str = "local",
     ) -> list[Hit]:
         """Return up to `k` observations ranked by vector distance, with
         an FTS5 backfill if the vec table has fewer than k hits.
@@ -121,13 +151,22 @@ class Retriever:
         if not query:
             return []
         hits: list[Hit] = []
-        vec = await self._embedder.embed(query)
+        vec = await self._embedder.embed(query) if self._embedder is not None else None
         if vec is not None:
-            hits.extend(await self._vec_search(vec, k=k, exclude_session=exclude_session))
+            hits.extend(
+                await self._vec_search(
+                    vec, k=k, exclude_session=exclude_session, project_id=project_id
+                )
+            )
         if len(hits) < k:
             seen = {h.id for h in hits}
             remaining = k - len(hits)
-            for h in await self._fts_search(query, k=remaining, exclude_session=exclude_session):
+            for h in await self._fts_search(
+                query,
+                k=remaining,
+                exclude_session=exclude_session,
+                project_id=project_id,
+            ):
                 if h.id not in seen:
                     hits.append(h)
                     seen.add(h.id)
@@ -139,9 +178,14 @@ class Retriever:
         *,
         k: int,
         exclude_session: str | None,
+        project_id: str,
     ) -> list[Hit]:
         db = get_db()
-        params: list = [_vec_blob(vec), k * 3]  # over-fetch so the post-filter has room
+        params: list = [
+            _vec_blob(vec),
+            k * 3,
+            project_id,
+        ]  # over-fetch so the post-filter has room
         if exclude_session:
             params.append(exclude_session)
         query = _VEC_QUERY_EXCLUDING_SESSION if exclude_session else _VEC_QUERY
@@ -160,6 +204,9 @@ class Retriever:
                 session_id=str(r[4]),
                 distance=float(r[5]),
                 source="vec",
+                project_id=str(r[6]),
+                data_labels=_labels(r[7]),
+                provenance=str(r[8]),
             )
             for r in rows
         ]
@@ -170,6 +217,7 @@ class Retriever:
         *,
         k: int,
         exclude_session: str | None,
+        project_id: str,
     ) -> list[Hit]:
         db = get_db()
         # FTS5's MATCH wants the bare keyword string. Replace any double-quote
@@ -177,7 +225,7 @@ class Retriever:
         cleaned = query.replace('"', "").strip()
         if not cleaned:
             return []
-        params: list = [cleaned]
+        params: list = [cleaned, project_id]
         if exclude_session:
             params.append(exclude_session)
         sql = _FTS_QUERY_EXCLUDING_SESSION if exclude_session else _FTS_QUERY
@@ -196,6 +244,9 @@ class Retriever:
                 session_id=str(r[4]),
                 distance=None,
                 source="fts",
+                project_id=str(r[5]),
+                data_labels=_labels(r[6]),
+                provenance=str(r[7]),
             )
             for r in rows
         ]

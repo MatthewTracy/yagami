@@ -5,7 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..router.schema import Sensitivity
+from ..backends.base import Capability, TrustZone
+from ..router.schema import DataLabel, Sensitivity
 
 
 class PolicyMode(str, Enum):
@@ -41,6 +42,7 @@ class PolicyContext(BaseModel):
     jurisdiction: str | None = Field(default=None, max_length=32)
     session_id: str | None = Field(default=None, max_length=128)
     sensitivity_hint: Sensitivity | None = None
+    data_labels: set[DataLabel] = Field(default_factory=set)
     requested_tools: list[str] = Field(default_factory=list, max_length=100)
     approved_tools: list[str] = Field(default_factory=list, max_length=100)
     approval_tokens: list[str] = Field(default_factory=list, max_length=10, exclude=True)
@@ -62,8 +64,10 @@ class PolicyMatch(BaseModel):
     projects: list[str] = Field(default_factory=list)
     purposes: list[str] = Field(default_factory=list)
     sensitivities: list[Sensitivity] = Field(default_factory=list)
+    data_labels: list[DataLabel] = Field(default_factory=list)
     jurisdictions: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
+    destination_zones: list[TrustZone] = Field(default_factory=list)
 
 
 class PolicyEffect(BaseModel):
@@ -71,6 +75,8 @@ class PolicyEffect(BaseModel):
 
     route: RoutePolicy | None = None
     allowed_backends: list[str] | None = None
+    allowed_trust_zones: list[TrustZone] | None = None
+    required_capabilities: list[Capability] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
     require_approval_for_tools: list[str] = Field(default_factory=list)
     transform: TransformPolicy | None = None
@@ -94,6 +100,8 @@ class PolicyDefaults(BaseModel):
 
     route: RoutePolicy = RoutePolicy.AUTO
     allowed_backends: list[str] | None = None
+    allowed_trust_zones: list[TrustZone] | None = None
+    required_capabilities: list[Capability] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
     require_approval_for_tools: list[str] = Field(default_factory=list)
     transform: TransformPolicy = TransformPolicy.NONE
@@ -123,12 +131,19 @@ class PolicyEvaluation(BaseModel):
     policy_id: str
     policy_version: str
     policy_hash: str
+    policy_bundle_hash: str | None = None
+    signing_key_sha256: str | None = None
+    signature_verified: bool = False
     mode: PolicyMode
     matched_rules: list[str]
     detected_sensitivity: Sensitivity
     effective_sensitivity: Sensitivity
+    data_labels: list[DataLabel] = Field(default_factory=list)
     route: RoutePolicy
     allowed_backends: list[str] | None
+    allowed_trust_zones: list[TrustZone] | None = None
+    required_capabilities: list[Capability] = Field(default_factory=list)
+    candidate_trust_zone: TrustZone = TrustZone.EXTERNAL
     denied_tools: list[str]
     require_approval_for_tools: list[str]
     transform: TransformPolicy

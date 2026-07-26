@@ -16,7 +16,7 @@ import asyncio
 import logging
 
 from . import store
-from .embedder import Embedder
+from .embedder import EmbedderProtocol
 
 log = logging.getLogger("yagami.memory.worker")
 
@@ -29,7 +29,7 @@ VACUUM_EVERY_N_TICKS = 10800
 
 
 class EmbeddingWorker:
-    def __init__(self, embedder: Embedder) -> None:
+    def __init__(self, embedder: EmbedderProtocol) -> None:
         self._embedder = embedder
         self._task: asyncio.Task | None = None
         self._wake = asyncio.Event()

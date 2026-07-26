@@ -31,13 +31,13 @@ from .backends.registry import build_all
 from .auth import Authenticator, Principal, require_admin, require_scope
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint, set_memory_worker, set_retriever
-from .memory.embedder import Embedder
+from .memory.embedder import EmbedderProtocol, build_embedder
 from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
 from .middleware import RequestSizeLimitMiddleware
 from .mcp_gateway import build_mcp_server
 from .paths import configure_default_state, project_root, ui_dist
-from .privacy import cleanup_expired_sessions
+from .privacy import cleanup_expired_sessions, cleanup_policy_retention
 from . import secrets
 from .config import effective_routing, get_config, get_settings
 from .gateway import GatewayService
@@ -46,7 +46,7 @@ from .governance import ApprovalNotifier, ApprovalStore, PrivacyTransformer, Too
 from .governance.presidio import PresidioInspector
 from .policy import PolicyEngine
 from .projects import ProjectGovernor, ProjectRegistry
-from .router.classifier import OllamaJSONClassifier
+from .router.classifier import build_classifier
 from .router.policy import RoutingPolicy
 from .skills import mcp_manager as mcp_manager_mod
 from .skills.mcp_manager import McpManager
@@ -158,7 +158,7 @@ def build_app() -> FastAPI:
         log.info("backends not loaded: %s (missing key or model)", sorted(missing))
     log.info("backends loaded: %s", sorted(backends.keys()))
 
-    classifier = None if settings.demo_mode else OllamaJSONClassifier(cfg.ollama)
+    classifier = None if settings.demo_mode else build_classifier(cfg, secrets.get)
     presidio = (
         PresidioInspector(
             settings.presidio_url,
@@ -183,10 +183,19 @@ def build_app() -> FastAPI:
         sensitivity_inspector=presidio,
     )
     config_api.set_policy(policy)
-    policy_path = Path(settings.policy_path)
+    policy_path = Path(settings.policy_bundle_path or settings.policy_path)
     if not policy_path.is_absolute():
         policy_path = project_root() / policy_path
-    policy_engine = PolicyEngine(policy_path)
+    policy_public_key_path = (
+        Path(settings.policy_public_key_path) if settings.policy_public_key_path else None
+    )
+    if policy_public_key_path is not None and not policy_public_key_path.is_absolute():
+        policy_public_key_path = project_root() / policy_public_key_path
+    policy_engine = PolicyEngine(
+        policy_path,
+        public_key_path=policy_public_key_path,
+        require_signature=settings.policy_signature_required,
+    )
     projects_path = Path(settings.projects_path)
     if not projects_path.is_absolute():
         projects_path = project_root() / projects_path
@@ -255,7 +264,7 @@ def build_app() -> FastAPI:
         _mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
 
     embedding_worker: EmbeddingWorker | None = None
-    embedder: Embedder | None = None
+    embedder: EmbedderProtocol | None = None
     mcp_manager: McpManager | None = None
     retention_task: asyncio.Task | None = None
 
@@ -276,14 +285,16 @@ def build_app() -> FastAPI:
             set_memory_worker(None)
             set_retriever(None)
             if cfg.memory.enabled:
-                embedder = Embedder(url=cfg.ollama.url, model=cfg.memory.embedding_model)
-                embedding_worker = EmbeddingWorker(embedder)
-                embedding_worker.start()
-                set_memory_worker(embedding_worker)
+                embedder = build_embedder(cfg, secrets.get)
+                if embedder is not None:
+                    embedding_worker = EmbeddingWorker(embedder)
+                    embedding_worker.start()
+                    set_memory_worker(embedding_worker)
                 set_retriever(Retriever(embedder))
                 log.info(
-                    "memory worker + retriever started (model=%s)",
-                    cfg.memory.embedding_model,
+                    "memory retriever started (provider=%s, model=%s)",
+                    cfg.memory.embedding_provider,
+                    embedder.model if embedder is not None else "fts-only",
                 )
             if cfg.mcp_servers:
                 mcp_manager = McpManager()
@@ -295,12 +306,14 @@ def build_app() -> FastAPI:
                     len(mcp_manager.get_skills()),
                 )
             await cleanup_expired_sessions(get_config().privacy.session_retention_days)
+            await cleanup_policy_retention()
 
             async def retention_loop() -> None:
                 while True:
                     await asyncio.sleep(6 * 60 * 60)
                     try:
                         await cleanup_expired_sessions(get_config().privacy.session_retention_days)
+                        await cleanup_policy_retention()
                     except Exception:  # noqa: BLE001 - maintenance must not stop the app
                         log.exception("session retention cleanup failed")
 

@@ -6,7 +6,7 @@ from typing import AsyncIterator
 import httpx
 
 from ..config import StabilityConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "StabilityImageBackend | None":
@@ -20,6 +20,7 @@ class StabilityImageBackend(Backend):
     name = "stability"
     capabilities = {Capability.IMAGE}
     is_local = False
+    trust_zone = TrustZone.EXTERNAL
     # Stable Image Core: $0.03/image as of 2026-06.
     pricing = Pricing(per_image_usd=0.03)
 
@@ -52,7 +53,7 @@ class StabilityImageBackend(Backend):
             yield {
                 "type": "image_url",
                 "content": data_url,
-                "meta": {"model": self._config.model, "prompt": prompt},
+                "meta": {"model": self._config.model},
             }
             yield {"type": "done", "content": "", "meta": {}}
         except httpx.HTTPError as exc:

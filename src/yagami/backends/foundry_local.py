@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from ..config import FoundryLocalConfig, YagamiConfig
+from .base import TrustZone
 from .openai_compat import Capability, OpenAICompatBackend, Pricing
 
 
@@ -29,6 +30,7 @@ def _service_urls(base_url: str) -> tuple[str, str]:
 class FoundryLocalBackend(OpenAICompatBackend):
     name = "foundry_local"
     is_local = True
+    trust_zone = TrustZone.DEVICE
     capabilities = {
         Capability.TEXT,
         Capability.CODE,
@@ -45,6 +47,7 @@ class FoundryLocalBackend(OpenAICompatBackend):
             model=config.model,
             max_tokens=config.max_tokens,
             capabilities=set(self.capabilities),
+            trust_zone=self.trust_zone,
         )
         self._health_client = httpx.AsyncClient(
             base_url=service_root,

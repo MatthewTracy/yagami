@@ -18,6 +18,19 @@ class Capability(str, Enum):
     TOOLS = "tools"  # backend supports tool/function calling (v0.3 surface)
 
 
+class TrustZone(str, Enum):
+    """Where a backend executes and which network boundary receives data."""
+
+    DEVICE = "device"
+    PRIVATE_NETWORK = "private_network"
+    APPROVED_CLOUD = "approved_cloud"
+    EXTERNAL = "external"
+
+    @property
+    def is_private(self) -> bool:
+        return self in {TrustZone.DEVICE, TrustZone.PRIVATE_NETWORK}
+
+
 @dataclass(frozen=True)
 class Pricing:
     """Per-backend cost model. Local backends use the default zeros.
@@ -79,6 +92,7 @@ class BackendChunk(TypedDict):
 class Backend(Protocol):
     name: str
     capabilities: set[Capability]
+    trust_zone: TrustZone
     is_local: bool
     pricing: Pricing
 

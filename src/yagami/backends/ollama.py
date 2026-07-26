@@ -6,7 +6,7 @@ from typing import AsyncIterator
 import httpx
 
 from ..config import OllamaConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(cfg: YagamiConfig, _secrets_get) -> "OllamaBackend":
@@ -17,10 +17,13 @@ class OllamaBackend(Backend):
     name = "ollama"
     capabilities = {Capability.TEXT, Capability.CODE}
     is_local = True
+    trust_zone = TrustZone.DEVICE
     pricing = Pricing()  # local - free
 
     def __init__(self, config: OllamaConfig) -> None:
         self._config = config
+        self.trust_zone = config.trust_zone
+        self.is_local = config.trust_zone.is_private
         self._client = httpx.AsyncClient(base_url=config.url, timeout=httpx.Timeout(120.0))
 
     async def generate(

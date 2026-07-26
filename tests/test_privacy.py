@@ -6,7 +6,13 @@ import pytest
 
 from yagami.backends.base import ImageAttachment, Message
 from yagami.chat.session import SessionStore
-from yagami.privacy import cleanup_expired_sessions, data_counts, purge_data, stream_export
+from yagami.privacy import (
+    cleanup_expired_sessions,
+    cleanup_policy_retention,
+    data_counts,
+    purge_data,
+    stream_export,
+)
 from yagami.storage.db import now_ms
 
 
@@ -45,6 +51,29 @@ async def test_retention_deletes_stale_session_and_derived_memory(fresh_db):
     assert await store.session_exists(current)
     async with fresh_db.execute("SELECT COUNT(*) FROM observations") as cur:
         assert (await cur.fetchone())[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_policy_receipt_retention_deletes_only_expired_decisions(fresh_db):
+    store = SessionStore()
+    sid = await store.new_session()
+    receipt = json.dumps({"retention_days": 7})
+    old = now_ms() - 8 * 24 * 60 * 60 * 1000
+    recent = now_ms() - 1 * 24 * 60 * 60 * 1000
+    for created_at in (old, recent):
+        await fresh_db.execute(
+            "INSERT INTO decisions("
+            "session_id, created_at, backend, is_local, reason, classification,"
+            "scrubbed_preview, source, policy_decision"
+            ") VALUES(?, ?, 'ollama', 1, 'test', '{}', '', 'test', ?)",
+            (sid, created_at, receipt),
+        )
+    await fresh_db.commit()
+
+    assert await cleanup_policy_retention() == 1
+    async with fresh_db.execute("SELECT created_at FROM decisions") as cursor:
+        remaining = [int(row[0]) async for row in cursor]
+    assert remaining == [recent]
 
 
 @pytest.mark.asyncio

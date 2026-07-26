@@ -40,7 +40,12 @@ async def persist_decision(
     policy_decision: dict | None = None,
     request_context: dict | None = None,
 ) -> int:
-    preview = scrub(user_text)[:280]
+    # The decision ledger is deliberately content-free.  Keep writing the
+    # legacy NOT NULL column as an empty string until the 1.0 schema rebuild,
+    # but never persist even a "scrubbed" excerpt: pattern redaction cannot
+    # reliably remove names, addresses, medical narrative, or proprietary
+    # text.
+    _ = user_text
     classification = decision.get("classification", {})
     source = (
         classification.get("source", "unknown") if isinstance(classification, dict) else "unknown"
@@ -60,7 +65,7 @@ async def persist_decision(
             1 if decision["is_local"] else 0,
             decision["reason"],
             json.dumps(classification),
-            preview,
+            "",
             source,
             t.get("classify_ms"),
             t.get("first_token_ms"),
@@ -115,7 +120,7 @@ async def list_decisions(*, session_id: str | None = None, limit: int = 100) -> 
     db = get_db()
     cols = (
         "id, session_id, created_at, backend, is_local, reason, classification,"
-        " scrubbed_preview, source, t_classify_ms, t_first_token_ms, t_total_ms, profile,"
+        " source, t_classify_ms, t_first_token_ms, t_total_ms, profile,"
         " request_id, project_id, channel, policy_decision, request_context"
     )
     if session_id:
@@ -162,7 +167,6 @@ _EXPORT_HEADER = [
     "sensitivity",
     "complexity",
     "source",
-    "scrubbed_preview",
     "t_classify_ms",
     "t_first_token_ms",
     "t_total_ms",
@@ -174,18 +178,11 @@ _EXPORT_HEADER = [
 
 
 async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10_000) -> str:
-    """Serialize the Privacy Ledger to CSV for compliance/audit export.
-
-    Pulls a few columns `list_decisions()` doesn't surface to the UI table
-    (tokens_in/out, cost_usd, feedback rating) since this is meant to be the
-    full audit record, not the chat-facing ledger view. User text is never
-    included beyond the same scrubbed preview the ledger already stores -
-    this export can't leak more than the UI already shows.
-    """
+    """Serialize the content-free Privacy Ledger to compliance-ready CSV."""
     db = get_db()
     cols = (
         "d.id, d.session_id, d.created_at, d.backend, d.is_local, d.reason, d.profile,"
-        " d.classification, d.scrubbed_preview, d.t_classify_ms, d.t_first_token_ms,"
+        " d.classification, d.t_classify_ms, d.t_first_token_ms,"
         " d.t_total_ms, d.tokens_in, d.tokens_out, d.cost_usd, d.request_id, d.project_id,"
         " d.channel, d.policy_decision, f.rating AS feedback_rating"
     )
@@ -234,7 +231,6 @@ async def export_decisions_csv(*, session_id: str | None = None, limit: int = 10
                     cls.get("sensitivity", ""),
                     cls.get("complexity", ""),
                     cls.get("source", ""),
-                    row["scrubbed_preview"],
                     row["t_classify_ms"],
                     row["t_first_token_ms"],
                     row["t_total_ms"],
@@ -254,9 +250,9 @@ def log_decision(
     decision: dict,
     log_path: Path | None = None,
 ) -> None:
+    _ = user_text
     record = {
         "session_id": session_id,
-        "user_text_preview": scrub(user_text[:200]),
         "decision": decision,
     }
     line = json.dumps(record)

@@ -8,6 +8,8 @@ import pytest
 
 from yagami import cli
 from yagami.policy.bundle import build_bundle, generate_keypair, verify_bundle
+from yagami.policy import PolicyContext, PolicyEngine
+from yagami.router.schema import Sensitivity
 from yagami.policy.testing import run_suite
 
 
@@ -86,6 +88,30 @@ def test_policy_bundle_rejects_tampered_content(tmp_path):
 
     with pytest.raises(ValueError, match="signature is invalid"):
         verify_bundle(tampered, public_key)
+
+
+def test_policy_engine_enforces_signed_bundle_at_runtime(tmp_path):
+    private_key = tmp_path / "signing.pem"
+    public_key = tmp_path / "public.pem"
+    bundle = tmp_path / "policy.zip"
+    generate_keypair(private_key, public_key)
+    manifest = build_bundle(_project_file("policy.yaml"), private_key, bundle)
+
+    engine = PolicyEngine(bundle, public_key_path=public_key, require_signature=True)
+    evaluation = engine.evaluate(
+        context=PolicyContext(project_id="default"),
+        detected_sensitivity=Sensitivity.NONE,
+        candidate_backend="ollama",
+    )
+
+    assert evaluation.signature_verified is True
+    assert evaluation.policy_bundle_hash == engine.policy_bundle_hash
+    assert evaluation.signing_key_sha256 == manifest["signing_key_sha256"]
+
+
+def test_signature_required_policy_refuses_missing_key(tmp_path):
+    with pytest.raises(ValueError, match="verification key"):
+        PolicyEngine(tmp_path / "policy.zip", require_signature=True)
 
 
 def test_policy_keygen_refuses_to_replace_keys(tmp_path):

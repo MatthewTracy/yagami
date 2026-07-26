@@ -24,6 +24,9 @@ model = ""
 max_tokens = 4096
 api_key_env = "UPSTREAM_API_KEY"
 allow_unauthenticated = false
+# Use device/private_network for vLLM, LocalAI, or an internal gateway.
+# Approved cloud and external endpoints must use HTTPS.
+trust_zone = "private_network"
 
 # Optional Microsoft Foundry Local generation backend. Run
 # `foundry service status` for the current endpoint; its port can change after

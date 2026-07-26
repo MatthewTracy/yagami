@@ -93,6 +93,39 @@ async def cleanup_expired_sessions(retention_days: int) -> int:
         return count
 
 
+async def cleanup_policy_retention(*, current_time_ms: int | None = None) -> int:
+    """Delete decision records after the retention period in their policy receipt.
+
+    Rows created before policy receipts existed are left to the installation's
+    session-retention setting. Memory and tokenized transformations have their
+    own TTL cleanup paths.
+    """
+    current = current_time_ms if current_time_ms is not None else now_ms()
+    expired: list[int] = []
+    async with exclusive_db() as db:
+        async with db.execute(
+            "SELECT id, created_at, policy_decision FROM decisions"
+            " WHERE policy_decision IS NOT NULL"
+        ) as cursor:
+            async for row in cursor:
+                try:
+                    receipt = json.loads(row["policy_decision"])
+                    retention_days = int(receipt["retention_days"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                expires_at = int(row["created_at"]) + retention_days * _DAY_MS
+                if expires_at <= current:
+                    expired.append(int(row["id"]))
+        if not expired:
+            return 0
+        placeholders = ",".join("?" for _ in expired)
+        await db.execute(
+            f"DELETE FROM decisions WHERE id IN ({placeholders})",  # noqa: S608 -- generated placeholders only
+            expired,
+        )
+    return len(expired)
+
+
 async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
     """Delete conversations, memory, and optionally explicitly indexed documents."""
     async with exclusive_db() as db:

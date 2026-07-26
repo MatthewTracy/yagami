@@ -87,7 +87,10 @@ def build_bundle(policy_path: Path, private_key_path: Path, output_path: Path) -
     return manifest
 
 
-def verify_bundle(bundle_path: Path, public_key_path: Path) -> dict[str, Any]:
+def read_verified_bundle(
+    bundle_path: Path, public_key_path: Path
+) -> tuple[dict[str, Any], bytes]:
+    """Verify a bundle and return its manifest and exact policy source."""
     public_key = serialization.load_pem_public_key(public_key_path.read_bytes())
     if not isinstance(public_key, Ed25519PublicKey):
         raise ValueError("policy verification key must be an Ed25519 public key")
@@ -115,4 +118,9 @@ def verify_bundle(bundle_path: Path, public_key_path: Path) -> dict[str, Any]:
     )
     if manifest.get("signing_key_sha256") != _sha256(public_bytes):
         raise ValueError("policy bundle was signed by a different key")
+    return manifest, policy_bytes
+
+
+def verify_bundle(bundle_path: Path, public_key_path: Path) -> dict[str, Any]:
+    manifest, _policy_bytes = read_verified_bundle(bundle_path, public_key_path)
     return manifest

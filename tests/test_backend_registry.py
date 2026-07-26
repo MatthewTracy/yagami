@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from yagami.backends import registry
-from yagami.backends.base import Backend, Capability, Pricing
-from yagami.config import YagamiConfig
+from yagami.backends.base import Backend, Capability, Pricing, TrustZone
+from yagami.config import UpstreamConfig, YagamiConfig
 
 # Every backend that needs a key, keyed by the secret name its build()
 # checks. Shared across tests below so adding a new backend is a one-line
@@ -146,10 +149,28 @@ def test_policy_only_upstream_is_explicit_and_supports_internal_no_auth():
     cfg.upstream.enabled = True
     cfg.upstream.base_url = "http://litellm.internal/v1"
     cfg.upstream.model = "provider/model"
+    cfg.upstream.trust_zone = TrustZone.PRIVATE_NETWORK
 
     assert "upstream" not in registry.build_all(cfg, secrets_get=lambda _name: None)
 
     cfg.upstream.allow_unauthenticated = True
     backends = registry.build_all(cfg, secrets_get=lambda _name: None)
     assert backends["upstream"]._model == "provider/model"
-    assert backends["upstream"].is_local is False
+    assert backends["upstream"].is_local is True
+
+
+def test_generic_openai_compatible_upstream_requires_explicit_network_trust():
+    with pytest.raises(ValidationError, match="must use HTTPS"):
+        UpstreamConfig(enabled=True, base_url="http://models.example.com/v1")
+    private = UpstreamConfig(
+        enabled=True,
+        base_url="http://vllm.internal/v1",
+        trust_zone="private_network",
+    )
+    cloud = UpstreamConfig(
+        enabled=True,
+        base_url="https://gateway.example.com/v1",
+        trust_zone="approved_cloud",
+    )
+    assert private.trust_zone == "private_network"
+    assert cloud.trust_zone == "approved_cloud"

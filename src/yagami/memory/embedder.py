@@ -11,12 +11,26 @@ Swap the model via [memory] embedding_model in yagami.toml. Vector schema
 from __future__ import annotations
 
 import logging
+from typing import Protocol, runtime_checkable
 
 import httpx
+from openai import APIError, AsyncOpenAI
+
+from ..config import YagamiConfig
 
 EMBED_DIM = 384  # all-minilm dimension; must match the vec0 schema
 
 log = logging.getLogger("yagami.memory.embed")
+
+
+@runtime_checkable
+class EmbedderProtocol(Protocol):
+    @property
+    def model(self) -> str: ...
+
+    async def embed(self, text: str) -> list[float] | None: ...
+
+    async def close(self) -> None: ...
 
 
 class Embedder:
@@ -55,3 +69,57 @@ class Embedder:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class OpenAICompatibleEmbedder:
+    """384-dimension embeddings from an OpenAI-compatible endpoint."""
+
+    def __init__(self, *, url: str, model: str, api_key: str = "") -> None:
+        self._model = model
+        self._client = AsyncOpenAI(
+            base_url=url,
+            api_key=api_key or "yagami-local-embeddings",
+            timeout=60.0,
+        )
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    async def embed(self, text: str) -> list[float] | None:
+        if not text:
+            return None
+        try:
+            response = await self._client.embeddings.create(
+                model=self._model,
+                input=text,
+                dimensions=EMBED_DIM,
+            )
+            vector = response.data[0].embedding
+            if len(vector) != EMBED_DIM:
+                log.warning("embedding returned %d dimensions; expected %d", len(vector), EMBED_DIM)
+                return None
+            return [float(value) for value in vector]
+        except (APIError, IndexError, TypeError, ValueError) as exc:
+            log.warning("OpenAI-compatible embed call failed: %s", exc)
+            return None
+
+    async def close(self) -> None:
+        await self._client.close()
+
+
+def build_embedder(cfg: YagamiConfig, secrets_get) -> EmbedderProtocol | None:
+    memory = cfg.memory
+    if memory.embedding_provider == "none":
+        return None
+    if memory.embedding_provider == "ollama":
+        return Embedder(
+            url=memory.embedding_url or cfg.ollama.url,
+            model=memory.embedding_model,
+        )
+    key = secrets_get(memory.embedding_api_key_env) if memory.embedding_api_key_env else ""
+    return OpenAICompatibleEmbedder(
+        url=memory.embedding_url,
+        model=memory.embedding_model,
+        api_key=key or "",
+    )

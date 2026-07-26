@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Protocol
 
 from ..backends.base import Backend, Capability, Message
@@ -8,7 +8,7 @@ from ..config import RoutingConfig
 from .fast_path import can_bypass
 from .overrides import OverrideResult, parse as parse_override
 from .prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
-from .schema import Classification, Complexity, Intent, Sensitivity
+from .schema import Classification, Complexity, DataLabel, Intent, Sensitivity
 
 Classifier = Callable[[str], Awaitable[Classification]]
 
@@ -66,6 +66,27 @@ class RoutingDecision:
     system_prompt: str | None = None
     effective_user_text: str | None = None  # set when override stripped a prefix
     use_tools: bool = False  # v0.2.14: stream branches into tool_loop when True
+    required_capabilities: set[Capability] = field(default_factory=lambda: {Capability.TEXT})
+
+
+def _classification_requirements(classification: Classification) -> set[Capability]:
+    if classification.intent == Intent.IMAGE:
+        return {Capability.IMAGE}
+    required = {Capability.TEXT}
+    if classification.intent == Intent.CODE:
+        required.add(Capability.CODE)
+    if classification.needs_tools:
+        required.add(Capability.TOOLS)
+    return required
+
+
+def _normalize_data_labels(classification: Classification) -> None:
+    if classification.sensitivity in {Sensitivity.PHI, Sensitivity.PHI_MEDICAL}:
+        classification.data_labels.add(DataLabel.PHI)
+    elif classification.sensitivity == Sensitivity.SECRET:
+        classification.data_labels.add(DataLabel.SECRET)
+    if classification.intent == Intent.CODE:
+        classification.data_labels.add(DataLabel.SOURCE_CODE)
 
 
 class RoutingPolicy:
@@ -271,6 +292,7 @@ class RoutingPolicy:
             sensitivity=sensitive or Sensitivity.NONE,
             complexity=complexity,
         )
+        _normalize_data_labels(cls)
         cls_dict = cls.model_dump(mode="json")
         cls_dict["source"] = "slash-override"
         sysprompt = _privacy_system_prompt(sensitive)
@@ -283,6 +305,7 @@ class RoutingPolicy:
             if sensitive not in {None, Sensitivity.NONE}
             else None,
             effective_user_text=override.stripped_text or None,
+            required_capabilities=_classification_requirements(cls),
         )
 
     def _apply_force_backend(
@@ -319,6 +342,7 @@ class RoutingPolicy:
                 "backend would include it in context. Start a new chat or pick Local."
             )
         cls = Classification(sensitivity=sensitive or Sensitivity.NONE)
+        _normalize_data_labels(cls)
         cls_dict = cls.model_dump(mode="json")
         cls_dict["source"] = "force_backend"
         sysprompt = _privacy_system_prompt(sensitive)
@@ -330,6 +354,7 @@ class RoutingPolicy:
             model_override=self._config.local_model_overrides.get(sensitive.value)
             if sensitive not in {None, Sensitivity.NONE}
             else None,
+            required_capabilities=_classification_requirements(cls),
         )
 
     async def _cloud_override_sensitivity(
@@ -376,6 +401,7 @@ class RoutingPolicy:
         spend_blocked: bool = False,
         history_has_phi: bool = False,
     ) -> RoutingDecision:
+        _normalize_data_labels(classification)
         cls_dict = classification.model_dump(mode="json")
         cls_dict["source"] = source
 
@@ -384,8 +410,9 @@ class RoutingPolicy:
             Sensitivity.PHI_MEDICAL,
             Sensitivity.SECRET,
         )
+        required = _classification_requirements(classification)
         if sensitive and self._config.phi_must_be_local:
-            backend = self._preferred_local()
+            backend = self._preferred_local(required)
             sysprompt = _privacy_system_prompt(classification.sensitivity)
             return RoutingDecision(
                 backend=backend,
@@ -395,48 +422,71 @@ class RoutingPolicy:
                 model_override=self._config.local_model_overrides.get(
                     classification.sensitivity.value
                 ),
+                use_tools=classification.needs_tools,
+                required_capabilities=required,
             )
 
         # Image gen routes to Stability - it only sends the current user prompt
         # (no history), so history_has_phi doesn't apply to this path.
-        if classification.intent == Intent.IMAGE and "stability" in self._backends:
+        if classification.intent == Intent.IMAGE:
+            image_backend = self._select_capable(
+                required,
+                self._config.backend_priority,
+                allow_cloud=not spend_blocked,
+            )
             if spend_blocked:
                 source = source + "+spend-cap"
                 cls_dict["source"] = source
-            else:
+            elif image_backend is not None:
                 return RoutingDecision(
-                    backend=self._backends["stability"],
+                    backend=image_backend,
                     reason=f"intent=image [{source}]",
                     classification=cls_dict,
+                    required_capabilities=required,
                 )
 
-        # v0.2.14: needs_tools forces cloud-text route (Anthropic) when
-        # tools are available - local Ollama doesn't yet have a tool loop.
-        # Honors the same spend / history-PHI gates.
-        wants_anthropic = (
+        # Complex and tool-using requests select by declared capability and
+        # operator priority; no provider receives a hard-coded privilege.
+        wants_specialist = (
             classification.complexity == Complexity.HIGH
             or classification.intent == Intent.COMPLEX_REASONING
             or classification.needs_tools
         )
-        if wants_anthropic and "anthropic" in self._backends:
+        if wants_specialist:
             if spend_blocked:
-                source = source + "+spend-cap"
-                cls_dict["source"] = source
-            elif history_has_phi:
-                source = source + "+history-phi"
-                cls_dict["source"] = source
-            else:
+                source += "+spend-cap"
+            if history_has_phi:
+                source += "+history-phi"
+            cls_dict["source"] = source
+            specialist = self._select_capable(
+                required,
+                self._config.complex_backend_priority,
+                allow_cloud=not (spend_blocked or history_has_phi),
+            )
+            if specialist is not None:
                 return RoutingDecision(
-                    backend=self._backends["anthropic"],
+                    backend=specialist,
                     reason=f"complexity={classification.complexity.value} intent={classification.intent.value} [{source}]",
                     classification=cls_dict,
                     use_tools=classification.needs_tools,
+                    required_capabilities=required,
                 )
 
         lora = (
             self._config.lora_variants.get("code") if classification.intent == Intent.CODE else None
         )
-        default = self._backends.get(self._config.default_backend) or self._first_local()
+        default = self._backends.get(self._config.default_backend)
+        if default is None or not required.issubset(default.capabilities):
+            default = self._select_capable(
+                required,
+                self._config.backend_priority,
+                allow_cloud=not (spend_blocked or history_has_phi),
+            )
+        if default is None:
+            raise OverrideRefused(
+                "no configured backend supports required capabilities: "
+                + ", ".join(sorted(item.value for item in required))
+            )
 
         # The default backend can be cloud (Settings / profiles allow it).
         # The same gates that protect the explicit-override and escalation
@@ -451,7 +501,7 @@ class RoutingPolicy:
                 gates.append("history-phi")
             if spend_blocked:
                 gates.append("spend-cap")
-            fallback = self._preferred_local()
+            fallback = self._preferred_local(required)
             cls_dict["source"] = source + "+" + "+".join(g + "-fallback" for g in gates)
             return RoutingDecision(
                 backend=fallback,
@@ -462,6 +512,7 @@ class RoutingPolicy:
                 ),
                 classification=cls_dict,
                 lora_variant=lora,
+                required_capabilities=required,
             )
 
         why = f"default ({self._config.default_backend}) [{source}"
@@ -473,6 +524,8 @@ class RoutingPolicy:
             reason=why,
             classification=cls_dict,
             lora_variant=lora,
+            use_tools=classification.needs_tools,
+            required_capabilities=required,
         )
 
     def _fallback_classify(self, text: str) -> Classification:
@@ -489,7 +542,11 @@ class RoutingPolicy:
             if len(text) > self._config.long_message_token_threshold * 4
             else Complexity.LOW
         )
-        return Classification(intent=intent, sensitivity=Sensitivity.NONE, complexity=complexity)
+        classification = Classification(
+            intent=intent, sensitivity=Sensitivity.NONE, complexity=complexity
+        )
+        _normalize_data_labels(classification)
+        return classification
 
     def first_vision_backend(self) -> str | None:
         """Name of the preferred configured backend that can accept image
@@ -497,20 +554,53 @@ class RoutingPolicy:
         the old hardcoded behavior, then the other cloud vision backends in
         a stable order. Used by chat/stream.py when a message carries images
         and the user didn't force a backend."""
-        for name in ("anthropic", "gemini", "openai", "openrouter"):
+        for name in self._ordered_names(self._config.vision_backend_priority):
             b = self._backends.get(name)
             if b is not None and Capability.VISION in b.capabilities:
                 return name
         return None
 
-    def _preferred_local(self) -> Backend:
+    def _ordered_names(self, preferred: list[str]) -> list[str]:
+        return list(dict.fromkeys([*preferred, *self._backends.keys()]))
+
+    def _select_capable(
+        self,
+        required: set[Capability],
+        preferred: list[str],
+        *,
+        allow_cloud: bool,
+    ) -> Backend | None:
+        for name in self._ordered_names(preferred):
+            backend = self._backends.get(name)
+            if backend is None or not required.issubset(backend.capabilities):
+                continue
+            if not allow_cloud and not backend.is_local:
+                continue
+            if backend.name == "echo" and len(self._backends) > 1:
+                continue
+            return backend
+        return None
+
+    def _preferred_local(self, required: set[Capability] | None = None) -> Backend:
+        required = required or {Capability.TEXT}
         default = self._backends.get(self._config.default_backend)
-        if default is not None and default.is_local:
+        if (
+            default is not None
+            and default.is_local
+            and required.issubset(default.capabilities)
+        ):
             return default
-        for b in self._backends.values():
-            if b.is_local and b.name != "echo":
-                return b
-        return self._first_local()
+        selected = self._select_capable(
+            required,
+            self._config.backend_priority,
+            allow_cloud=False,
+        )
+        if selected is not None:
+            return selected
+        raise OverrideRefused(
+            "no private backend supports required capabilities: "
+            + ", ".join(sorted(item.value for item in required))
+        )
 
     def _first_local(self) -> Backend:
         for b in self._backends.values():

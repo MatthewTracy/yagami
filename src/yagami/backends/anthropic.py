@@ -6,7 +6,7 @@ from typing import AsyncIterator
 from anthropic import AsyncAnthropic, APIError
 
 from ..config import AnthropicConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "ClaudeBackend | None":
@@ -26,6 +26,7 @@ class ClaudeBackend(Backend):
         Capability.TOOLS,
     }
     is_local = False
+    trust_zone = TrustZone.EXTERNAL
     # Sonnet 4.6 pricing as of 2026-06. Update when switching to Opus 4.8.
     pricing = Pricing(input_per_million_tokens=3.0, output_per_million_tokens=15.0)
 
