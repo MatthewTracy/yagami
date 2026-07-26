@@ -20,6 +20,7 @@ from typing import AsyncIterator
 from openai import APIError, AsyncOpenAI
 
 from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 class OpenAICompatBackend(Backend):
@@ -100,6 +101,8 @@ class OpenAICompatBackend(Backend):
                 kwargs["tools"] = options.tools
                 if options.tool_choice is not None:
                     kwargs["tool_choice"] = options.tool_choice
+            if options.request_id:
+                kwargs["extra_headers"] = {"Idempotency-Key": options.request_id}
             stream = await self._client.chat.completions.create(**kwargs)
             async for event in stream:
                 if not event.choices:
@@ -123,7 +126,7 @@ class OpenAICompatBackend(Backend):
                     }
             yield {"type": "done", "content": "", "meta": {"model": self._model}}
         except APIError as exc:
-            yield {"type": "error", "content": f"{self.name} error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._model}}
 
     async def health(self) -> bool:

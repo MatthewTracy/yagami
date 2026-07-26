@@ -7,6 +7,7 @@ from anthropic import AsyncAnthropic, APIError
 
 from ..config import AnthropicConfig, YagamiConfig
 from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "ClaudeBackend | None":
@@ -100,6 +101,8 @@ class ClaudeBackend(Backend):
             "temperature": options.temperature,
             "messages": chat,
         }
+        if options.request_id:
+            kwargs["extra_headers"] = {"Idempotency-Key": options.request_id}
         if system_parts:
             kwargs["system"] = "\n\n".join(system_parts)
         try:
@@ -157,7 +160,7 @@ class ClaudeBackend(Backend):
                     yield {"type": "text", "content": text, "meta": {"model": self._config.model}}
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
         except APIError as exc:
-            yield {"type": "error", "content": f"anthropic error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
 
     async def health(self) -> bool:

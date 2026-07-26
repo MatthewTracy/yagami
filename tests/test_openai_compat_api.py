@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import asyncio
 import base64
 import json
 
@@ -397,6 +398,71 @@ async def test_responses_stream_emits_function_call_events(gateway_app) -> None:
     assert "response.function_call_arguments.delta" in body
     assert "response.function_call_arguments.done" in body
     assert '"name":"weather.read"' in body
+
+
+@pytest.mark.asyncio
+async def test_responses_background_retrieval_and_event_resume(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        accepted = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "model": "yagami-auto",
+                "input": "run in background",
+                "background": True,
+                "conversation": "support-case-7",
+            },
+        )
+        response_id = accepted.json()["id"]
+        for _ in range(100):
+            retrieved = await client.get(
+                f"/v1/responses/{response_id}",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+            if retrieved.json()["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        events = await client.get(
+            f"/v1/responses/{response_id}/events?after=0",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+    assert accepted.status_code == 202
+    assert retrieved.status_code == 200
+    assert retrieved.json()["output"][0]["content"][0]["text"] == "reply-from-local"
+    assert [item["event"]["type"] for item in events.json()["data"]] == [
+        "response.completed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_previous_response_restores_governed_conversation_state(gateway_app) -> None:
+    app, local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={"input": "first turn"},
+        )
+        second = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "input": "second turn",
+                "previous_response_id": first.json()["id"],
+            },
+        )
+
+    assert second.status_code == 200
+    sent = local.calls[-1]
+    assert [message.content for message in sent] == [
+        "first turn",
+        "reply-from-local",
+        "second turn",
+    ]
 
 
 @pytest.mark.asyncio

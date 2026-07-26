@@ -38,6 +38,7 @@ from .middleware import RequestSizeLimitMiddleware
 from .mcp_gateway import build_mcp_server, register_downstream_tools
 from .paths import configure_default_state, project_root, ui_dist
 from .privacy import cleanup_expired_sessions, cleanup_policy_retention
+from .responses import cleanup_expired_responses
 from . import secrets
 from .config import effective_routing, get_config, get_settings
 from .gateway import GatewayService
@@ -223,9 +224,12 @@ def build_app() -> FastAPI:
     )
     audit = AuditLedger(
         key=audit_key,
+        previous_keys=settings.audit_previous_keys,
         required=settings.audit_required,
         sink=audit_sink,
         sink_required=settings.audit_sink_required,
+        outbox_max_pending=settings.audit_outbox_max_pending,
+        outbox_max_attempts=settings.audit_outbox_max_attempts,
     )
     approval_notifier = (
         ApprovalNotifier(
@@ -275,6 +279,7 @@ def build_app() -> FastAPI:
         mcp_lifespan_task: asyncio.Task | None = None
         mcp_lifespan_stop = asyncio.Event()
         await open_db(db_path)
+        audit.start()
         try:
             expired_tokens = await transformer.cleanup_expired()
             if expired_tokens:
@@ -316,6 +321,7 @@ def build_app() -> FastAPI:
                 )
             await cleanup_expired_sessions(get_config().privacy.session_retention_days)
             await cleanup_policy_retention()
+            await cleanup_expired_responses()
 
             async def retention_loop() -> None:
                 while True:
@@ -323,6 +329,7 @@ def build_app() -> FastAPI:
                     try:
                         await cleanup_expired_sessions(get_config().privacy.session_retention_days)
                         await cleanup_policy_retention()
+                        await cleanup_expired_responses()
                     except Exception:  # noqa: BLE001 - maintenance must not stop the app
                         log.exception("session retention cleanup failed")
 
@@ -348,10 +355,12 @@ def build_app() -> FastAPI:
                     raise mcp_lifespan_errors[0]
             yield
         finally:
+            await audit.stop()
             if mcp_lifespan_task is not None:
                 mcp_lifespan_stop.set()
                 await asyncio.gather(mcp_lifespan_task, return_exceptions=True)
             await kb_api.shutdown_jobs()
+            await openai_compat_api.shutdown_response_jobs()
             if retention_task is not None:
                 retention_task.cancel()
                 await asyncio.gather(retention_task, return_exceptions=True)

@@ -503,6 +503,12 @@ class Settings(BaseSettings):
         le=268_435_456,
         validation_alias=AliasChoices("YAGAMI_MAX_REQUEST_BYTES"),
     )
+    provider_deadline_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=3600.0,
+        validation_alias=AliasChoices("YAGAMI_PROVIDER_DEADLINE_SECONDS"),
+    )
     transform_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY"))
     transform_key_ref: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_REF")
@@ -515,6 +521,10 @@ class Settings(BaseSettings):
     )
     audit_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY"))
     audit_key_ref: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY_REF"))
+    audit_previous_keys: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_PREVIOUS_KEYS"),
+    )
     audit_required: bool = Field(
         default=False, validation_alias=AliasChoices("YAGAMI_AUDIT_REQUIRED")
     )
@@ -536,6 +546,18 @@ class Settings(BaseSettings):
         ge=0.5,
         le=30.0,
         validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_TIMEOUT_SECONDS"),
+    )
+    audit_outbox_max_pending: int = Field(
+        default=100_000,
+        ge=100,
+        le=10_000_000,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_OUTBOX_MAX_PENDING"),
+    )
+    audit_outbox_max_attempts: int = Field(
+        default=12,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_OUTBOX_MAX_ATTEMPTS"),
     )
     approval_webhook_url: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_APPROVAL_WEBHOOK_URL")

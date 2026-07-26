@@ -80,6 +80,8 @@ class BackendOptions(BaseModel):
     system_prompt: str | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
+    request_id: str | None = None
+    deadline_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
 
 
 class BackendChunk(TypedDict):

@@ -16,6 +16,7 @@ from openai import APIError, AsyncOpenAI
 
 from ..config import OpenAIConfig, YagamiConfig
 from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "OpenAIBackend | None":
@@ -103,6 +104,8 @@ class OpenAIBackend(Backend):
                 kwargs["tools"] = options.tools
                 if options.tool_choice is not None:
                     kwargs["tool_choice"] = options.tool_choice
+            if options.request_id:
+                kwargs["extra_headers"] = {"Idempotency-Key": options.request_id}
             stream = await self._client.chat.completions.create(**kwargs)
             async for event in stream:
                 if not event.choices:
@@ -130,7 +133,7 @@ class OpenAIBackend(Backend):
                     }
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
         except APIError as exc:
-            yield {"type": "error", "content": f"openai error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
 
     async def health(self) -> bool:

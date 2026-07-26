@@ -7,6 +7,7 @@ import httpx
 
 from ..config import StabilityConfig, YagamiConfig
 from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "StabilityImageBackend | None":
@@ -39,6 +40,8 @@ class StabilityImageBackend(Backend):
             yield {"type": "error", "content": "empty prompt", "meta": {}}
             return
         headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "image/*"}
+        if options.request_id:
+            headers["Idempotency-Key"] = options.request_id
         data = {"prompt": prompt, "output_format": "png"}
         try:
             r = await self._client.post(
@@ -57,7 +60,7 @@ class StabilityImageBackend(Backend):
             }
             yield {"type": "done", "content": "", "meta": {}}
         except httpx.HTTPError as exc:
-            yield {"type": "error", "content": f"stability error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
 
     async def health(self) -> bool:

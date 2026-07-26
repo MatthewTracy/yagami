@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -19,6 +20,19 @@ from ..gateway import GatewayError, GatewayRequestOptions, PolicyDeniedError
 from ..governance import TransformationError, TransformationSession
 from ..policy import PolicyContext, replay_decisions
 from ..router.schema import Sensitivity
+from ..responses import (
+    ResponseNotFoundError,
+    append_response_event,
+    complete_response_job,
+    create_response_job,
+    fail_response_job,
+    get_response_context,
+    get_response_job,
+    list_response_events,
+    request_response_cancel,
+    response_cancel_requested,
+    set_response_status,
+)
 
 router = APIRouter(prefix="/v1", tags=["OpenAI compatibility"])
 log = logging.getLogger("yagami.openai_compat")
@@ -34,7 +48,18 @@ _policy_preview = require_scope("policy:preview")
 _policy_replay = require_scope("policy:replay")
 _privacy_transform = require_scope("privacy:transform")
 _audit_read = require_scope("audit:read")
+_audit_manage = require_scope("audit:manage")
 _tool_approve = require_scope("tools:approve")
+_response_tasks: dict[str, asyncio.Task[None]] = {}
+
+
+async def shutdown_response_jobs() -> None:
+    tasks = list(_response_tasks.values())
+    _response_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class ImageURL(BaseModel):
@@ -156,6 +181,12 @@ class ResponsesRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
     parallel_tool_calls: bool = True
+    background: bool = False
+    store: bool = True
+    previous_response_id: str | None = Field(
+        default=None, pattern=r"^resp_[A-Za-z0-9_-]{8,128}$"
+    )
+    conversation: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("tools")
     @classmethod
@@ -169,6 +200,10 @@ class ResponsesRequest(BaseModel):
 
     @model_validator(mode="after")
     def aggregate_text_is_bounded(self):
+        if self.background and self.stream:
+            raise ValueError("background responses cannot use request-bound streaming")
+        if self.background and not self.store:
+            raise ValueError("background responses require store=true")
         total = len(self.instructions or "")
         if isinstance(self.input, str):
             total += len(self.input)
@@ -802,12 +837,31 @@ async def create_response(
     runtime = request.app.state.runtime
     chat_tools = _responses_chat_tools(body.tools)
     try:
+        historical_messages = await get_response_context(
+            project_id=principal.project_id,
+            previous_response_id=body.previous_response_id,
+            conversation_id=body.conversation if body.previous_response_id is None else None,
+        )
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "previous response was not found for this project",
+                code="response_not_found",
+                status_code=404,
+                param="previous_response_id",
+            )
+        )
+    current_messages = _convert_messages(_responses_messages(body))
+    policy_metadata = dict(body.metadata)
+    if body.conversation and "session_id" not in policy_metadata:
+        policy_metadata["session_id"] = body.conversation
+    try:
         prepared = await runtime.gateway.prepare(
-            messages=_convert_messages(_responses_messages(body)),
+            messages=[*historical_messages, *current_messages],
             model=body.model,
             context=_policy_context(
                 principal=principal,
-                metadata=body.metadata,
+                metadata=policy_metadata,
                 user=body.user,
                 tools=chat_tools,
             ),
@@ -822,6 +876,123 @@ async def create_response(
         return _openai_error(exc)
     created = int(time.time())
     response_id = "resp_" + prepared.request_id.removeprefix("ygm_")
+    safe_metadata = {
+        key: value
+        for key, value in body.metadata.items()
+        if key not in {"approval_tokens", "approved_tools"}
+    }
+    should_store = body.store or body.background
+    if should_store:
+        await create_response_job(
+            response_id=response_id,
+            project_id=principal.project_id,
+            request_id=prepared.request_id,
+            decision_id=prepared.decision_id,
+            model=prepared.decision.backend.name,
+            status="queued" if body.background else "in_progress",
+            messages=[*historical_messages, *current_messages],
+            metadata=safe_metadata,
+            previous_response_id=body.previous_response_id,
+            conversation_id=body.conversation,
+            retention_days=prepared.policy.retention_days,
+        )
+        await append_response_event(
+            response_id,
+            0,
+            {
+                "type": "response.created",
+                "sequence_number": 0,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": created,
+                    "status": "queued" if body.background else "in_progress",
+                    "model": prepared.decision.backend.name,
+                },
+            },
+        )
+
+    if body.background:
+        async def execute_background() -> None:
+            try:
+                await set_response_status(response_id, "in_progress")
+                if await response_cancel_requested(response_id):
+                    raise asyncio.CancelledError
+                result = await runtime.gateway.execute(prepared)
+                output = _response_object(
+                    response_id=response_id,
+                    created=created,
+                    result=result,
+                    metadata=safe_metadata,
+                    tools=body.tools,
+                    tool_choice=body.tool_choice,
+                    parallel_tool_calls=body.parallel_tool_calls,
+                )
+                await complete_response_job(response_id, output)
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.completed",
+                        "sequence_number": 1,
+                        "response": output,
+                    },
+                )
+            except asyncio.CancelledError:
+                await fail_response_job(
+                    response_id,
+                    status="cancelled",
+                    code="response_cancelled",
+                    message="response execution was cancelled",
+                )
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.cancelled",
+                        "sequence_number": 1,
+                        "response": {"id": response_id, "status": "cancelled"},
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - persist safe terminal state
+                log.exception(
+                    "background response %s failed: %s", response_id, type(exc).__name__
+                )
+                await fail_response_job(
+                    response_id,
+                    status="failed",
+                    code="response_execution_failed",
+                    message="background response execution failed",
+                )
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.failed",
+                        "sequence_number": 1,
+                        "response": {"id": response_id, "status": "failed"},
+                    },
+                )
+            finally:
+                _response_tasks.pop(response_id, None)
+
+        task = asyncio.create_task(execute_background())
+        _response_tasks[response_id] = task
+        return JSONResponse(
+            status_code=202,
+            headers=_headers(prepared),
+            content={
+                "id": response_id,
+                "object": "response",
+                "created_at": created,
+                "status": "queued",
+                "model": prepared.decision.backend.name,
+                "output": [],
+                "metadata": safe_metadata,
+                "previous_response_id": body.previous_response_id,
+                "conversation": body.conversation,
+            },
+        )
 
     if body.stream:
 
@@ -838,7 +1009,7 @@ async def create_response(
                     "status": "in_progress",
                     "model": prepared.decision.backend.name,
                     "output": [],
-                    "metadata": body.metadata,
+                    "metadata": safe_metadata,
                 },
             }
             yield "data: " + json.dumps(created_event, separators=(",", ":")) + "\n\n"
@@ -846,6 +1017,23 @@ async def create_response(
             tool_calls: dict[int, dict[str, Any]] = {}
             text_item_added = False
             async for chunk in runtime.gateway.stream(prepared):
+                if should_store and await response_cancel_requested(response_id):
+                    await fail_response_job(
+                        response_id,
+                        status="cancelled",
+                        code="response_cancelled",
+                        message="response execution was cancelled",
+                    )
+                    sequence += 1
+                    cancelled = {
+                        "type": "response.cancelled",
+                        "sequence_number": sequence,
+                        "response": {"id": response_id, "status": "cancelled"},
+                    }
+                    await append_response_event(response_id, sequence, cancelled)
+                    yield "data: " + json.dumps(cancelled, separators=(",", ":")) + "\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 if chunk["type"] == "text":
                     if not text_item_added:
                         sequence += 1
@@ -861,6 +1049,8 @@ async def create_response(
                                 "content": [],
                             },
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, added)
                         yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
                         text_item_added = True
                     text_parts.append(chunk["content"])
@@ -873,6 +1063,8 @@ async def create_response(
                         "content_index": 0,
                         "delta": chunk["content"],
                     }
+                    if should_store:
+                        await append_response_event(response_id, sequence, event)
                     yield "data: " + json.dumps(event, separators=(",", ":")) + "\n\n"
                 elif (
                     chunk["type"] == "tool_call"
@@ -898,6 +1090,8 @@ async def create_response(
                             "output_index": index,
                             "item": dict(call),
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, added)
                         yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
                     if meta.get("id"):
                         call["call_id"] = str(meta["id"])
@@ -914,84 +1108,90 @@ async def create_response(
                             "output_index": index,
                             "delta": arguments,
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, delta)
                         yield "data: " + json.dumps(delta, separators=(",", ":")) + "\n\n"
                 elif chunk["type"] == "error":
                     sequence += 1
+                    error_event = {
+                        "type": "error",
+                        "sequence_number": sequence,
+                        "error": {"message": chunk["content"], "type": "api_error"},
+                    }
+                    if should_store:
+                        await append_response_event(response_id, sequence, error_event)
                     yield (
                         "data: "
-                        + json.dumps(
-                            {
-                                "type": "error",
-                                "sequence_number": sequence,
-                                "error": {"message": chunk["content"], "type": "api_error"},
-                            },
-                            separators=(",", ":"),
-                        )
+                        + json.dumps(error_event, separators=(",", ":"))
                         + "\n\n"
                     )
             if text_item_added:
                 sequence += 1
+                text_done = {
+                    "type": "response.output_text.done",
+                    "sequence_number": sequence,
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "text": "".join(text_parts),
+                }
+                if should_store:
+                    await append_response_event(response_id, sequence, text_done)
                 yield (
                     "data: "
-                    + json.dumps(
-                        {
-                            "type": "response.output_text.done",
-                            "sequence_number": sequence,
-                            "item_id": item_id,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "text": "".join(text_parts),
-                        },
-                        separators=(",", ":"),
-                    )
+                    + json.dumps(text_done, separators=(",", ":"))
                     + "\n\n"
                 )
             for index, call in sorted(tool_calls.items()):
                 sequence += 1
+                arguments_done = {
+                    "type": "response.function_call_arguments.done",
+                    "sequence_number": sequence,
+                    "item_id": call["id"],
+                    "output_index": index,
+                    "arguments": call["arguments"],
+                }
+                if should_store:
+                    await append_response_event(response_id, sequence, arguments_done)
                 yield (
                     "data: "
-                    + json.dumps(
-                        {
-                            "type": "response.function_call_arguments.done",
-                            "sequence_number": sequence,
-                            "item_id": call["id"],
-                            "output_index": index,
-                            "arguments": call["arguments"],
-                        },
-                        separators=(",", ":"),
-                    )
+                    + json.dumps(arguments_done, separators=(",", ":"))
                     + "\n\n"
                 )
             sequence += 1
+            completed_response = {
+                "id": response_id,
+                "object": "response",
+                "created_at": created,
+                "status": "completed",
+                "model": prepared.decision.backend.name,
+                "output": [
+                    *(
+                        _response_output(
+                            response_id=response_id,
+                            text="".join(text_parts),
+                            tool_calls=[],
+                        )
+                        if text_item_added
+                        else []
+                    ),
+                    *(dict(call, status="completed") for call in tool_calls.values()),
+                ],
+                "metadata": safe_metadata,
+                "previous_response_id": body.previous_response_id,
+                "conversation": body.conversation,
+            }
+            completed_event = {
+                "type": "response.completed",
+                "sequence_number": sequence,
+                "response": completed_response,
+            }
+            if should_store:
+                await complete_response_job(response_id, completed_response)
+                await append_response_event(response_id, sequence, completed_event)
             yield (
                 "data: "
-                + json.dumps(
-                    {
-                        "type": "response.completed",
-                        "sequence_number": sequence,
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "created_at": created,
-                            "status": "completed",
-                            "model": prepared.decision.backend.name,
-                            "output": [
-                                *(
-                                    _response_output(
-                                        response_id=response_id,
-                                        text="".join(text_parts),
-                                        tool_calls=[],
-                                    )
-                                    if text_item_added
-                                    else []
-                                ),
-                                *(dict(call, status="completed") for call in tool_calls.values()),
-                            ],
-                            "metadata": body.metadata,
-                        },
-                    },
-                    separators=(",", ":"),
-                )
+                + json.dumps(completed_event, separators=(",", ":"))
                 + "\n\n"
             )
             yield "data: [DONE]\n\n"
@@ -1003,19 +1203,127 @@ async def create_response(
     try:
         result = await runtime.gateway.execute(prepared)
     except GatewayError as exc:
+        if should_store:
+            await fail_response_job(
+                response_id,
+                status="failed",
+                code=exc.code,
+                message="response execution failed",
+            )
         return _openai_error(exc)
+    response_object = _response_object(
+        response_id=response_id,
+        created=created,
+        result=result,
+        metadata=safe_metadata,
+        tools=body.tools,
+        tool_choice=body.tool_choice,
+        parallel_tool_calls=body.parallel_tool_calls,
+    )
+    response_object["previous_response_id"] = body.previous_response_id
+    response_object["conversation"] = body.conversation
+    if should_store:
+        await complete_response_job(response_id, response_object)
+        await append_response_event(
+            response_id,
+            1,
+            {
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": response_object,
+            },
+        )
     return JSONResponse(
         headers=_headers(prepared),
-        content=_response_object(
-            response_id=response_id,
-            created=created,
-            result=result,
-            metadata=body.metadata,
-            tools=body.tools,
-            tool_choice=body.tool_choice,
-            parallel_tool_calls=body.parallel_tool_calls,
-        ),
+        content=response_object,
     )
+
+
+@router.get("/responses/{response_id}")
+async def retrieve_response(
+    response_id: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_read),
+):
+    try:
+        return await get_response_job(response_id, principal.project_id)
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "response not found",
+                code="response_not_found",
+                status_code=404,
+                param="response_id",
+            )
+        )
+
+
+@router.post("/responses/{response_id}/cancel")
+async def cancel_response(
+    response_id: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    if not await request_response_cancel(response_id, principal.project_id):
+        try:
+            existing = await get_response_job(response_id, principal.project_id)
+        except ResponseNotFoundError:
+            return _openai_error(
+                GatewayError(
+                    "response not found",
+                    code="response_not_found",
+                    status_code=404,
+                    param="response_id",
+                )
+            )
+        return _openai_error(
+            GatewayError(
+                f"response is already {existing['status']}",
+                code="response_not_cancellable",
+                status_code=409,
+                param="response_id",
+            )
+        )
+    task = _response_tasks.get(response_id)
+    if task is not None:
+        task.cancel()
+    return {
+        "id": response_id,
+        "object": "response",
+        "status": "cancelling",
+    }
+
+
+@router.get("/responses/{response_id}/events")
+async def retrieve_response_events(
+    response_id: str,
+    request: Request,
+    after: int = Query(default=-1, ge=-1),
+    stream: bool = Query(default=False),
+    principal: Principal = Depends(_gateway_read),
+):
+    try:
+        events = await list_response_events(
+            response_id, principal.project_id, after=after
+        )
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "response not found",
+                code="response_not_found",
+                status_code=404,
+                param="response_id",
+            )
+        )
+    if not stream:
+        return {"object": "list", "data": events}
+
+    async def replay():
+        for item in events:
+            yield "data: " + json.dumps(item["event"], separators=(",", ":")) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(replay(), media_type="text/event-stream")
 
 
 @router.get("/policy")
@@ -1211,6 +1519,26 @@ async def audit_events(
         media_type="application/x-ndjson",
         headers={"Content-Disposition": 'attachment; filename="yagami-audit.ndjson"'},
     )
+
+
+@router.get("/audit/outbox")
+async def audit_outbox_status(
+    request: Request,
+    _principal: Principal = Depends(_audit_read),
+) -> dict:
+    """Return content-free durable-delivery health."""
+    return await request.app.state.runtime.audit.outbox_status()
+
+
+@router.post("/audit/outbox/replay")
+async def replay_audit_dead_letters(
+    request: Request,
+    principal: Principal = Depends(_audit_manage),
+) -> dict:
+    replayed = await request.app.state.runtime.audit.replay_dead_letters(
+        project_id=principal.project_id
+    )
+    return {"replayed": replayed}
 
 
 @router.post("/tool-approvals", status_code=201)

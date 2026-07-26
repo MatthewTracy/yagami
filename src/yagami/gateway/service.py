@@ -24,6 +24,7 @@ from ..backends.base import (
 )
 from ..backends.retry import generate_with_retry
 from ..chat.session import SessionStore
+from ..config import get_settings
 from ..governance import (
     ApprovalError,
     ApprovalStore,
@@ -700,6 +701,8 @@ class GatewayService:
             system_prompt=system_prompt,
             tools=prepared.options.tools,
             tool_choice=prepared.options.tool_choice,
+            request_id=prepared.request_id,
+            deadline_seconds=get_settings().provider_deadline_seconds,
         )
 
         with gateway_span(

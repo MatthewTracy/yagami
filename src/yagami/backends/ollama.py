@@ -7,6 +7,7 @@ import httpx
 
 from ..config import OllamaConfig, YagamiConfig
 from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 def build(cfg: YagamiConfig, _secrets_get) -> "OllamaBackend":
@@ -50,7 +51,7 @@ class OllamaBackend(Backend):
                         yield {"type": "done", "content": "", "meta": {"model": model}}
                         return
         except httpx.HTTPError as exc:
-            yield {"type": "error", "content": f"ollama error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": model}}
 
     async def health(self) -> bool:
