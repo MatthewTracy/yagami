@@ -12,8 +12,8 @@ Yagami separates an application-facing data plane from local administration.
 6. Sensitive data is subject to the hard local-only invariant.
 7. The selected backend streams output through Yagami. Output policies can
    buffer, inspect, redact, or block generated identifiers before delivery.
-8. A policy passport and content-scrubbed preview are recorded; metrics and
-   traces contain no prompt or response bodies.
+8. A content-free policy passport is recorded; decision APIs, exports, logs,
+   metrics, and traces contain no prompt or response bodies.
 9. Content-free decision, privacy, replay, and approval events are appended to
    a project-scoped SHA-256/HMAC chain that can be verified or exported.
 

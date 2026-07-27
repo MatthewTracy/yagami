@@ -42,8 +42,8 @@
 - Sensitivity detection can have false negatives and false positives.
 - Identifier/output inspection recognizes configured patterns; it is not a
   general semantic de-identification guarantee.
-- The preview scrubber recognizes common identifier patterns; it is not a
-  general de-identification system.
+- Decision evidence stores no prompt preview. Pattern-based scrubbing remains
+  a transformation utility and is not a general de-identification guarantee.
 - Full-disk encryption, TLS, endpoint security, backups, identity lifecycle,
   BAAs, and organizational controls belong to the deployment.
 - Local model behavior is not itself a security boundary; route enforcement

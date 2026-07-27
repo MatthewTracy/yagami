@@ -52,7 +52,7 @@ class StabilityImageBackend(Backend):
             yield {
                 "type": "image_url",
                 "content": data_url,
-                "meta": {"model": self._config.model, "prompt": prompt},
+                "meta": {"model": self._config.model},
             }
             yield {"type": "done", "content": "", "meta": {}}
         except httpx.HTTPError as exc:

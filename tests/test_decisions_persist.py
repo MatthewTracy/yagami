@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import logging
 
 import pytest
 
 from yagami.chat.session import SessionStore
+from yagami.storage.db import close_db, open_db
 from yagami.telemetry.decisions import (
     export_decisions_csv,
     list_decisions,
+    log_decision,
     persist_decision,
     scrub,
     update_decision_timings,
@@ -39,10 +43,13 @@ async def test_persist_and_list(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_ledger_scrubs_phi(fresh_db):
+async def test_ledger_is_content_free(fresh_db):
     store = SessionStore()
     sid = await store.new_session()
-    raw = "My SSN is 123-45-6789 and phone is 415-555-0199, please summarize"
+    raw = (
+        "Jane Doe at 100 Main Street has CHF. SECRET_TOKEN=abc123. "
+        "Retrieved: internal acquisition plan. Tool args: transfer(account=42)."
+    )
     decision = {
         "backend": "ollama",
         "is_local": True,
@@ -56,10 +63,18 @@ async def test_ledger_scrubs_phi(fresh_db):
     }
     await persist_decision(session_id=sid, user_text=raw, decision=decision)
     rows = await list_decisions(session_id=sid)
-    preview = rows[0]["scrubbed_preview"]
-    assert "123-45-6789" not in preview
-    assert "415-555-0199" not in preview
-    assert "[REDACTED]" in preview
+    assert "scrubbed_preview" not in rows[0]
+    serialized = json.dumps(rows[0], sort_keys=True)
+    for secret in (
+        raw,
+        "Jane Doe",
+        "100 Main Street",
+        "CHF",
+        "abc123",
+        "internal acquisition plan",
+        "transfer(account=42)",
+    ):
+        assert secret not in serialized
 
 
 @pytest.mark.asyncio
@@ -90,6 +105,50 @@ def test_scrub_patterns():
     assert "[REDACTED]" in scrub("SSN 123-45-6789")
     assert "[REDACTED]" in scrub("card 4111111111111111")
     assert scrub("nothing sensitive here") == "nothing sensitive here"
+
+
+def test_decision_log_is_content_free(tmp_path, caplog):
+    raw = "Patient Jane Doe lives at 100 Main Street and has CHF"
+    path = tmp_path / "decisions.jsonl"
+    with caplog.at_level(logging.INFO, logger="yagami.decisions"):
+        log_decision(
+            session_id="session-1",
+            user_text=raw,
+            decision={"backend": "ollama", "classification": {"sensitivity": "phi"}},
+            log_path=path,
+        )
+    assert raw not in path.read_text(encoding="utf-8")
+    assert raw not in caplog.text
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert "user_text_preview" not in record
+
+
+@pytest.mark.asyncio
+async def test_content_free_migration_purges_existing_previews(fresh_db, tmp_path):
+    await fresh_db.execute(
+        "INSERT INTO sessions(id, created_at, updated_at) VALUES('legacy', 1, 1)"
+    )
+    await fresh_db.execute(
+        "INSERT INTO decisions("
+        "session_id, created_at, backend, is_local, reason, classification,"
+        "scrubbed_preview, source"
+        ") VALUES('legacy', 1, 'ollama', 1, 'legacy', '{}',"
+        "'Patient Jane Doe lives at 100 Main Street', 'legacy')"
+    )
+    await fresh_db.execute(
+        "DELETE FROM schema_migrations WHERE version='014_content_free_decisions'"
+    )
+    await fresh_db.commit()
+    db_path = tmp_path / "yagami_test.db"
+    await close_db()
+
+    reopened = await open_db(db_path)
+    async with reopened.execute(
+        "SELECT scrubbed_preview FROM decisions WHERE session_id='legacy'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row["scrubbed_preview"] == ""
 
 
 # ---- Audit export (CSV) ----
@@ -131,7 +190,7 @@ async def test_export_csv_includes_cost_and_token_columns(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_export_csv_scrubs_preview_same_as_ledger(fresh_db):
+async def test_export_csv_is_content_free(fresh_db):
     store = SessionStore()
     sid = await store.new_session()
     decision = {
@@ -148,7 +207,8 @@ async def test_export_csv_scrubs_preview_same_as_ledger(fresh_db):
     await persist_decision(session_id=sid, user_text="my SSN is 123-45-6789", decision=decision)
     csv_text = await export_decisions_csv(session_id=sid)
     assert "123-45-6789" not in csv_text
-    assert "[REDACTED]" in csv_text
+    assert "scrubbed_preview" not in csv_text
+    assert "[REDACTED]" not in csv_text
 
 
 @pytest.mark.asyncio
