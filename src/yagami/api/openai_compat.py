@@ -38,6 +38,8 @@ from ..responses import (
     response_cancel_requested,
     set_response_status,
 )
+from ..skills.mcp_manager import get_manager
+from ..skills.mcp_oauth import OAuthCredentialError
 
 router = APIRouter(prefix="/v1", tags=["OpenAI compatibility"])
 log = logging.getLogger("yagami.openai_compat")
@@ -77,6 +79,188 @@ async def capabilities(
         backends=runtime.backends,
         embedder_available=runtime.embedder is not None,
     )
+
+
+def _oauth_failure(exc: OAuthCredentialError, *, status_code: int = 400) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": str(exc),
+                "type": "yagami_oauth_error",
+                "code": exc.code,
+            }
+        },
+    )
+
+
+@router.post("/mcp/oauth/{server_name}/authorize")
+async def begin_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_read),
+):
+    runtime = request.app.state.runtime
+    manager = get_manager()
+    config = manager.configured_server(server_name) if manager is not None else None
+    if config is None:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    if runtime.mcp_oauth is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "user-bound OAuth requires an identity and an encryption key",
+            ),
+            status_code=503,
+        )
+    try:
+        authorization = await runtime.mcp_oauth.begin(
+            server_name=server_name,
+            config=config,
+            project_id=principal.project_id,
+            subject_id=principal.subject_id,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc)
+    return {
+        "object": "yagami.mcp_oauth_authorization",
+        "server": server_name,
+        **authorization,
+    }
+
+
+@router.get("/mcp/oauth/callback")
+async def complete_mcp_oauth(
+    request: Request,
+    state: str = Query(default="", max_length=1024),
+    code: str = Query(default="", max_length=8192),
+    error: str = Query(default="", max_length=256),
+):
+    runtime = request.app.state.runtime
+    if runtime.mcp_oauth is None:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "encrypted OAuth credential storage is unavailable",
+            ),
+            status_code=503,
+        )
+    if error:
+        await runtime.mcp_oauth.cancel(state)
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_authorization_denied",
+                "the OAuth authorization was denied or canceled",
+            )
+        )
+    try:
+        completion = await runtime.mcp_oauth.complete(
+            state=state,
+            code=code,
+            configs=runtime.config.mcp_servers,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc)
+    await runtime.gateway.append_audit(
+        project_id=completion.project_id,
+        event_type="mcp.oauth_authorized",
+        payload={
+            "server": completion.server_name,
+            "access_expires_at": completion.access_expires_at,
+        },
+    )
+    return {
+        "object": "yagami.mcp_oauth_callback",
+        "server": completion.server_name,
+        "authorized": True,
+        "next": f"/v1/mcp/oauth/{completion.server_name}/activate",
+    }
+
+
+@router.post("/mcp/oauth/{server_name}/activate")
+async def activate_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    manager = get_manager()
+    if manager is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    try:
+        tool_count = await manager.connect_for_subject(
+            server_name,
+            project_id=principal.project_id,
+            subject_id=principal.subject_id,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc, status_code=401)
+    runtime = request.app.state.runtime
+    if runtime.mcp_server is not None:
+        from ..mcp_gateway import register_downstream_tools
+
+        register_downstream_tools(runtime.mcp_server, runtime.gateway, manager)
+    await runtime.gateway.append_audit(
+        project_id=principal.project_id,
+        event_type="mcp.oauth_activated",
+        payload={"server": server_name, "tool_count": tool_count},
+    )
+    return {
+        "object": "yagami.mcp_oauth_connection",
+        "server": server_name,
+        "active": True,
+        "tool_count": tool_count,
+    }
+
+
+@router.delete("/mcp/oauth/{server_name}")
+async def revoke_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    runtime = request.app.state.runtime
+    manager = get_manager()
+    if runtime.mcp_oauth is None or manager is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    await manager.disconnect_subject(
+        server_name,
+        project_id=principal.project_id,
+        subject_id=principal.subject_id,
+    )
+    deleted = await runtime.mcp_oauth.revoke(
+        server_name=server_name,
+        project_id=principal.project_id,
+        subject_id=principal.subject_id,
+    )
+    if deleted:
+        await runtime.gateway.append_audit(
+            project_id=principal.project_id,
+            event_type="mcp.oauth_revoked",
+            payload={"server": server_name},
+        )
+    return {
+        "object": "yagami.mcp_oauth_connection",
+        "server": server_name,
+        "deleted": deleted,
+    }
 
 
 class ImageURL(BaseModel):

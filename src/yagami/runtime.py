@@ -15,6 +15,7 @@ from .projects import ProjectGovernor, ProjectRegistry
 from .router.policy import RoutingPolicy
 from .telemetry.observability import GatewayMetrics
 from .telemetry.audit import AuditLedger
+from .skills.mcp_oauth import OAuthCredentialStore
 
 
 @dataclass
@@ -36,3 +37,5 @@ class AppRuntime:
     audit: AuditLedger
     gateway: GatewayService
     embedder: EmbedderProtocol | None = None
+    mcp_oauth: OAuthCredentialStore | None = None
+    mcp_server: object | None = None

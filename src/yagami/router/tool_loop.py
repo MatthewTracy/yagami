@@ -108,6 +108,7 @@ async def run(
     skills: dict[str, Skill] | None = None,
     project_id: str = "local",
     purpose: str = "general",
+    subject_id: str | None = None,
     denied_tools: set[str] | None = None,
     approval_required: set[str] | None = None,
     approved_tools: set[str] | None = None,
@@ -140,6 +141,7 @@ async def run(
         session_sensitivity=session_sensitivity,
         project_id=project_id,
         purpose=purpose,
+        subject_id=subject_id,
     )
     denied = denied_tools or set()
     approvals = approval_required or set()

@@ -49,6 +49,8 @@ async def _data_counts(db: DatabaseConnection) -> dict[str, int]:
         "observations",
         "kb_documents",
         "privacy_tokens",
+        "mcp_oauth_states",
+        "mcp_oauth_credentials",
         "audit_events",
         "tool_approvals",
     ):
@@ -138,6 +140,8 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         await db.execute("DELETE FROM observations_vec")
         await db.execute("DELETE FROM observations")
         await db.execute("DELETE FROM privacy_tokens")
+        await db.execute("DELETE FROM mcp_oauth_states")
+        await db.execute("DELETE FROM mcp_oauth_credentials")
         await db.execute("DELETE FROM sessions")
         if include_knowledge_base:
             await db.execute("DELETE FROM kb_documents_vec")

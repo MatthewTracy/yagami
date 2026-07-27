@@ -44,7 +44,7 @@ from . import secrets
 from .config import Settings, effective_routing, get_config, get_settings
 from .coordination import build_coordinator
 from .gateway import GatewayService
-from .key_management import resolve_secret, resolve_secret_reference_map
+from .key_management import parse_aes256_key, resolve_secret, resolve_secret_reference_map
 from .governance import ApprovalNotifier, ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
 from .governance.presidio import PresidioInspector
 from .policy import PolicyEngine
@@ -53,6 +53,7 @@ from .router.classifier import build_classifier
 from .router.policy import RoutingPolicy
 from .skills import mcp_manager as mcp_manager_mod
 from .skills.mcp_manager import McpManager
+from .skills.mcp_oauth import OAuthCredentialStore
 from .storage.db import close_db, open_db
 from .runtime import AppRuntime
 from .telemetry.observability import GatewayMetrics
@@ -275,12 +276,13 @@ def build_app() -> FastAPI:
     )
     approvals = ApprovalStore(approval_notifier)
     tool_schemas = ToolSchemaRegistry()
+    transform_key = resolve_secret(
+        settings.transform_key,
+        settings.transform_key_ref,
+        label="YAGAMI_TRANSFORM_KEY_REF",
+    )
     transformer = PrivacyTransformer(
-        key=resolve_secret(
-            settings.transform_key,
-            settings.transform_key_ref,
-            label="YAGAMI_TRANSFORM_KEY_REF",
-        ),
+        key=transform_key,
         key_id=settings.transform_key_id,
         key_epoch=settings.transform_key_epoch,
         previous_keys=resolve_secret_reference_map(
@@ -288,6 +290,14 @@ def build_app() -> FastAPI:
             label="YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS",
         ),
         ttl_seconds=settings.transform_vault_ttl_seconds,
+    )
+    oauth_credentials = (
+        OAuthCredentialStore(
+            key_wrapper=transformer.key_wrapper,
+            identity_key=parse_aes256_key(transform_key, label="YAGAMI_TRANSFORM_KEY"),
+        )
+        if transformer.key_wrapper is not None and transform_key
+        else None
     )
     gateway = GatewayService(
         routing_policy=policy,
@@ -344,7 +354,10 @@ def build_app() -> FastAPI:
                     embedder.model if embedder is not None else "fts-only",
                 )
             if cfg.mcp_servers:
-                mcp_manager = McpManager(schema_registry=tool_schemas)
+                mcp_manager = McpManager(
+                    schema_registry=tool_schemas,
+                    oauth_credentials=oauth_credentials,
+                )
                 await mcp_manager.connect_all(cfg.mcp_servers)
                 mcp_manager_mod.set_manager(mcp_manager)
                 if mcp_server is not None:
@@ -361,6 +374,8 @@ def build_app() -> FastAPI:
             await cleanup_expired_sessions(get_config().privacy.session_retention_days)
             await cleanup_policy_retention()
             await cleanup_expired_responses()
+            if oauth_credentials is not None:
+                await oauth_credentials.cleanup_expired_states()
 
             async def retention_loop() -> None:
                 while True:
@@ -369,6 +384,8 @@ def build_app() -> FastAPI:
                         await cleanup_expired_sessions(get_config().privacy.session_retention_days)
                         await cleanup_policy_retention()
                         await cleanup_expired_responses()
+                        if oauth_credentials is not None:
+                            await oauth_credentials.cleanup_expired_states()
                     except Exception:  # noqa: BLE001 - maintenance must not stop the app
                         log.exception("session retention cleanup failed")
 
@@ -455,6 +472,8 @@ def build_app() -> FastAPI:
         coordinator=coordinator,
         audit=audit,
         gateway=gateway,
+        mcp_oauth=oauth_credentials,
+        mcp_server=mcp_server,
     )
     app.add_middleware(
         CORSMiddleware,

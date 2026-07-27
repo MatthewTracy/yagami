@@ -119,7 +119,7 @@ def runtime_capabilities(
             "prompts": True,
             "schema_pinning": True,
             "ssrf_protection": True,
-            "oauth": ["client_credentials"],
+            "oauth": ["client_credentials", "authorization_code_pkce"],
             "experimental": {
                 "tasks": False,
                 "elicitation": False,

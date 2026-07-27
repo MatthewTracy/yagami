@@ -190,6 +190,7 @@ jobs:
       - name: Migrate and test PostgreSQL
         run: |
           yagami db migrate
+          pytest -q tests/test_migrations.py
           pytest -q tests/test_postgres_storage.py
           pytest -q tests/test_redis_coordination.py
       - name: Verify PostgreSQL backup and restore

@@ -25,6 +25,7 @@ class SkillContext:
     session_sensitivity: Sensitivity = Sensitivity.NONE
     project_id: str = "local"
     purpose: str = "general"
+    subject_id: str | None = None
 
 
 @dataclass

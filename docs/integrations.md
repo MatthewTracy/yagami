@@ -240,6 +240,7 @@ The default policy will not send this request to a cloud-text backend.
 
 Advertised function tools are evaluated before model invocation. Destructive
 tools in the default policy require a one-time approval. Remote MCP connections
-use independent server credentials; Yagami never forwards an inbound bearer
-token to an MCP server. See [Gateway API](gateway.md) for approval and MCP
-configuration examples.
+use independent machine credentials or subject-bound OAuth 2.1 authorization;
+Yagami never forwards an inbound bearer token to an MCP server. See
+[Gateway API](gateway.md) for approval, PKCE, activation, and revocation
+examples.

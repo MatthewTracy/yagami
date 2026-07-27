@@ -373,6 +373,45 @@ sa.Index(
     "idx_response_events_resume", response_events.c.response_id, response_events.c.sequence_number
 )
 
+mcp_oauth_states = sa.Table(
+    "mcp_oauth_states",
+    metadata,
+    sa.Column("state_hash", sa.Text, primary_key=True),
+    sa.Column("server_name", sa.Text, nullable=False),
+    sa.Column("project_id", sa.Text, nullable=False),
+    sa.Column("subject_hash", sa.Text, nullable=False),
+    sa.Column("nonce", sa.LargeBinary, nullable=False),
+    sa.Column("ciphertext", sa.LargeBinary, nullable=False),
+    sa.Column("wrapped_key", sa.LargeBinary, nullable=False),
+    sa.Column("wrapping_key_id", sa.Text, nullable=False),
+    sa.Column("key_epoch", sa.Integer, nullable=False),
+    sa.Column("created_at", sa.BigInteger, nullable=False),
+    sa.Column("expires_at", sa.BigInteger, nullable=False),
+    sa.Column("consumed_at", sa.BigInteger),
+)
+sa.Index("idx_mcp_oauth_states_expiry", mcp_oauth_states.c.expires_at)
+
+mcp_oauth_credentials = sa.Table(
+    "mcp_oauth_credentials",
+    metadata,
+    sa.Column("server_name", sa.Text, primary_key=True),
+    sa.Column("project_id", sa.Text, primary_key=True),
+    sa.Column("subject_hash", sa.Text, primary_key=True),
+    sa.Column("nonce", sa.LargeBinary, nullable=False),
+    sa.Column("ciphertext", sa.LargeBinary, nullable=False),
+    sa.Column("wrapped_key", sa.LargeBinary, nullable=False),
+    sa.Column("wrapping_key_id", sa.Text, nullable=False),
+    sa.Column("key_epoch", sa.Integer, nullable=False),
+    sa.Column("access_expires_at", sa.BigInteger, nullable=False),
+    sa.Column("created_at", sa.BigInteger, nullable=False),
+    sa.Column("updated_at", sa.BigInteger, nullable=False),
+    sa.Column("last_used_at", sa.BigInteger, nullable=False),
+)
+sa.Index(
+    "idx_mcp_oauth_credentials_expiry",
+    mcp_oauth_credentials.c.access_expires_at,
+)
+
 schema_migrations = sa.Table(
     "schema_migrations",
     metadata,

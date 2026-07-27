@@ -148,6 +148,11 @@ class PrivacyTransformer:
     def tokenization_available(self) -> bool:
         return self._key_wrapper is not None
 
+    @property
+    def key_wrapper(self) -> KeyWrappingProvider | None:
+        """Expose the configured envelope boundary to other secret stores."""
+        return self._key_wrapper
+
     async def transform_text(
         self,
         text: str,

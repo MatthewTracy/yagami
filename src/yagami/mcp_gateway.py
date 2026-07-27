@@ -330,6 +330,7 @@ async def invoke_downstream_tool(
             session_sensitivity=evaluation.effective_sensitivity,
             project_id=principal.project_id,
             purpose=purpose,
+            subject_id=principal.subject_id or principal.key_fingerprint,
         ),
     )
     result_risk = inspect_context(result.content) if result.ok else None
@@ -514,12 +515,16 @@ def build_mcp_server(
         structured_output=True,
     )
     async def yagami_capabilities() -> dict[str, Any]:
-        _require_scope(_current_principal(), "gateway:invoke")
+        principal = _current_principal()
+        _require_scope(principal, "gateway:invoke")
         from .skills.mcp_manager import get_manager
 
         manager = get_manager()
         catalog = (
-            manager.catalog()
+            manager.catalog_for_subject(
+                project_id=principal.project_id,
+                subject_id=principal.subject_id or principal.key_fingerprint or "anonymous",
+            )
             if manager is not None
             else {"tools": [], "resources": [], "prompts": [], "quarantined": []}
         )
@@ -574,7 +579,14 @@ def build_mcp_server(
         manager = get_manager()
         if manager is None:
             return _safe_tool_error("mcp_unavailable", "no MCP servers are connected")
-        result = await manager.read_resource(resource_identity)
+        result = await manager.read_resource(
+            resource_identity,
+            SkillContext(
+                session_id="ygm_mcp_" + uuid4().hex,
+                project_id=principal.project_id,
+                subject_id=principal.subject_id or principal.key_fingerprint,
+            ),
+        )
         risk = inspect_context(result.content) if result.ok else None
         if risk is not None and risk.suspicious:
             result = result.__class__(
@@ -617,7 +629,15 @@ def build_mcp_server(
         manager = get_manager()
         if manager is None:
             return _safe_tool_error("mcp_unavailable", "no MCP servers are connected")
-        result = await manager.get_prompt(prompt_identity, arguments or {})
+        result = await manager.get_prompt(
+            prompt_identity,
+            arguments or {},
+            SkillContext(
+                session_id="ygm_mcp_" + uuid4().hex,
+                project_id=principal.project_id,
+                subject_id=principal.subject_id or principal.key_fingerprint,
+            ),
+        )
         risk = inspect_context(result.content) if result.ok else None
         if risk is not None and risk.suspicious:
             result = result.__class__(

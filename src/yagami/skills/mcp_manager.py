@@ -36,6 +36,7 @@ from .mcp_auth import (
     OAuthClientCredentialsAuth,
     validate_remote_destination,
 )
+from .mcp_oauth import OAuthCredentialError, OAuthCredentialStore, OAuthUserAuth
 
 log = logging.getLogger("yagami.skills.mcp")
 _SAFE_SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -169,6 +170,7 @@ class McpManager:
         *,
         schema_registry: ToolSchemaRegistry | None = None,
         schema_project_id: str = "local",
+        oauth_credentials: OAuthCredentialStore | None = None,
     ) -> None:
         self._configs: dict[str, McpServerConfig] = {}
         self._stacks: dict[str, AsyncExitStack] = {}
@@ -179,8 +181,15 @@ class McpManager:
         self._quarantined: dict[str, dict[str, Any]] = {}
         self._health: dict[str, _ServerHealth] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._subject_stacks: dict[tuple[str, str, str], AsyncExitStack] = {}
+        self._subject_sessions: dict[tuple[str, str, str], ClientSession] = {}
+        self._subject_tools: dict[tuple[str, str, str], dict[str, _McpTool]] = {}
+        self._subject_resources: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+        self._subject_prompts: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+        self._subject_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         self._schema_registry = schema_registry
         self._schema_project_id = schema_project_id
+        self._oauth_credentials = oauth_credentials
         self._closing = False
 
     async def connect_all(self, servers: dict[str, McpServerConfig]) -> None:
@@ -191,6 +200,9 @@ class McpManager:
             self._configs[name] = server_cfg
             self._health[name] = _ServerHealth(state="connecting")
             self._locks[name] = asyncio.Lock()
+            if server_cfg.auth == "authorization_code_pkce":
+                self._health[name].state = "authorization_required"
+                continue
             try:
                 await self._connect_one(name, server_cfg)
             except Exception as exc:  # noqa: BLE001 - one server cannot prevent startup
@@ -249,6 +261,8 @@ class McpManager:
         stack: AsyncExitStack,
         name: str,
         server_cfg: McpServerConfig,
+        *,
+        oauth_subject: tuple[str, str] | None = None,
     ) -> ClientSession:
         trust_zone = server_cfg.trust_zone or TrustZone.EXTERNAL
         url = await validate_remote_destination(
@@ -280,6 +294,20 @@ class McpManager:
                 token_endpoint_auth_method=server_cfg.oauth_token_endpoint_auth_method,
             )
             auth = oauth_auth
+        elif server_cfg.auth == "authorization_code_pkce":
+            if self._oauth_credentials is None or oauth_subject is None:
+                raise OAuthCredentialError(
+                    "mcp_oauth_authorization_required",
+                    "the user must authorize this MCP server",
+                )
+            project_id, subject_id = oauth_subject
+            auth = OAuthUserAuth(
+                store=self._oauth_credentials,
+                server_name=name,
+                config=server_cfg,
+                project_id=project_id,
+                subject_id=subject_id,
+            )
 
         async def guard_destination(request: httpx.Request) -> None:
             await validate_remote_destination(
@@ -307,6 +335,76 @@ class McpManager:
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
         return session
+
+    async def connect_for_subject(
+        self,
+        name: str,
+        *,
+        project_id: str,
+        subject_id: str,
+    ) -> int:
+        """Open a user-bound MCP session after OAuth authorization."""
+
+        config = self._configs.get(name)
+        if config is None or config.auth != "authorization_code_pkce":
+            raise OAuthCredentialError(
+                "mcp_oauth_not_configured",
+                "the MCP server does not use user-bound OAuth",
+            )
+        if self._oauth_credentials is None:
+            raise OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "encrypted OAuth credential storage is unavailable",
+            )
+        if not await self._oauth_credentials.has_credential(
+            server_name=name,
+            project_id=project_id,
+            subject_id=subject_id,
+        ):
+            raise OAuthCredentialError(
+                "mcp_oauth_authorization_required",
+                "the user must authorize this MCP server",
+            )
+        key = self._subject_key(name, project_id, subject_id)
+        lock = self._subject_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key in self._subject_sessions:
+                return len(self._subject_tools.get(key, {}))
+            stack = AsyncExitStack()
+            try:
+                session = await self._open_http(
+                    stack,
+                    name,
+                    config,
+                    oauth_subject=(project_id, subject_id),
+                )
+                listed = await session.list_tools()
+                tools = await self._prepare_tools(name, config, session, listed.tools)
+                resources, prompts = await self._discover_non_tool_capabilities(
+                    name,
+                    config,
+                    session,
+                )
+            except BaseException:
+                await stack.aclose()
+                raise
+            old_stack = self._subject_stacks.pop(key, None)
+            if old_stack is not None:
+                await old_stack.aclose()
+            self._subject_stacks[key] = stack
+            self._subject_sessions[key] = session
+            self._subject_tools[key] = {tool.identity: tool for tool in tools}
+            self._subject_resources[key] = resources
+            self._subject_prompts[key] = prompts
+            # Schemas and identities are global discovery metadata; execution
+            # always selects the subject-bound session below.
+            self._tools.update({tool.identity: tool for tool in tools})
+            self._resources.update(resources)
+            self._prompts.update(prompts)
+            health = self._health.setdefault(name, _ServerHealth())
+            health.connected_at = time.time()
+            health.success()
+            return len(tools)
 
     async def _prepare_tools(
         self,
@@ -428,8 +526,37 @@ class McpManager:
         args: dict,
         ctx: SkillContext | None = None,
     ) -> SkillResult:
-        del ctx  # identity and sensitivity policy are enforced by the caller
         tool = self._tools.get(identity)
+        server_name = tool.server_name if tool is not None else self._server_from_identity(identity)
+        cfg = self._configs.get(server_name) if server_name is not None else None
+        subject_key: tuple[str, str, str] | None = None
+        if server_name is not None and cfg is not None and cfg.auth == "authorization_code_pkce":
+            if ctx is None or not ctx.subject_id:
+                return SkillResult(
+                    ok=False,
+                    error="MCP user authorization is required",
+                    artifacts={"error_code": "mcp_oauth_authorization_required"},
+                )
+            try:
+                await self.connect_for_subject(
+                    server_name,
+                    project_id=ctx.project_id,
+                    subject_id=ctx.subject_id,
+                )
+            except OAuthCredentialError as exc:
+                return SkillResult(
+                    ok=False,
+                    error=str(exc),
+                    artifacts={"error_code": exc.code},
+                )
+            except Exception as exc:  # noqa: BLE001 - transport errors are structured
+                return SkillResult(
+                    ok=False,
+                    error="MCP user session could not be established",
+                    artifacts={"error_code": _error_code(exc), "retryable": True},
+                )
+            subject_key = self._subject_key(server_name, ctx.project_id, ctx.subject_id)
+            tool = self._subject_tools.get(subject_key, {}).get(identity)
         if tool is None:
             return SkillResult(
                 ok=False,
@@ -450,7 +577,11 @@ class McpManager:
             )
         attempts = 1 + (cfg.max_retries if cfg is not None else 0)
         for attempt in range(attempts):
-            current = self._tools.get(identity)
+            current = (
+                self._subject_tools.get(subject_key, {}).get(identity)
+                if subject_key is not None
+                else self._tools.get(identity)
+            )
             if current is None:
                 break
             result = await _invoke_tool(current, args)
@@ -466,8 +597,16 @@ class McpManager:
                 jitter = secrets.randbelow(1001) / 1000 * jitter_ceiling
                 await asyncio.sleep(delay + jitter)
             try:
-                async with self._locks[name]:
-                    await self._connect_one(name, cfg)
+                if subject_key is not None and ctx is not None and ctx.subject_id:
+                    await self._close_subject(subject_key)
+                    await self.connect_for_subject(
+                        name,
+                        project_id=ctx.project_id,
+                        subject_id=ctx.subject_id,
+                    )
+                else:
+                    async with self._locks[name]:
+                        await self._connect_one(name, cfg)
             except Exception as exc:  # noqa: BLE001
                 health.failure(_error_code(exc))
         return SkillResult(
@@ -478,26 +617,31 @@ class McpManager:
 
     async def reconnect(self, name: str) -> bool:
         cfg = self._configs.get(name)
-        if cfg is None:
+        if cfg is None or cfg.auth == "authorization_code_pkce":
             return False
         async with self._locks[name]:
             await self._connect_one(name, cfg)
         return True
 
-    async def read_resource(self, identity: str) -> SkillResult:
-        item = self._resources.get(identity)
+    async def read_resource(
+        self,
+        identity: str,
+        ctx: SkillContext | None = None,
+    ) -> SkillResult:
+        session_result = await self._session_for_identity(identity, ctx)
+        if isinstance(session_result, SkillResult):
+            return session_result
+        session, subject_key = session_result
+        item = (
+            self._subject_resources.get(subject_key, {}).get(identity)
+            if subject_key is not None
+            else self._resources.get(identity)
+        )
         if item is None:
             return SkillResult(
                 ok=False,
                 error="MCP resource is unavailable",
                 artifacts={"error_code": "mcp_resource_unavailable"},
-            )
-        session = self._sessions.get(str(item["server"]))
-        if session is None:
-            return SkillResult(
-                ok=False,
-                error="MCP server is unavailable",
-                artifacts={"error_code": "mcp_transport_unavailable", "retryable": True},
             )
         try:
             result = await session.read_resource(item["uri"])
@@ -523,20 +667,26 @@ class McpManager:
             },
         )
 
-    async def get_prompt(self, identity: str, arguments: dict[str, str]) -> SkillResult:
-        item = self._prompts.get(identity)
+    async def get_prompt(
+        self,
+        identity: str,
+        arguments: dict[str, str],
+        ctx: SkillContext | None = None,
+    ) -> SkillResult:
+        session_result = await self._session_for_identity(identity, ctx)
+        if isinstance(session_result, SkillResult):
+            return session_result
+        session, subject_key = session_result
+        item = (
+            self._subject_prompts.get(subject_key, {}).get(identity)
+            if subject_key is not None
+            else self._prompts.get(identity)
+        )
         if item is None:
             return SkillResult(
                 ok=False,
                 error="MCP prompt is unavailable",
                 artifacts={"error_code": "mcp_prompt_unavailable"},
-            )
-        session = self._sessions.get(str(item["server"]))
-        if session is None:
-            return SkillResult(
-                ok=False,
-                error="MCP server is unavailable",
-                artifacts={"error_code": "mcp_transport_unavailable", "retryable": True},
             )
         try:
             result = await session.get_prompt(item["name"], arguments=arguments)
@@ -563,8 +713,15 @@ class McpManager:
         self._closing = True
         for stack in list(self._stacks.values()):
             await stack.aclose()
+        for stack in list(self._subject_stacks.values()):
+            await stack.aclose()
         self._stacks.clear()
         self._sessions.clear()
+        self._subject_stacks.clear()
+        self._subject_sessions.clear()
+        self._subject_tools.clear()
+        self._subject_resources.clear()
+        self._subject_prompts.clear()
         self._tools.clear()
         self._resources.clear()
         self._prompts.clear()
@@ -578,6 +735,96 @@ class McpManager:
     def get_tool(self, identity: str) -> _McpTool | None:
         return self._tools.get(identity)
 
+    def configured_server(self, name: str) -> McpServerConfig | None:
+        return self._configs.get(name)
+
+    def _subject_key(
+        self,
+        server_name: str,
+        project_id: str,
+        subject_id: str,
+    ) -> tuple[str, str, str]:
+        if self._oauth_credentials is None:
+            raise OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "encrypted OAuth credential storage is unavailable",
+            )
+        return (
+            server_name,
+            project_id,
+            self._oauth_credentials.subject_hash(project_id, subject_id),
+        )
+
+    @staticmethod
+    def _server_from_identity(identity: str) -> str | None:
+        parts = identity.split(".", 3)
+        return parts[1] if len(parts) >= 3 and parts[0] == "mcp" else None
+
+    async def _session_for_identity(
+        self,
+        identity: str,
+        ctx: SkillContext | None,
+    ) -> tuple[ClientSession, tuple[str, str, str] | None] | SkillResult:
+        server_name = self._server_from_identity(identity)
+        config = self._configs.get(server_name) if server_name is not None else None
+        if server_name is None or config is None:
+            return SkillResult(
+                ok=False,
+                error="MCP capability is unavailable",
+                artifacts={"error_code": "mcp_capability_unavailable"},
+            )
+        if config.auth != "authorization_code_pkce":
+            session = self._sessions.get(server_name)
+            if session is not None:
+                return session, None
+            return SkillResult(
+                ok=False,
+                error="MCP server is unavailable",
+                artifacts={"error_code": "mcp_transport_unavailable", "retryable": True},
+            )
+        if ctx is None or not ctx.subject_id:
+            return SkillResult(
+                ok=False,
+                error="MCP user authorization is required",
+                artifacts={"error_code": "mcp_oauth_authorization_required"},
+            )
+        try:
+            await self.connect_for_subject(
+                server_name,
+                project_id=ctx.project_id,
+                subject_id=ctx.subject_id,
+            )
+            key = self._subject_key(server_name, ctx.project_id, ctx.subject_id)
+            return self._subject_sessions[key], key
+        except OAuthCredentialError as exc:
+            return SkillResult(ok=False, error=str(exc), artifacts={"error_code": exc.code})
+        except Exception as exc:  # noqa: BLE001
+            return SkillResult(
+                ok=False,
+                error="MCP user session could not be established",
+                artifacts={"error_code": _error_code(exc), "retryable": True},
+            )
+
+    async def _close_subject(self, key: tuple[str, str, str]) -> None:
+        stack = self._subject_stacks.pop(key, None)
+        self._subject_sessions.pop(key, None)
+        self._subject_tools.pop(key, None)
+        self._subject_resources.pop(key, None)
+        self._subject_prompts.pop(key, None)
+        if stack is not None:
+            await stack.aclose()
+
+    async def disconnect_subject(
+        self,
+        name: str,
+        *,
+        project_id: str,
+        subject_id: str,
+    ) -> None:
+        if self._oauth_credentials is None:
+            return
+        await self._close_subject(self._subject_key(name, project_id, subject_id))
+
     def catalog(self) -> dict[str, list[dict[str, Any]]]:
         return {
             "tools": self.status(),
@@ -586,29 +833,76 @@ class McpManager:
             "quarantined": list(self._quarantined.values()),
         }
 
-    def status(self) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for tool in self._tools.values():
-            health = self._health.get(tool.server_name, _ServerHealth())
-            rows.append(
-                {
-                    "identity": tool.identity,
-                    "server": tool.server_name,
-                    "tool": tool.tool_name,
-                    "description": tool.description,
-                    "transport": tool.transport,
-                    "auth": tool.auth,
-                    "trust_zone": tool.trust_zone.value,
-                    "data_ceiling": tool.data_ceiling.value,
-                    "risk_level": tool.risk_level,
-                    "schema_hash": tool.schema_hash,
-                    "schema_status": tool.schema_status,
-                    "health": health.state,
-                    "consecutive_failures": health.consecutive_failures,
-                    "last_error_code": health.last_error_code,
-                }
+    def catalog_for_subject(
+        self,
+        *,
+        project_id: str,
+        subject_id: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return static plus already-activated capabilities for one subject."""
+
+        static_tools = {
+            row["identity"]: row
+            for row in self.status()
+            if (
+                (config := self._configs.get(str(row["server"]))) is None
+                or config.auth != "authorization_code_pkce"
             )
-        return rows
+        }
+        static_resources = {
+            identity: item
+            for identity, item in self._resources.items()
+            if (
+                (config := self._configs.get(str(item["server"]))) is None
+                or config.auth != "authorization_code_pkce"
+            )
+        }
+        static_prompts = {
+            identity: item
+            for identity, item in self._prompts.items()
+            if (
+                (config := self._configs.get(str(item["server"]))) is None
+                or config.auth != "authorization_code_pkce"
+            )
+        }
+        if self._oauth_credentials is not None:
+            subject_hash = self._oauth_credentials.subject_hash(project_id, subject_id)
+            for key, tools in self._subject_tools.items():
+                if key[1:] != (project_id, subject_hash):
+                    continue
+                static_tools.update(
+                    {identity: self._status_row(tool) for identity, tool in tools.items()}
+                )
+                static_resources.update(self._subject_resources.get(key, {}))
+                static_prompts.update(self._subject_prompts.get(key, {}))
+        return {
+            "tools": list(static_tools.values()),
+            "resources": list(static_resources.values()),
+            "prompts": list(static_prompts.values()),
+            "quarantined": list(self._quarantined.values()),
+        }
+
+    def status(self) -> list[dict[str, Any]]:
+        return [self._status_row(tool) for tool in self._tools.values()]
+
+    def _status_row(self, tool: _McpTool) -> dict[str, Any]:
+        health = self._health.get(tool.server_name, _ServerHealth())
+        return {
+            "identity": tool.identity,
+            "server": tool.server_name,
+            "tool": tool.tool_name,
+            "description": tool.description,
+            "transport": tool.transport,
+            "auth": tool.auth,
+            "trust_zone": tool.trust_zone.value,
+            "data_ceiling": tool.data_ceiling.value,
+            "risk_level": tool.risk_level,
+            "schema_hash": tool.schema_hash,
+            "schema_status": tool.schema_status,
+            "health": health.state,
+            "consecutive_failures": health.consecutive_failures,
+            "last_error_code": health.last_error_code,
+        }
 
 
 def _error_code(exc: BaseException) -> str:

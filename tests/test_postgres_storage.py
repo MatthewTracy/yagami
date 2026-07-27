@@ -42,7 +42,8 @@ async def postgres_db(tmp_path: Path):
     db = get_db()
     await db.execute(
         """
-        TRUNCATE TABLE response_events, response_jobs, audit_outbox,
+        TRUNCATE TABLE response_events, response_jobs, mcp_oauth_credentials,
+          mcp_oauth_states, audit_outbox,
           audit_key_epochs, audit_events, privacy_tokens, tool_schema_pins,
           tool_approvals, kb_documents_vec, kb_documents, observations_vec,
           observations, feedback, decisions, message_attachments, messages,

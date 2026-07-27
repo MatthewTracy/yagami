@@ -312,13 +312,17 @@ async def open_db(path: Path, *, database_url: str = "") -> DatabaseConnection:
 def _normalize_database_url(database_url: str, path: Path) -> str:
     if not database_url:
         return f"sqlite+aiosqlite:///{path.resolve().as_posix()}"
+    if database_url.startswith("sqlite+aiosqlite:///"):
+        return database_url
+    if database_url.startswith("sqlite:///"):
+        return "sqlite+aiosqlite:///" + database_url.removeprefix("sqlite:///")
     if database_url.startswith("postgres://"):
         return "postgresql+asyncpg://" + database_url.removeprefix("postgres://")
     if database_url.startswith("postgresql://"):
         return "postgresql+asyncpg://" + database_url.removeprefix("postgresql://")
     if database_url.startswith("postgresql+asyncpg://"):
         return database_url
-    raise ValueError("YAGAMI_DATABASE_URL must use a PostgreSQL asyncpg URL")
+    raise ValueError("YAGAMI_DATABASE_URL must use SQLite or PostgreSQL with asyncpg")
 
 
 async def close_db() -> None:

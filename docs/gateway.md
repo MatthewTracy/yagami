@@ -134,6 +134,52 @@ caller `tools` array; its approved patterns are made available to Yagami's
 tool loop. For caller-defined tools, the token is narrowed to the function
 names actually advertised in that request.
 
+## User-bound OAuth for remote MCP
+
+Remote MCP services can use a machine credential (`client_credentials`) or a
+delegated user credential (`authorization_code_pkce`). Yagami never forwards
+its inbound API key or OIDC token to the downstream service.
+
+Configure a public OAuth 2.1 client and an exact callback URI:
+
+```toml
+[mcp_servers.work_tools]
+transport = "streamable_http"
+url = "https://tools.example.com/mcp"
+auth = "authorization_code_pkce"
+oauth_authorization_url = "https://identity.example.com/oauth2/authorize"
+oauth_token_url = "https://identity.example.com/oauth2/token"
+oauth_redirect_uri = "https://yagami.example.com/v1/mcp/oauth/callback"
+oauth_client_id_env = "WORK_TOOLS_OAUTH_CLIENT_ID"
+oauth_token_endpoint_auth_method = "none"
+oauth_scopes = ["tools.read", "tools.execute"]
+oauth_resource = "https://tools.example.com/mcp"
+trust_zone = "approved_cloud"
+allowed_hosts = ["tools.example.com"]
+```
+
+`YAGAMI_TRANSFORM_KEY` (or its secret reference) is required. Yagami derives
+an HMAC identity key from it and envelope-encrypts authorization state,
+access tokens, and refresh tokens. The database stores no raw subject ID,
+OAuth state, verifier, or token. Each credential is bound to the configured
+server, authenticated project, and authenticated subject.
+
+The client flow is:
+
+1. Call `POST /v1/mcp/oauth/work_tools/authorize` with the user's Yagami
+   bearer credential.
+2. Open the returned `authorization_url`. The provider redirects to Yagami's
+   configured callback, which consumes the state exactly once and exchanges
+   the code with PKCE.
+3. Call `POST /v1/mcp/oauth/work_tools/activate` as the same Yagami subject to
+   discover and open that subject's downstream MCP session.
+4. Call `DELETE /v1/mcp/oauth/work_tools` to close the session and delete the
+   encrypted delegated credential.
+
+Access-token refresh is serialized per server/project/subject. A missing,
+expired, revoked, or differently bound credential fails with a stable
+`mcp_oauth_*` error and never falls back to another user's session.
+
 ## Privacy transforms and output DLP
 
 `POST /v1/privacy/transform` locally redacts or tokenizes common secrets and

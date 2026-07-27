@@ -344,16 +344,25 @@ class McpServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
-    auth: Literal["none", "bearer_env", "client_credentials"] = "none"
+    auth: Literal[
+        "none",
+        "bearer_env",
+        "client_credentials",
+        "authorization_code_pkce",
+    ] = "none"
     bearer_token_env: str = ""
+    oauth_authorization_url: str = ""
     oauth_token_url: str = ""
+    oauth_redirect_uri: str = ""
     oauth_client_id_env: str = ""
     oauth_client_secret_env: str = ""
     oauth_scopes: list[str] = Field(default_factory=list)
     oauth_resource: str = ""
-    oauth_token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
-        "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
-    )
+    oauth_token_endpoint_auth_method: Literal[
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+    ] = "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
     trust_zone: TrustZone | None = None
     data_ceiling: Literal["none", "phi", "phi_medical", "secret"] = "none"
     risk_level: Literal["low", "medium", "high", "critical"] = "medium"
@@ -399,6 +408,48 @@ class McpServerConfig(BaseModel):
             if missing:
                 raise ValueError(
                     "client_credentials MCP auth missing " + ", ".join(sorted(missing))
+                )
+        if self.auth == "authorization_code_pkce":
+            required = {
+                "oauth_authorization_url": self.oauth_authorization_url,
+                "oauth_token_url": self.oauth_token_url,
+                "oauth_redirect_uri": self.oauth_redirect_uri,
+                "oauth_client_id_env": self.oauth_client_id_env,
+                "oauth_resource": self.oauth_resource,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    "authorization_code_pkce MCP auth missing " + ", ".join(sorted(missing))
+                )
+            _validate_service_endpoint(
+                self.oauth_authorization_url,
+                trust_zone=TrustZone.EXTERNAL,
+                label="OAuth authorization URL",
+            )
+            _validate_service_endpoint(
+                self.oauth_token_url,
+                trust_zone=TrustZone.EXTERNAL,
+                label="OAuth token URL",
+            )
+            parsed_redirect = urlsplit(self.oauth_redirect_uri)
+            redirect_host = (parsed_redirect.hostname or "").rstrip(".").casefold()
+            redirect_trust = (
+                TrustZone.DEVICE
+                if redirect_host in {"localhost", "127.0.0.1", "::1"}
+                else TrustZone.EXTERNAL
+            )
+            _validate_service_endpoint(
+                self.oauth_redirect_uri,
+                trust_zone=redirect_trust,
+                label="OAuth redirect URI",
+            )
+            if (
+                self.oauth_token_endpoint_auth_method != "none"  # noqa: S105
+                and not self.oauth_client_secret_env
+            ):
+                raise ValueError(
+                    "confidential authorization_code_pkce requires oauth_client_secret_env"
                 )
         return self
 

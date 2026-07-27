@@ -48,6 +48,10 @@ async def test_capability_document_is_stable_and_content_free(tmp_path, monkeypa
     assert document["governance"]["content_free_evidence"] is True
     assert document["governance"]["telemetry_default"] == "disabled"
     assert document["mcp"]["experimental"] == {"tasks": False, "elicitation": False}
+    assert document["mcp"]["oauth"] == [
+        "client_credentials",
+        "authorization_code_pkce",
+    ]
     serialized = json.dumps(document)
     assert "do-not-include" not in serialized
     assert "private.example.invalid" not in serialized

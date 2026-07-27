@@ -1043,6 +1043,7 @@ class GatewayService:
                         session_sensitivity=prepared.policy.effective_sensitivity,
                         project_id=prepared.context.project_id,
                         purpose=prepared.context.purpose,
+                        subject_id=prepared.context.subject_id,
                         denied_tools=set(prepared.policy.denied_tools),
                         approval_required=set(prepared.policy.require_approval_for_tools),
                         approved_tools=set(prepared.context.approved_tools),
