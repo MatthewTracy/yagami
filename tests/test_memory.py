@@ -177,9 +177,7 @@ async def test_suspicious_memory_is_quarantined_until_review(memdb):
     assert await worker._drain_once() == 0
     assert await store.release_quarantined(project_id="alpha", observation_id=ids[0])
     assert await worker._drain_once() == 1
-    assert not await store.release_quarantined(
-        project_id="alpha", observation_id=ids[0]
-    )
+    assert not await store.release_quarantined(project_id="alpha", observation_id=ids[0])
 
 
 @pytest.mark.asyncio

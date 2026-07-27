@@ -28,9 +28,7 @@ async def create_response_job(
     retention_days: int,
 ) -> None:
     current = now_ms()
-    expires_at = (
-        current + retention_days * 86_400_000 if retention_days > 0 else current
-    )
+    expires_at = current + retention_days * 86_400_000 if retention_days > 0 else current
     await get_db().execute(
         "INSERT INTO response_jobs(id, project_id, request_id, decision_id, model, status,"
         " previous_response_id, conversation_id, input_json, metadata_json, created_at,"
@@ -91,9 +89,7 @@ async def complete_response_job(response_id: str, output: dict[str, Any]) -> Non
     await get_db().commit()
 
 
-async def fail_response_job(
-    response_id: str, *, status: str, code: str, message: str
-) -> None:
+async def fail_response_job(response_id: str, *, status: str, code: str, message: str) -> None:
     await get_db().execute(
         "UPDATE response_jobs SET status=?, error_json=?, updated_at=? WHERE id=?",
         (

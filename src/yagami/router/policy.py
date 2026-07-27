@@ -584,11 +584,7 @@ class RoutingPolicy:
     def _preferred_local(self, required: set[Capability] | None = None) -> Backend:
         required = required or {Capability.TEXT}
         default = self._backends.get(self._config.default_backend)
-        if (
-            default is not None
-            and default.is_local
-            and required.issubset(default.capabilities)
-        ):
+        if default is not None and default.is_local and required.issubset(default.capabilities):
             return default
         selected = self._select_capable(
             required,

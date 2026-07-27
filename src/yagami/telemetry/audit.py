@@ -55,8 +55,7 @@ class HttpAuditSink:
 
 def _key_id(key: bytes | None) -> str:
     return (
-        "hmac-sha256:"
-        + hmac.new(key, b"yagami-audit-key-id-v1", hashlib.sha256).hexdigest()[:12]
+        "hmac-sha256:" + hmac.new(key, b"yagami-audit-key-id-v1", hashlib.sha256).hexdigest()[:12]
         if key is not None
         else "sha256:unkeyed"
     )

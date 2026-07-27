@@ -1,0 +1,52 @@
+{
+  "$schema": "./compatibility.schema.json",
+  "release": "0.6.1",
+  "policySchema": "1.0.0",
+  "evidenceSchema": "1.0.0",
+  "mcpRegistrySchema": "2025-12-11",
+  "packages": {
+    "pypi": {
+      "yagami": "0.6.1",
+      "langchain-yagami": "0.6.1",
+      "llama-index-llms-yagami": "0.6.1",
+      "llama-index-embeddings-yagami": "0.6.1"
+    },
+    "npm": {
+      "@yagami/ai-sdk-provider": "0.6.1"
+    },
+    "oci": {
+      "ghcr.io/matthewtracy/yagami": "0.6.1",
+      "ghcr.io/matthewtracy/charts/yagami": "0.6.1"
+    },
+    "mcp": {
+      "io.github.matthewtracy/yagami": "0.6.1"
+    }
+  },
+  "python": [
+    "3.11",
+    "3.12",
+    "3.13",
+    "3.14"
+  ],
+  "platforms": [
+    "windows/amd64",
+    "darwin/amd64",
+    "darwin/arm64",
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "interfaces": {
+    "openai": [
+      "chat.completions",
+      "responses",
+      "embeddings"
+    ],
+    "mcp": [
+      "tools",
+      "resources",
+      "prompts",
+      "streamable-http"
+    ]
+  }
+}
+

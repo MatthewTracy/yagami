@@ -16,6 +16,7 @@ class Capability(str, Enum):
     CODE = "code"
     VISION = "vision"
     TOOLS = "tools"  # backend supports tool/function calling (v0.3 surface)
+    EMBEDDINGS = "embeddings"
 
 
 class TrustZone(str, Enum):

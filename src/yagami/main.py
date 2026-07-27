@@ -290,8 +290,10 @@ def build_app() -> FastAPI:
             sessions_api.set_store(sessions)
             set_memory_worker(None)
             set_retriever(None)
-            if cfg.memory.enabled:
+            if cfg.memory.embedding_provider != "none":
                 embedder = build_embedder(cfg, secrets.get)
+                _app.state.runtime.embedder = embedder
+            if cfg.memory.enabled:
                 if embedder is not None:
                     embedding_worker = EmbeddingWorker(embedder)
                     embedding_worker.start()
@@ -307,9 +309,7 @@ def build_app() -> FastAPI:
                 await mcp_manager.connect_all(cfg.mcp_servers)
                 mcp_manager_mod.set_manager(mcp_manager)
                 if mcp_server is not None:
-                    registered = register_downstream_tools(
-                        mcp_server, gateway, mcp_manager
-                    )
+                    registered = register_downstream_tools(mcp_server, gateway, mcp_manager)
                     log.info(
                         "mcp: registered %d governed downstream tool(s)",
                         len(registered),
@@ -385,6 +385,7 @@ def build_app() -> FastAPI:
                 resources.append(("presidio", presidio))
             if embedder is not None:
                 resources.append(("embedder", embedder))
+            _app.state.runtime.embedder = None
             await asyncio.gather(*(_close_resource(name, resource) for name, resource in resources))
             await close_db()
 

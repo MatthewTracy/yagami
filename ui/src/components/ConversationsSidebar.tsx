@@ -75,7 +75,7 @@ export function ConversationsSidebar({ activeSessionId, refreshKey, onSelect, on
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {sessions.length === 0 && (
-          <div className="text-xs text-zinc-500 px-2 py-3">No conversations yet.</div>
+        <div className="text-xs text-zinc-400 px-2 py-3">No conversations yet.</div>
         )}
         {sessions.map((s) => {
           const active = s.id === activeSessionId;
@@ -118,14 +118,14 @@ export function ConversationsSidebar({ activeSessionId, refreshKey, onSelect, on
                       setEditValue(s.title ?? "");
                     }}
                     title="Rename"
-                    className="px-1 text-zinc-500 hover:text-zinc-200 text-xs"
+                  className="px-1 text-zinc-400 hover:text-zinc-200 text-xs"
                   >
                     ✎
                   </button>
                   <button
                     onClick={() => deleteSession(s.id)}
                     title="Delete"
-                    className="px-1 text-zinc-500 hover:text-red-400 text-xs"
+                  className="px-1 text-zinc-400 hover:text-red-400 text-xs"
                   >
                     ×
                   </button>

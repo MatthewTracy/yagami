@@ -11,7 +11,14 @@ from httpx import ASGITransport, AsyncClient
 from openai import AsyncOpenAI
 
 from yagami import config as config_mod
-from yagami.backends.base import BackendChunk, BackendOptions, Capability, Message, Pricing
+from yagami.backends.base import (
+    BackendChunk,
+    BackendOptions,
+    Capability,
+    Message,
+    Pricing,
+    TrustZone,
+)
 from yagami.config import RoutingConfig
 from yagami.main import build_app
 from yagami.policy import OutputPolicy
@@ -78,6 +85,20 @@ class GatewayFakeBackend:
         return True
 
 
+class FakeEmbedder:
+    model = "test-embedding"
+
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def embed(self, text: str) -> list[float] | None:
+        self.inputs.append(text)
+        return [0.25] * 384
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest_asyncio.fixture
 async def gateway_app(tmp_path, monkeypatch):
     monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(tmp_path / "missing.toml"))
@@ -126,6 +147,7 @@ async def gateway_app(tmp_path, monkeypatch):
     runtime.gateway.backends = backends
     runtime.gateway.routing_policy = routing
     async with app.router.lifespan_context(app):
+        runtime.embedder = FakeEmbedder()
         yield app, local, cloud
     config_mod.get_settings.cache_clear()
     config_mod.get_config.cache_clear()
@@ -151,6 +173,58 @@ async def test_chat_completions_is_openai_sdk_compatible(gateway_app) -> None:
     assert response.choices[0].message.content == "reply-from-local"
     assert response.model == "local"
     assert len(local.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_embeddings_are_openai_compatible_and_content_free(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    http_client = AsyncClient(transport=transport, base_url="http://test")
+    client = AsyncOpenAI(
+        api_key=API_KEY,
+        base_url="http://test/v1",
+        http_client=http_client,
+    )
+    private_input = "Internal codename is blue-orchid"
+    try:
+        response = await client.embeddings.create(
+            model="yagami-embedding",
+            input=[private_input, "safe input"],
+            dimensions=384,
+        )
+    finally:
+        await client.close()
+    assert response.model == "test-embedding"
+    assert len(response.data) == 2
+    assert len(response.data[0].embedding) == 384
+    async with get_db().execute(
+        "SELECT scrubbed_preview, channel, request_context FROM decisions"
+        " WHERE channel='embeddings' ORDER BY id DESC LIMIT 1"
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row["scrubbed_preview"] == ""
+    assert private_input not in str(dict(row))
+
+
+@pytest.mark.asyncio
+async def test_embeddings_enforce_sensitive_destination_boundary(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    runtime = app.state.runtime
+    runtime.config.memory.embedding_trust_zone = TrustZone.EXTERNAL
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/embeddings",
+            headers=headers,
+            json={
+                "model": "yagami-embedding",
+                "input": "api_key=supersecret123456789",
+            },
+        )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "policy_denied"
+    assert runtime.embedder.inputs == []
 
 
 @pytest.mark.asyncio
@@ -432,9 +506,7 @@ async def test_responses_background_retrieval_and_event_resume(gateway_app) -> N
     assert accepted.status_code == 202
     assert retrieved.status_code == 200
     assert retrieved.json()["output"][0]["content"][0]["text"] == "reply-from-local"
-    assert [item["event"]["type"] for item in events.json()["data"]] == [
-        "response.completed"
-    ]
+    assert [item["event"]["type"] for item in events.json()["data"]] == ["response.completed"]
 
 
 @pytest.mark.asyncio

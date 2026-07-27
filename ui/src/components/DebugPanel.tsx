@@ -8,7 +8,7 @@ type Props = {
 export function DebugPanel({ backend, isLocal, reason, classification }: Props) {
   if (!backend) {
     return (
-      <div className="text-xs text-zinc-500 p-3 border border-zinc-800 rounded-md">
+      <div className="text-xs text-zinc-400 p-3 border border-zinc-800 rounded-md">
         No routing decision yet - send a message.
       </div>
     );
@@ -26,7 +26,7 @@ export function DebugPanel({ backend, isLocal, reason, classification }: Props) 
       </div>
       <div className="text-zinc-400">{reason}</div>
       {classification && (
-        <pre className="text-[10px] text-zinc-500 overflow-x-auto">
+      <pre className="text-[10px] text-zinc-400 overflow-x-auto">
           {JSON.stringify(classification, null, 2)}
         </pre>
       )}

@@ -6,6 +6,7 @@ import binascii
 import json
 import logging
 import re
+import struct
 import time
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -15,11 +16,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..auth import Principal, require_scope
-from ..backends.base import ImageAttachment, Message
+from ..backends.base import Capability, ImageAttachment, Message
 from ..gateway import GatewayError, GatewayRequestOptions, PolicyDeniedError
 from ..governance import TransformationError, TransformationSession
-from ..policy import PolicyContext, replay_decisions
-from ..router.schema import Sensitivity
+from ..policy import PolicyContext, PolicyMode, RoutePolicy, TransformPolicy, replay_decisions
+from ..projects import ProjectLimitError
+from ..router.schema import DataLabel, Sensitivity
+from ..telemetry.costs import rough_token_count
+from ..telemetry.decisions import persist_decision
 from ..responses import (
     ResponseNotFoundError,
     append_response_event,
@@ -183,9 +187,7 @@ class ResponsesRequest(BaseModel):
     parallel_tool_calls: bool = True
     background: bool = False
     store: bool = True
-    previous_response_id: str | None = Field(
-        default=None, pattern=r"^resp_[A-Za-z0-9_-]{8,128}$"
-    )
+    previous_response_id: str | None = Field(default=None, pattern=r"^resp_[A-Za-z0-9_-]{8,128}$")
     conversation: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("tools")
@@ -222,6 +224,37 @@ class ResponsesRequest(BaseModel):
                         total += sum(len(part.text or "") for part in item.output)
         if total > _MAX_REQUEST_TEXT_CHARS:
             raise ValueError("aggregate input text exceeds 4,000,000 characters")
+        return self
+
+
+class EmbeddingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(default="yagami-embedding", min_length=1, max_length=128)
+    input: str | list[str]
+    encoding_format: Literal["float", "base64"] = "float"
+    dimensions: int | None = Field(default=None, ge=1, le=65_536)
+    user: str | None = Field(default=None, max_length=128)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_metadata(value)
+
+    @model_validator(mode="after")
+    def input_is_bounded(self):
+        values = [self.input] if isinstance(self.input, str) else self.input
+        if not values:
+            raise ValueError("embedding input cannot be empty")
+        if len(values) > 2_048:
+            raise ValueError("embedding input supports at most 2,048 strings")
+        if any(not value for value in values):
+            raise ValueError("embedding input strings cannot be empty")
+        if any(len(value) > _MAX_MESSAGE_CHARS for value in values):
+            raise ValueError("an embedding input exceeds 1,000,000 characters")
+        if sum(len(value) for value in values) > _MAX_REQUEST_TEXT_CHARS:
+            raise ValueError("aggregate embedding input exceeds 4,000,000 characters")
         return self
 
 
@@ -269,9 +302,7 @@ class PolicyReplayRequest(BaseModel):
 class ToolApprovalRequest(BaseModel):
     tools: list[str] = Field(min_length=1, max_length=100)
     subject_id: str | None = Field(default=None, min_length=1, max_length=128)
-    schema_hash: str | None = Field(
-        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
-    )
+    schema_hash: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     purpose: str | None = Field(default=None, min_length=1, max_length=64)
     ticket: str | None = Field(default=None, min_length=1, max_length=128)
     ttl_seconds: int = Field(default=900, ge=60, le=86_400)
@@ -567,6 +598,235 @@ async def list_models(request: Request, _principal: Principal = Depends(_gateway
         for backend in runtime.backends.values()
     )
     return {"object": "list", "data": rows}
+
+
+@router.post("/embeddings")
+async def create_embeddings(
+    body: EmbeddingsRequest,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    """Embed content only after classifying and enforcing its destination boundary."""
+    runtime = request.app.state.runtime
+    embedder = runtime.embedder
+    if embedder is None:
+        return _openai_error(
+            GatewayError(
+                "no embedding provider is configured",
+                code="embedding_provider_unavailable",
+                status_code=503,
+            )
+        )
+    aliases = {"yagami-auto", "yagami-embedding", embedder.model}
+    if body.model not in aliases:
+        return _openai_error(
+            GatewayError(
+                f"embedding model {body.model!r} is not available",
+                code="model_not_found",
+                status_code=404,
+                param="model",
+            )
+        )
+
+    values = [body.input] if isinstance(body.input, str) else body.input
+    combined = "\n".join(values)
+    context = _policy_context(
+        principal=principal,
+        metadata=body.metadata,
+        user=body.user,
+        tools=None,
+    )
+    try:
+        await runtime.governor.check_request(
+            project_id=context.project_id,
+            purpose=context.purpose,
+            jurisdiction=context.jurisdiction,
+        )
+        routing = await runtime.routing_policy.decide([Message(role="user", content=combined)])
+    except ProjectLimitError as exc:
+        return _openai_error(
+            GatewayError(
+                str(exc),
+                code=exc.code,
+                status_code=429 if exc.code == "rate_limit_exceeded" else 403,
+            )
+        )
+    except Exception:
+        log.warning("embedding classification failed closed", exc_info=True)
+        return _openai_error(
+            GatewayError(
+                "embedding request could not be classified safely",
+                code="classification_unavailable",
+                status_code=503,
+            )
+        )
+
+    classification = routing.classification
+    try:
+        sensitivity = Sensitivity(classification.get("sensitivity", "none"))
+    except ValueError:
+        sensitivity = Sensitivity.SECRET
+    labels = {
+        DataLabel(value)
+        for value in classification.get("data_labels", [])
+        if value in {label.value for label in DataLabel}
+    }
+    provider = runtime.config.memory.embedding_provider
+    zone = runtime.config.memory.embedding_trust_zone
+    evaluation = runtime.policy_engine.evaluate(
+        context=context,
+        detected_sensitivity=sensitivity,
+        candidate_backend=provider,
+        data_labels=labels,
+        candidate_trust_zone=zone,
+        required_capabilities={Capability.EMBEDDINGS},
+    )
+    if evaluation.route == RoutePolicy.LOCAL and not zone.is_private:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding destination is outside the required local boundary")
+    if evaluation.route == RoutePolicy.CLOUD and zone.is_private:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding destination does not satisfy the required cloud route")
+    if evaluation.allowed_backends is not None and provider not in evaluation.allowed_backends:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding provider is not in the policy allowlist")
+    if evaluation.allowed_trust_zones is not None and zone not in evaluation.allowed_trust_zones:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding trust zone is not in the policy allowlist")
+    unsupported = set(evaluation.required_capabilities) - {Capability.EMBEDDINGS}
+    if unsupported:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding provider lacks policy-required capabilities")
+
+    request_id = "ygm_" + uuid4().hex
+    decision = {
+        "backend": provider,
+        "is_local": zone.is_private,
+        "reason": "governed embedding destination",
+        "classification": classification,
+    }
+    await runtime.sessions.ensure_gateway_session(
+        request_id,
+        project_id=context.project_id,
+    )
+    decision_id = await persist_decision(
+        session_id=request_id,
+        user_text="",
+        decision=decision,
+        request_id=request_id,
+        project_id=context.project_id,
+        channel="embeddings",
+        policy_decision=evaluation.passport(),
+        request_context={
+            "project_id": context.project_id,
+            "purpose": context.purpose,
+            "jurisdiction": context.jurisdiction,
+            "metadata_keys": sorted(context.metadata),
+        },
+    )
+    await runtime.gateway.append_audit(
+        project_id=context.project_id,
+        request_id=request_id,
+        event_type="embedding.decision",
+        payload={
+            "decision_id": decision_id,
+            "provider": provider,
+            "trust_zone": zone.value,
+            "policy_hash": evaluation.policy_hash,
+            "denied": evaluation.denied,
+            "input_count": len(values),
+        },
+    )
+    if evaluation.denied and evaluation.mode == PolicyMode.ENFORCE:
+        return _openai_error(
+            GatewayError(
+                "embedding request denied by Yagami policy",
+                code="policy_denied",
+                status_code=403,
+            )
+        )
+
+    transformed = list(values)
+    if evaluation.transform != TransformPolicy.NONE:
+        transform_session = TransformationSession(
+            request_id=request_id,
+            project_id=context.project_id,
+            mode=evaluation.transform.value,
+        )
+        try:
+            transformed = [
+                await runtime.transformer.transform_text(value, session=transform_session)
+                for value in values
+            ]
+        except TransformationError:
+            return _openai_error(
+                GatewayError(
+                    "embedding privacy transformation could not be completed",
+                    code="transformation_failed",
+                    status_code=422,
+                )
+            )
+
+    vectors: list[list[float]] = []
+    try:
+        async with runtime.governor.slot(context.project_id):
+            for value in transformed:
+                vector = await embedder.embed(value)
+                if vector is None:
+                    raise RuntimeError("embedding provider returned no vector")
+                if body.dimensions is not None and len(vector) != body.dimensions:
+                    return _openai_error(
+                        GatewayError(
+                            f"configured embedding provider returns {len(vector)} dimensions",
+                            code="unsupported_dimensions",
+                            param="dimensions",
+                        )
+                    )
+                vectors.append(vector)
+    except ProjectLimitError as exc:
+        return _openai_error(GatewayError(str(exc), code=exc.code, status_code=429))
+    except Exception:
+        log.warning(
+            "embedding provider failed request_id=%s provider=%s",
+            request_id,
+            provider,
+            exc_info=True,
+        )
+        return _openai_error(
+            GatewayError(
+                "embedding provider failed",
+                code="embedding_provider_error",
+                status_code=502,
+            )
+        )
+
+    tokens = sum(rough_token_count(value) for value in values)
+    encoded_vectors: list[list[float] | str] = []
+    if body.encoding_format == "base64":
+        encoded_vectors.extend(
+            base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode("ascii")
+            for vector in vectors
+        )
+    else:
+        encoded_vectors.extend(vectors)
+    return JSONResponse(
+        content={
+            "object": "list",
+            "data": [
+                {"object": "embedding", "embedding": vector, "index": index}
+                for index, vector in enumerate(encoded_vectors)
+            ],
+            "model": embedder.model,
+            "usage": {"prompt_tokens": tokens, "total_tokens": tokens},
+        },
+        headers={
+            "x-yagami-request-id": request_id,
+            "x-yagami-decision-id": str(decision_id),
+            "x-yagami-backend": provider,
+            "x-yagami-policy-hash": evaluation.policy_hash,
+            "x-yagami-trust-zone": zone.value,
+        },
+    )
 
 
 @router.post("/chat/completions")
@@ -913,6 +1173,7 @@ async def create_response(
         )
 
     if body.background:
+
         async def execute_background() -> None:
             try:
                 await set_response_status(response_id, "in_progress")
@@ -955,9 +1216,7 @@ async def create_response(
                     },
                 )
             except Exception as exc:  # noqa: BLE001 - persist safe terminal state
-                log.exception(
-                    "background response %s failed: %s", response_id, type(exc).__name__
-                )
+                log.exception("background response %s failed: %s", response_id, type(exc).__name__)
                 await fail_response_job(
                     response_id,
                     status="failed",
@@ -1120,11 +1379,7 @@ async def create_response(
                     }
                     if should_store:
                         await append_response_event(response_id, sequence, error_event)
-                    yield (
-                        "data: "
-                        + json.dumps(error_event, separators=(",", ":"))
-                        + "\n\n"
-                    )
+                    yield ("data: " + json.dumps(error_event, separators=(",", ":")) + "\n\n")
             if text_item_added:
                 sequence += 1
                 text_done = {
@@ -1137,11 +1392,7 @@ async def create_response(
                 }
                 if should_store:
                     await append_response_event(response_id, sequence, text_done)
-                yield (
-                    "data: "
-                    + json.dumps(text_done, separators=(",", ":"))
-                    + "\n\n"
-                )
+                yield ("data: " + json.dumps(text_done, separators=(",", ":")) + "\n\n")
             for index, call in sorted(tool_calls.items()):
                 sequence += 1
                 arguments_done = {
@@ -1153,11 +1404,7 @@ async def create_response(
                 }
                 if should_store:
                     await append_response_event(response_id, sequence, arguments_done)
-                yield (
-                    "data: "
-                    + json.dumps(arguments_done, separators=(",", ":"))
-                    + "\n\n"
-                )
+                yield ("data: " + json.dumps(arguments_done, separators=(",", ":")) + "\n\n")
             sequence += 1
             completed_response = {
                 "id": response_id,
@@ -1189,11 +1436,7 @@ async def create_response(
             if should_store:
                 await complete_response_job(response_id, completed_response)
                 await append_response_event(response_id, sequence, completed_event)
-            yield (
-                "data: "
-                + json.dumps(completed_event, separators=(",", ":"))
-                + "\n\n"
-            )
+            yield ("data: " + json.dumps(completed_event, separators=(",", ":")) + "\n\n")
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -1303,9 +1546,7 @@ async def retrieve_response_events(
     principal: Principal = Depends(_gateway_read),
 ):
     try:
-        events = await list_response_events(
-            response_id, principal.project_id, after=after
-        )
+        events = await list_response_events(response_id, principal.project_id, after=after)
     except ResponseNotFoundError:
         return _openai_error(
             GatewayError(

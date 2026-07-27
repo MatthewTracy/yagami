@@ -217,7 +217,7 @@ export function SettingsModal({ open, onClose }: Props) {
             className={`px-3 py-1.5 text-xs capitalize -mb-px border-b-2 ${
               tab === s
                 ? "border-zinc-300 text-zinc-100"
-                : "border-transparent text-zinc-500 hover:text-zinc-300"
+                : "border-transparent text-zinc-400 hover:text-zinc-300"
             }`}
           >
             {s}
@@ -249,7 +249,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   <option value="private_network">Trusted private network</option>
                 </select>
               </label>
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 Private-network mode explicitly trusts that service with classifier input,
                 generation prompts, and embeddings.
               </p>
@@ -301,7 +301,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 value={c.foundry_local.max_tokens}
                 onChange={(v) => update("foundry_local", { max_tokens: v })}
               />
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 Copy the current endpoint from `foundry service status`. Its
                 port can change after a service restart. Only localhost and
                 loopback IPs are accepted for this trusted-local backend.
@@ -326,7 +326,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 onChange={(v) => update("stability", { model: v })}
               />
             </Group>
-            <p className="text-[10px] text-zinc-500 italic mt-2">
+            <p className="text-[10px] text-zinc-400 italic mt-2">
               Note: model URL or name changes need a uvicorn restart to fully take effect.
             </p>
           </>
@@ -376,7 +376,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   className="accent-emerald-600"
                 />
               </label>
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 Once today's spend reaches the cap - or "block all cloud" is
                 on - cloud backends are refused with an explicit error. Local
                 Ollama stays available. Note: cap 0 means NO cap; use "block
@@ -390,7 +390,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   ON · locked
                 </span>
               </div>
-              <p className="text-[10px] text-zinc-500">{data.notes.phi_must_be_local}</p>
+              <p className="text-[10px] text-zinc-400">{data.notes.phi_must_be_local}</p>
             </Group>
           </>
         )}
@@ -404,7 +404,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 options={["", ...Object.keys(c.profiles)]}
                 onChange={(v) => update("routing", { active_profile: v })}
               />
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 "" = no profile - [routing] above applies directly. A
                 profile overrides default backend / spend cap / long-message
                 threshold / block-cloud only. PHI must stay local either
@@ -412,7 +412,7 @@ export function SettingsModal({ open, onClose }: Props) {
               </p>
             </Group>
             {Object.keys(c.profiles).length === 0 && (
-              <p className="text-[10px] text-zinc-500 italic">No profiles yet.</p>
+              <p className="text-[10px] text-zinc-400 italic">No profiles yet.</p>
             )}
             {Object.entries(c.profiles).map(([name, p]) => (
               <Group key={name} title={name}>
@@ -501,7 +501,7 @@ export function SettingsModal({ open, onClose }: Props) {
                 value={c.privacy.session_retention_days}
                 onChange={(v) => update("privacy", { session_retention_days: v })}
               />
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 0 keeps conversations until you delete them. A positive value removes inactive
                 conversations and their derived cross-session memories. Cleanup runs at startup
                 and every six hours.
@@ -534,7 +534,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   Delete everything
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 “Everything” also removes document chunks you explicitly indexed. Configuration
                 and API keys are retained.
               </p>
@@ -546,7 +546,7 @@ export function SettingsModal({ open, onClose }: Props) {
                   NOT ENABLED
                 </span>
               </div>
-              <p className="text-[10px] text-zinc-500">{data.notes.storage_encryption}</p>
+              <p className="text-[10px] text-zinc-400">{data.notes.storage_encryption}</p>
             </Group>
           </>
         )}
@@ -554,7 +554,7 @@ export function SettingsModal({ open, onClose }: Props) {
         {tab === "prompts" && (
           <>
             <Group title="Private-data system prompt">
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 Sent to local Ollama for non-medical PHI so authorized administrative tasks do
                 not get refused merely because private identifiers are present.
               </p>
@@ -566,7 +566,7 @@ export function SettingsModal({ open, onClose }: Props) {
               />
             </Group>
             <Group title="PHI / clinical system prompt">
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-[10px] text-zinc-400">
                 Sent to local Ollama whenever a turn is classified as
                 <code className="ml-1 mr-1 px-1 bg-zinc-800">phi_medical</code>.
                 Read-only here - edit{" "}
@@ -585,7 +585,7 @@ export function SettingsModal({ open, onClose }: Props) {
       </div>
 
       <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800">
-        <span className="text-[10px] text-zinc-500 italic">{data.notes.live_reload}</span>
+        <span className="text-[10px] text-zinc-400 italic">{data.notes.live_reload}</span>
         <div className="flex gap-2">
           <button
             onClick={onClose}
@@ -625,7 +625,7 @@ function Backdrop({ children, onClose }: { children: React.ReactNode; onClose: (
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5 p-2.5 rounded border border-zinc-800 bg-zinc-950/30">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">{title}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{title}</div>
       {children}
     </div>
   );

@@ -1,0 +1,45 @@
+name: Create immutable release tag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "release/compatibility.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: create-release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Validate and create annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
+          python scripts/prepare_release.py --version "${VERSION}" --check
+          python scripts/check_release.py
+          TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "${TAG}")" = "${GITHUB_SHA}"
+            echo "${TAG} already identifies this immutable source revision."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "${TAG}" --message "Yagami ${VERSION}"
+          git push origin "refs/tags/${TAG}"
+

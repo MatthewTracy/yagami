@@ -51,7 +51,7 @@ export function CostMeter({ sessionId, refreshKey }: Props) {
         <span className="font-mono">{fmtUsd(c.session_usd)}</span>
       </div>
       {c.daily_cap_usd > 0 && (
-        <div className="flex justify-between text-[10px] text-zinc-500 mt-0.5">
+      <div className="flex justify-between text-[10px] text-zinc-400 mt-0.5">
           <span>cap</span>
           <span>
             {fmtUsd(c.daily_cap_usd)}

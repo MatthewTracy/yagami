@@ -218,54 +218,72 @@ async def run(
         )
 
         async def execute_one(
-            item: tuple[dict[str, str | int | None], str, dict | None]
+            item: tuple[dict[str, str | int | None], str, dict | None],
         ) -> tuple[dict[str, str | int | None], str, SkillResult]:
             call, canonical, arguments = item
             skill = skills_map.get(canonical)
             if skill is None:
-                return call, canonical, SkillResult(
-                    ok=False,
-                    error="unknown or unavailable tool",
-                    artifacts={"error_code": "unknown_tool"},
+                return (
+                    call,
+                    canonical,
+                    SkillResult(
+                        ok=False,
+                        error="unknown or unavailable tool",
+                        artifacts={"error_code": "unknown_tool"},
+                    ),
                 )
             if arguments is None:
-                return call, canonical, SkillResult(
-                    ok=False,
-                    error="tool arguments were not a JSON object",
-                    artifacts={"error_code": "invalid_tool_arguments"},
+                return (
+                    call,
+                    canonical,
+                    SkillResult(
+                        ok=False,
+                        error="tool arguments were not a JSON object",
+                        artifacts={"error_code": "invalid_tool_arguments"},
+                    ),
                 )
             if _tool_matches(denied, canonical):
-                return call, canonical, SkillResult(
-                    ok=False,
-                    error=f"skill {canonical} denied by policy",
-                    artifacts={"policy_denied": True, "error_code": "tool_policy_denied"},
+                return (
+                    call,
+                    canonical,
+                    SkillResult(
+                        ok=False,
+                        error=f"skill {canonical} denied by policy",
+                        artifacts={"policy_denied": True, "error_code": "tool_policy_denied"},
+                    ),
                 )
             needs_approval = _tool_matches(approvals, canonical) or bool(
                 getattr(skill, "requires_approval", False)
             )
             if needs_approval and not _tool_matches(approved, canonical):
-                return call, canonical, SkillResult(
-                    ok=False,
-                    error=f"skill {canonical} requires identity-bound human approval",
-                    artifacts={
-                        "approval_required": True,
-                        "error_code": "tool_approval_required",
-                    },
+                return (
+                    call,
+                    canonical,
+                    SkillResult(
+                        ok=False,
+                        error=f"skill {canonical} requires identity-bound human approval",
+                        artifacts={
+                            "approval_required": True,
+                            "error_code": "tool_approval_required",
+                        },
+                    ),
                 )
             argument_inspection = inspect_output(
                 json.dumps(arguments, sort_keys=True, separators=(",", ":"))
             )
-            if argument_inspection.sensitivity != Sensitivity.NONE and not _tool_is_private(
-                skill
-            ):
-                return call, canonical, SkillResult(
-                    ok=False,
-                    error="sensitive tool arguments cannot cross this trust boundary",
-                    artifacts={
-                        "privacy_blocked": True,
-                        "error_code": "tool_argument_trust_violation",
-                        "inspection": argument_inspection.summary(),
-                    },
+            if argument_inspection.sensitivity != Sensitivity.NONE and not _tool_is_private(skill):
+                return (
+                    call,
+                    canonical,
+                    SkillResult(
+                        ok=False,
+                        error="sensitive tool arguments cannot cross this trust boundary",
+                        artifacts={
+                            "privacy_blocked": True,
+                            "error_code": "tool_argument_trust_violation",
+                            "inspection": argument_inspection.summary(),
+                        },
+                    ),
                 )
             return call, canonical, await _run_skill(skill, arguments, ctx)
 
@@ -275,7 +293,10 @@ async def run(
                 result_inspection = inspect_output(result.content)
                 injection = inspect_context(result.content)
                 backend_zone = getattr(backend, "trust_zone", TrustZone.EXTERNAL)
-                if result_inspection.sensitivity != Sensitivity.NONE and not backend_zone.is_private:
+                if (
+                    result_inspection.sensitivity != Sensitivity.NONE
+                    and not backend_zone.is_private
+                ):
                     result = SkillResult(
                         ok=False,
                         error="sensitive tool result cannot cross the model trust boundary",

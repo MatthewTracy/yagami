@@ -46,13 +46,13 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
   }, [sessionId, refreshKey]);
 
   if (!sessionId) {
-    return <div className="text-xs text-zinc-500">No session yet.</div>;
+    return <div className="text-xs text-zinc-400">No session yet.</div>;
   }
   if (loading && rows.length === 0) {
-    return <div className="text-xs text-zinc-500">Loading…</div>;
+    return <div className="text-xs text-zinc-400">Loading…</div>;
   }
   if (rows.length === 0) {
-    return <div className="text-xs text-zinc-500">No routing decisions yet.</div>;
+    return <div className="text-xs text-zinc-400">No routing decisions yet.</div>;
   }
 
   const sessionHasPhi = rows.some((r) => {
@@ -66,7 +66,7 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
         <a
           href={`/api/decisions/export?session_id=${sessionId}`}
           download
-          className="text-[10px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+          className="text-[10px] text-zinc-400 hover:text-zinc-300 underline underline-offset-2"
           title="Download this session's routing decisions as CSV"
         >
           Export CSV
@@ -121,12 +121,12 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
                 </span>
               )}
             </div>
-            <span className="text-[10px] text-zinc-500">
+              <span className="text-[10px] text-zinc-400">
               {new Date(r.created_at).toLocaleTimeString()}
             </span>
           </div>
           <div className="mt-1 text-zinc-400 text-[11px]">{r.reason}</div>
-          <div className="mt-1 text-[10px] text-zinc-500 flex gap-3">
+            <div className="mt-1 text-[10px] text-zinc-400 flex gap-3">
             <span title="classifier + routing">
               route <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>
             </span>

@@ -28,6 +28,10 @@ RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+LABEL org.opencontainers.image.source="https://github.com/MatthewTracy/yagami" \
+      org.opencontainers.image.licenses="MIT" \
+      io.modelcontextprotocol.server.name="io.github.matthewtracy/yagami"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

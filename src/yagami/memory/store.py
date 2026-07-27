@@ -86,9 +86,7 @@ async def queue_observation(
     if inspection.suspicious and quarantine_reason is None:
         quarantine_reason = "content_firewall"
     quarantined = quarantine_reason is not None
-    serialized_labels = json.dumps(
-        sorted(label.value for label in labels), separators=(",", ":")
-    )
+    serialized_labels = json.dumps(sorted(label.value for label in labels), separators=(",", ":"))
     ids: list[int] = []
     parent_id: int | None = None
     for i, ch in enumerate(chunks):

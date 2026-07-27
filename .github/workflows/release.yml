@@ -145,6 +145,61 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-integrations:
+    name: Build and attest ecosystem packages
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build Python integration distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install build==1.5.1 twine==6.2.0
+          mkdir -p integration-dist/python
+          for package in \
+            integrations/langchain-yagami \
+            integrations/llama-index-llms-yagami \
+            integrations/llama-index-embeddings-yagami; do
+            python -m build "${package}" --outdir integration-dist/python
+          done
+          python -m twine check --strict integration-dist/python/*
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/ai-sdk-provider/package-lock.json
+      - name: Build npm integration distribution
+        working-directory: integrations/ai-sdk-provider
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+          mkdir -p ../../integration-dist/npm
+          npm pack --pack-destination ../../integration-dist/npm
+      - name: Attest integration distributions
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: integration-dist/**/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: integration-distributions
+          path: integration-dist/**/*
+          if-no-files-found: error
+          retention-days: 30
+
   test-container:
     name: Test and scan container
     needs: validate
@@ -196,11 +251,12 @@ jobs:
 
   publish-container:
     name: Publish and attest container
-    needs: [test-container, publish-pypi]
+    needs: [test-container, publish-pypi, build-integrations]
     if: >-
       always() &&
       github.event_name == 'push' &&
       needs.test-container.result == 'success' &&
+      needs.build-integrations.result == 'success' &&
       (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -255,7 +311,7 @@ jobs:
   publish-pypi:
     name: Publish Python package to PyPI
     if: github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true'
-    needs: [build-python, test-container]
+    needs: [build-python, build-integrations, test-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -271,16 +327,312 @@ jobs:
           path: dist
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          skip-existing: true
+
+  publish-adapter-pypi:
+    name: Publish Python adapters to PyPI
+    if: github.event_name == 'push' && vars.ADAPTER_PYPI_PUBLISH_ENABLED == 'true'
+    needs: [build-python, build-integrations, test-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: integration-distributions
+          path: integration-dist
+      - name: Publish adapters with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: integration-dist/python
+          skip-existing: true
+
+  publish-npm:
+    name: Publish AI SDK provider to npm
+    if: github.event_name == 'push' && vars.NPM_PUBLISH_ENABLED == 'true'
+    needs: [build-python, build-integrations, test-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/@yagami/ai-sdk-provider
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: integration-distributions
+          path: integration-dist
+      - name: Publish immutable npm package with provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@yagami/ai-sdk-provider@${VERSION}" version >/dev/null 2>&1; then
+            echo "@yagami/ai-sdk-provider@${VERSION} already exists; skipping."
+          else
+            npm publish integration-dist/npm/*.tgz --access public --provenance
+          fi
+
+  publish-helm:
+    name: Publish Helm chart to GHCR
+    if: github.event_name == 'push'
+    needs: [build-python, build-integrations, test-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/pkgs/container/charts%2Fyagami
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-metadata
+          path: release-metadata
+      - name: Login and publish immutable Helm OCI package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "${GH_TOKEN}" | helm registry login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+          if helm show chart oci://ghcr.io/matthewtracy/charts/yagami \
+            --version "${VERSION}" >/dev/null 2>&1; then
+            echo "Helm chart ${VERSION} already exists; skipping."
+          else
+            helm push "release-metadata/yagami-${VERSION}.tgz" \
+              oci://ghcr.io/matthewtracy/charts
+          fi
+
+  publish-mcp:
+    name: Publish MCP Registry metadata
+    if: github.event_name == 'push' && vars.MCP_REGISTRY_PUBLISH_ENABLED == 'true'
+    needs: [publish-pypi, publish-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://registry.modelcontextprotocol.io/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Install verified MCP publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9"
+          curl --fail --show-error --silent --location \
+            --output checksums.txt "${BASE}/registry_1.7.9_checksums.txt"
+          curl --fail --show-error --silent --location \
+            --output publisher.tgz "${BASE}/mcp-publisher_linux_amd64.tar.gz"
+          grep ' mcp-publisher_linux_amd64.tar.gz$' checksums.txt \
+            | sed 's#mcp-publisher_linux_amd64.tar.gz#publisher.tgz#' \
+            | sha256sum --check -
+          tar xzf publisher.tgz mcp-publisher
+      - name: Publish immutable metadata with GitHub OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="io.github.matthewtracy/yagami"
+          if curl --fail --silent --show-error \
+            "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \
+            | jq --exit-status --arg name "${NAME}" --arg version "${VERSION}" \
+              '.. | objects | select(.name? == $name and .version? == $version)' \
+              >/dev/null; then
+            echo "${NAME} ${VERSION} already exists; skipping."
+          else
+            ./mcp-publisher login github-oidc
+            ./mcp-publisher publish
+          fi
+
+  smoke-public-artifacts:
+    name: Verify public release artifacts
+    needs:
+      - publish-pypi
+      - publish-adapter-pypi
+      - publish-npm
+      - publish-container
+      - publish-helm
+      - publish-mcp
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped') &&
+      (needs.publish-adapter-pypi.result == 'success' || needs.publish-adapter-pypi.result == 'skipped') &&
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
+      needs.publish-container.result == 'success' &&
+      needs.publish-helm.result == 'success' &&
+      (needs.publish-mcp.result == 'success' || needs.publish-mcp.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: needs.publish-pypi.result == 'success' || needs.publish-adapter-pypi.result == 'success'
+        with:
+          python-version: "3.12"
+      - name: Install core from public PyPI
+        if: needs.publish-pypi.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 8); do
+            if python -m pip install --no-cache-dir "yagami==${VERSION}"; then
+              yagami --help >/dev/null
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+      - name: Install adapters from public PyPI
+        if: needs.publish-adapter-pypi.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for package in \
+            langchain-yagami \
+            llama-index-llms-yagami \
+            llama-index-embeddings-yagami; do
+            for attempt in $(seq 1 8); do
+              if python -m pip install --no-cache-dir "${package}==${VERSION}"; then
+                break
+              fi
+              test "${attempt}" -lt 8
+              sleep 10
+            done
+          done
+          python -c 'from langchain_yagami import ChatYagami; print(ChatYagami.__name__)'
+          python -c 'from llama_index.llms.yagami import YagamiLLM; print(YagamiLLM.__name__)'
+          python -c 'from llama_index.embeddings.yagami import YagamiEmbedding; print(YagamiEmbedding.__name__)'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: needs.publish-npm.result == 'success'
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: Install provider from public npm
+        if: needs.publish-npm.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir npm-smoke
+          cd npm-smoke
+          npm init --yes
+          for attempt in $(seq 1 8); do
+            if npm install "@yagami/ai-sdk-provider@${VERSION}"; then
+              node -e "import('@yagami/ai-sdk-provider').then(m => console.log(m.createYagami().provider))"
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+      - name: Pull public multi-architecture container
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          docker pull "${IMAGE_NAME}:${VERSION}"
+          docker run --rm --entrypoint yagami "${IMAGE_NAME}:${VERSION}" --help >/dev/null
+      - name: Pull public Helm OCI chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          helm pull oci://ghcr.io/matthewtracy/charts/yagami --version "${VERSION}"
+          helm show chart "yagami-${VERSION}.tgz" >/dev/null
+      - name: Verify official MCP Registry visibility
+        if: needs.publish-mcp.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="io.github.matthewtracy/yagami"
+          for attempt in $(seq 1 8); do
+            if curl --fail --silent --show-error \
+              "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \
+              | jq --exit-status --arg name "${NAME}" --arg version "${VERSION}" \
+                '.. | objects | select(.name? == $name and .version? == $version)' \
+                >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+  promote-container:
+    name: Promote verified container to latest
+    needs: [smoke-public-artifacts, publish-container]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/pkgs/container/yagami
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote tested digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}@${{ needs.publish-container.outputs.digest }}"
 
   github-release:
     name: Publish GitHub release
-    needs: [build-python, publish-container, publish-pypi]
+    needs:
+      - build-python
+      - build-integrations
+      - publish-container
+      - publish-pypi
+      - publish-adapter-pypi
+      - publish-npm
+      - publish-helm
+      - publish-mcp
+      - smoke-public-artifacts
+      - promote-container
     if: >-
       always() &&
       github.event_name == 'push' &&
       needs.build-python.result == 'success' &&
+      needs.build-integrations.result == 'success' &&
       needs.publish-container.result == 'success' &&
-      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped') &&
+      (needs.publish-adapter-pypi.result == 'success' || needs.publish-adapter-pypi.result == 'skipped') &&
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
+      needs.publish-helm.result == 'success' &&
+      (needs.publish-mcp.result == 'success' || needs.publish-mcp.result == 'skipped') &&
+      needs.smoke-public-artifacts.result == 'success' &&
+      needs.promote-container.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -289,6 +641,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: python-distributions
@@ -297,6 +652,10 @@ jobs:
         with:
           name: release-metadata
           path: release-metadata
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: integration-distributions
+          path: integration-dist
       - name: Create checksums and release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -304,16 +663,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
           printf '%s@%s\n' "${IMAGE_NAME}" "${CONTAINER_DIGEST}" > release-metadata/container-digest.txt
-          find dist release-metadata -type f -print0 \
+          cp release/compatibility.json release-metadata/compatibility.json
+          cp server.json release-metadata/server.json
+          python scripts/release_notes.py --version "${VERSION}" > release-notes.md
+          mkdir release-assets
+          find dist integration-dist release-metadata -type f \
+            -exec cp {} release-assets/ \;
+          find release-assets -type f -print0 \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/* release-metadata/* SHA256SUMS \
-            --repo "${GITHUB_REPOSITORY}" \
-            --generate-notes \
-            --verify-tag \
-            --title "Yagami ${GITHUB_REF_NAME#v}"
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/* SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" --clobber
+            gh release edit "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file release-notes.md \
+              --title "Yagami ${VERSION}" \
+              --latest
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              release-assets/* SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file release-notes.md \
+              --verify-tag \
+              --latest \
+              --title "Yagami ${VERSION}"
+          fi
           if [ "${{ needs.publish-pypi.result }}" = "skipped" ]; then
             echo "PyPI publication was disabled; GitHub artifacts and GHCR were published." >> "${GITHUB_STEP_SUMMARY}"
           fi

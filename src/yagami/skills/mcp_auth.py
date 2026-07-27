@@ -30,9 +30,7 @@ def _address_allowed(
 
 
 def _host_allowed(host: str, allowed_hosts: list[str]) -> bool:
-    return not allowed_hosts or any(
-        fnmatch.fnmatchcase(host, pattern) for pattern in allowed_hosts
-    )
+    return not allowed_hosts or any(fnmatch.fnmatchcase(host, pattern) for pattern in allowed_hosts)
 
 
 def validate_remote_url(

@@ -92,7 +92,7 @@ export function AssistantBubble({
                   key={h.id}
                   className="text-[10px] p-1.5 rounded border border-zinc-800 bg-zinc-950/40"
                 >
-                  <div className="text-zinc-500 mb-0.5">
+              <div className="text-zinc-400 mb-0.5">
                     {h.role} · {h.session_id.slice(0, 8)} · {h.source}
                     {h.distance != null ? ` · d=${h.distance.toFixed(3)}` : ""}
                   </div>

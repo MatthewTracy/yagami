@@ -8,6 +8,7 @@ from typing import Any
 
 from .base import BackendChunk
 
+
 class ProviderFailureKind(str, Enum):
     AUTHENTICATION = "authentication"
     RATE_LIMITED = "rate_limited"

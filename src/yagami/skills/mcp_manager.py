@@ -136,9 +136,7 @@ async def _invoke_tool(tool: _McpTool, args: dict) -> SkillResult:
             artifacts={"retryable": True, "error_code": "mcp_transport_unavailable"},
         )
     text_parts = [
-        text
-        for block in result.content
-        if isinstance((text := getattr(block, "text", None)), str)
+        text for block in result.content if isinstance((text := getattr(block, "text", None)), str)
     ]
     content = "\n".join(text_parts)
     structured = getattr(result, "structuredContent", None)
@@ -227,15 +225,11 @@ class McpManager:
             await old_stack.aclose()
         self._stacks[name] = stack
         self._sessions[name] = session
-        self._tools = {
-            key: tool for key, tool in self._tools.items() if tool.server_name != name
-        }
+        self._tools = {key: tool for key, tool in self._tools.items() if tool.server_name != name}
         self._resources = {
             key: item for key, item in self._resources.items() if item["server"] != name
         }
-        self._prompts = {
-            key: item for key, item in self._prompts.items() if item["server"] != name
-        }
+        self._prompts = {key: item for key, item in self._prompts.items() if item["server"] != name}
         self._tools.update({tool.identity: tool for tool in tools})
         self._resources.update(resources)
         self._prompts.update(prompts)
@@ -270,9 +264,7 @@ class McpManager:
         if server_cfg.auth == "bearer_env":
             token = os.getenv(server_cfg.bearer_token_env, "")
             if not token:
-                raise ValueError(
-                    f"MCP server {name!r} token environment variable is empty"
-                )
+                raise ValueError(f"MCP server {name!r} token environment variable is empty")
             headers["Authorization"] = "Bearer " + token
         elif server_cfg.auth == "client_credentials":
             client_id = os.getenv(server_cfg.oauth_client_id_env, "")

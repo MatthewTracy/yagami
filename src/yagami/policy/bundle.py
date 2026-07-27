@@ -87,9 +87,7 @@ def build_bundle(policy_path: Path, private_key_path: Path, output_path: Path) -
     return manifest
 
 
-def read_verified_bundle(
-    bundle_path: Path, public_key_path: Path
-) -> tuple[dict[str, Any], bytes]:
+def read_verified_bundle(bundle_path: Path, public_key_path: Path) -> tuple[dict[str, Any], bytes]:
     """Verify a bundle and return its manifest and exact policy source."""
     public_key = serialization.load_pem_public_key(public_key_path.read_bytes())
     if not isinstance(public_key, Ed25519PublicKey):

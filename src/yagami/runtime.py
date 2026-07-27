@@ -8,6 +8,7 @@ from .chat.session import SessionStore
 from .config import Settings, YagamiConfig
 from .gateway import GatewayService
 from .governance import ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
+from .memory.embedder import EmbedderProtocol
 from .policy import PolicyEngine
 from .projects import ProjectGovernor, ProjectRegistry
 from .router.policy import RoutingPolicy
@@ -32,3 +33,4 @@ class AppRuntime:
     governor: ProjectGovernor
     audit: AuditLedger
     gateway: GatewayService
+    embedder: EmbedderProtocol | None = None

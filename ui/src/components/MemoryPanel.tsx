@@ -171,14 +171,14 @@ export function MemoryPanel({ open, onClose }: Props) {
                 className="text-xs p-2 rounded border border-zinc-800 bg-zinc-950/40 group"
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="font-mono text-zinc-500 text-[10px]">#{o.id}</span>
+                <span className="font-mono text-zinc-400 text-[10px]">#{o.id}</span>
                   <span className="font-mono text-zinc-400 text-[10px]">{o.role}</span>
                   <span
                     className={`px-1 py-0.5 rounded text-[9px] font-medium ${sensColor(o.sensitivity)}`}
                   >
                     {o.sensitivity}
                   </span>
-                  <span className="text-[10px] text-zinc-500 font-mono">
+                  <span className="text-[10px] text-zinc-400 font-mono">
                     {o.embedding_status}
                   </span>
                   <span className="ml-auto text-[10px] text-zinc-600">
@@ -186,7 +186,7 @@ export function MemoryPanel({ open, onClose }: Props) {
                   </span>
                   <button
                     onClick={() => deleteOne(o.id)}
-                    className="text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100"
+                  className="text-zinc-400 hover:text-red-400 opacity-0 group-hover:opacity-100"
                     title="Delete"
                   >
                     ×
@@ -219,7 +219,7 @@ function Tile({
       : "border-zinc-800 bg-zinc-950/40 text-zinc-200";
   return (
     <div className={`p-2 rounded border ${cls}`}>
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{label}</div>
       <div className="text-lg font-semibold font-mono">{value}</div>
     </div>
   );

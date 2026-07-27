@@ -1,7 +1,7 @@
 [project]
 name = "yagami"
 version = "0.6.1"
-description = "Open-source AI context firewall for governed model, tool, and retrieval access."
+description = "Open-source AI context firewall for governed model, retrieval, memory, and tool access."
 keywords = [
     "ai-gateway",
     "context-firewall",
@@ -138,4 +138,5 @@ extend-select = ["S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S104", "S106", "S608"]
+"integrations/**/tests/**/*.py" = ["S101", "S104", "S106", "S608"]
 "evals/**/*.py" = ["S101"]

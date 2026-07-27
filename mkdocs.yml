@@ -1,4 +1,4 @@
-site_name: Yagami — Private AI Context Firewall
+site_name: Yagami — AI Context Firewall
 site_description: Govern what context, models, and tools AI agents may use.
 site_url: https://matthewtracy.github.io/yagami/
 repo_url: https://github.com/MatthewTracy/yagami
@@ -36,6 +36,7 @@ nav:
   - Deployment: deployment.md
   - Development: development.md
   - Architecture: architecture.md
+  - Compatibility: compatibility.md
   - Security:
       - Threat model: threat-model.md
       - Release integrity: releases.md

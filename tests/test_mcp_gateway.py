@@ -248,9 +248,7 @@ async def test_downstream_tools_are_native_and_namespaced() -> None:
         schema_hash="sha256:" + "a" * 64,
     )
 
-    names = register_downstream_tools(
-        server, cast(GatewayService, gateway), manager
-    )
+    names = register_downstream_tools(server, cast(GatewayService, gateway), manager)
     tools = await server.list_tools()
     exposed = next(tool for tool in tools if tool.name == names[0])
 

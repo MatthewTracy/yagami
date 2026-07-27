@@ -402,7 +402,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     >
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {bubbles.length === 0 && (
-          <div className="text-zinc-500 text-sm">
+        <div className="text-zinc-400 text-sm">
             Say hi. Try "what is 2+2", "draw a red sailboat", or paste a long passage.
           </div>
         )}
@@ -490,7 +490,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
                   <span className="max-w-[180px] truncate">{a.filename}</span>
                   <button
                     onClick={() => setAttachments((arr) => arr.filter((_, j) => j !== i))}
-                    className="text-zinc-500 hover:text-red-400"
+                    className="text-zinc-400 hover:text-red-400"
                     title="Remove"
                     aria-label={`Remove ${a.filename}`}
                   >
@@ -527,7 +527,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
             disabled={!connected || inFlight}
           />
           {input.length > 200 && (
-            <div className="text-[10px] text-zinc-500 mt-1 px-1">
+          <div className="text-[10px] text-zinc-400 mt-1 px-1">
               {input.length.toLocaleString()} chars
               {input.length > 6000 && " · will route to cloud unless flagged sensitive"}
             </div>
@@ -557,7 +557,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           <button
             onClick={send}
             disabled={!connected}
-            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-500 rounded-md text-sm"
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-400 rounded-md text-sm"
           >
             Send
           </button>

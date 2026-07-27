@@ -1,0 +1,98 @@
+name: Prepare release pull request
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SemVer version (for example, 0.7.0)
+        required: true
+        type: string
+      notes:
+        description: One changelog item per line
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Prepare lockstep metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/prepare_release.py \
+            --version "${RELEASE_VERSION}" \
+            --notes "${RELEASE_NOTES}"
+          python scripts/check_release.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/ai-sdk-provider/package-lock.json
+      - name: Verify generated package metadata
+        working-directory: integrations/ai-sdk-provider
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm pack --dry-run
+      - name: Open or update protected release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="release/${RELEASE_VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${BRANCH}"
+          git add \
+            CHANGELOG.md \
+            deploy/helm/yagami/Chart.yaml \
+            deploy/helm/yagami/values.yaml \
+            docs/compatibility.md \
+            integrations \
+            pyproject.toml \
+            release/compatibility.json \
+            server.json \
+            src/yagami/__init__.py \
+            uv.lock
+          git commit -m "chore: prepare Yagami ${RELEASE_VERSION}"
+          git push --force-with-lease --set-upstream origin "${BRANCH}"
+          PR_NUMBER="$(
+            gh pr list --repo "${GITHUB_REPOSITORY}" --head "${BRANCH}" \
+              --state open --json number --jq '.[0].number // empty'
+          )"
+          BODY="Publishes the reviewed, lockstep Yagami ${RELEASE_VERSION} artifacts after all required checks pass. Merging this pull request creates the immutable release tag."
+          if [ -n "${PR_NUMBER}" ]; then
+            gh pr edit "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" \
+              --title "chore: release Yagami ${RELEASE_VERSION}" \
+              --body "${BODY}"
+          else
+            gh pr create --repo "${GITHUB_REPOSITORY}" \
+              --base main \
+              --head "${BRANCH}" \
+              --title "chore: release Yagami ${RELEASE_VERSION}" \
+              --body "${BODY}"
+          fi
+

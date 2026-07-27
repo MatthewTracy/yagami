@@ -28,14 +28,14 @@ export function ToolCallCard({ call }: Props) {
       >
         <span aria-hidden="true">{call.ok ? "✓" : "!"}</span>
         <span className="font-mono text-zinc-300">{call.name}</span>
-        <span className="min-w-0 flex-1 truncate text-zinc-500">{status}</span>
-        <span className="text-zinc-500" aria-hidden="true">
+      <span className="min-w-0 flex-1 truncate text-zinc-400">{status}</span>
+      <span className="text-zinc-400" aria-hidden="true">
           {open ? "▾" : "▸"}
         </span>
       </button>
       {open && (
         <div className="border-t border-zinc-800/60 px-2 pb-2">
-          <div className="mt-1 text-[9px] uppercase tracking-wider text-zinc-500">
+        <div className="mt-1 text-[9px] uppercase tracking-wider text-zinc-400">
             Content-free evidence
           </div>
           <pre className="overflow-x-auto rounded bg-zinc-950 p-1.5 text-zinc-300">

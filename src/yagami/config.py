@@ -367,11 +367,11 @@ class McpServerConfig(BaseModel):
     @model_validator(mode="after")
     def validate_transport(self) -> "McpServerConfig":
         if self.trust_zone is None:
-            self.trust_zone = (
-                TrustZone.DEVICE if self.transport == "stdio" else TrustZone.EXTERNAL
-            )
+            self.trust_zone = TrustZone.DEVICE if self.transport == "stdio" else TrustZone.EXTERNAL
         self.allowed_hosts = list(
-            dict.fromkeys(host.strip().rstrip(".").casefold() for host in self.allowed_hosts if host.strip())
+            dict.fromkeys(
+                host.strip().rstrip(".").casefold() for host in self.allowed_hosts if host.strip()
+            )
         )
         if self.transport == "stdio":
             if not self.command:

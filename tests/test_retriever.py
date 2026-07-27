@@ -125,12 +125,8 @@ async def test_exclude_session_drops_same_session(memdb):
 async def test_retrieval_is_project_scoped(memdb):
     emb = _FakeEmbedder()
     vec = await emb.embed("shared query")
-    await _insert(
-        "s1", "user", "alpha private memory", embedding=vec, project_id="alpha"
-    )
-    await _insert(
-        "s2", "user", "beta private memory", embedding=vec, project_id="beta"
-    )
+    await _insert("s1", "user", "alpha private memory", embedding=vec, project_id="alpha")
+    await _insert("s2", "user", "beta private memory", embedding=vec, project_id="beta")
 
     hits = await Retriever(emb).fetch(
         "shared query", k=10, exclude_session="other", project_id="alpha"
