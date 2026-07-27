@@ -1,6 +1,6 @@
 [project]
 name = "llama-index-llms-yagami"
-version = "0.6.1"
+version = "0.6.2"
 description = "LlamaIndex LLM integration for the Yagami AI context firewall."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -317,6 +317,8 @@ async def test_stability_adapter_handles_success_empty_prompt_and_http_error():
     chunks = await _collect(backend, [Message(role="user", content="a private landscape")])
     assert [chunk["type"] for chunk in chunks] == ["image_url", "done"]
     assert chunks[0]["content"].startswith("data:image/png;base64,")
+    assert chunks[0]["meta"] == {"model": backend._config.model}
+    assert "a private landscape" not in repr(chunks)
     assert await backend.health()
     await backend.close()
 

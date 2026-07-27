@@ -40,11 +40,10 @@ async def persist_decision(
     policy_decision: dict | None = None,
     request_context: dict | None = None,
 ) -> int:
-    # The decision ledger is deliberately content-free.  Keep writing the
-    # legacy NOT NULL column as an empty string until the 1.0 schema rebuild,
-    # but never persist even a "scrubbed" excerpt: pattern redaction cannot
-    # reliably remove names, addresses, medical narrative, or proprietary
-    # text.
+    # Evidence is deliberately content-free. Keep the legacy NOT NULL column
+    # empty until the planned 1.0 schema rebuild; pattern-based redaction
+    # cannot reliably remove names, addresses, medical narrative, secrets, or
+    # proprietary content.
     _ = user_text
     classification = decision.get("classification", {})
     source = (

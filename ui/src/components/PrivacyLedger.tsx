@@ -121,12 +121,12 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
                 </span>
               )}
             </div>
-              <span className="text-[10px] text-zinc-400">
+            <span className="text-[10px] text-zinc-400">
               {new Date(r.created_at).toLocaleTimeString()}
             </span>
           </div>
           <div className="mt-1 text-zinc-400 text-[11px]">{r.reason}</div>
-            <div className="mt-1 text-[10px] text-zinc-400 flex gap-3">
+          <div className="mt-1 text-[10px] text-zinc-400 flex gap-3">
             <span title="classifier + routing">
               route <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>
             </span>

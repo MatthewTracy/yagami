@@ -8,6 +8,16 @@ shipped.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-26
+
+### Security
+
+- Make decision evidence content-free by removing prompt previews from
+  storage reads, APIs, the Privacy Ledger, CSV exports, and decision logs.
+- Purge existing `scrubbed_preview` values during migration while retaining
+  the empty legacy column for schema compatibility until 1.0.
+- Remove the raw image prompt from Stability response metadata.
+
 ## [0.6.1] - 2026-07-14
 
 ### Security

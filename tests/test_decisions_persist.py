@@ -8,15 +8,15 @@ import logging
 import pytest
 
 from yagami.chat.session import SessionStore
+from yagami.storage.db import close_db, open_db
 from yagami.telemetry.decisions import (
     export_decisions_csv,
     list_decisions,
+    log_decision,
     persist_decision,
     scrub,
     update_decision_timings,
-    log_decision,
 )
-from yagami.storage.db import close_db, open_db
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,11 @@ async def test_persist_and_list(fresh_db):
 async def test_ledger_is_content_free(fresh_db):
     store = SessionStore()
     sid = await store.new_session()
-    raw = "My SSN is 123-45-6789 and phone is 415-555-0199, please summarize"
+    raw = (
+        "Jane Doe at 100 Main Street has CHF. SSN 123-45-6789. "
+        "Phone 415-555-0199. SECRET_TOKEN=abc123. "
+        "Retrieved: internal acquisition plan. Tool args: transfer(account=42)."
+    )
     decision = {
         "backend": "ollama",
         "is_local": True,
@@ -61,10 +65,19 @@ async def test_ledger_is_content_free(fresh_db):
     await persist_decision(session_id=sid, user_text=raw, decision=decision)
     rows = await list_decisions(session_id=sid)
     assert "scrubbed_preview" not in rows[0]
-    serialized = repr(rows[0])
-    assert raw not in serialized
-    assert "123-45-6789" not in serialized
-    assert "415-555-0199" not in serialized
+    serialized = json.dumps(rows[0], sort_keys=True)
+    for secret in (
+        raw,
+        "Jane Doe",
+        "100 Main Street",
+        "CHF",
+        "123-45-6789",
+        "415-555-0199",
+        "abc123",
+        "internal acquisition plan",
+        "transfer(account=42)",
+    ):
+        assert secret not in serialized
 
 
 @pytest.mark.asyncio
