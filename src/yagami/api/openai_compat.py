@@ -86,7 +86,7 @@ def _oauth_failure(exc: OAuthCredentialError, *, status_code: int = 400) -> JSON
         status_code=status_code,
         content={
             "error": {
-                "message": str(exc),
+                "message": exc.safe_message,
                 "type": "yagami_oauth_error",
                 "code": exc.code,
             }

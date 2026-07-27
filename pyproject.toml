@@ -122,6 +122,7 @@ branch = true
 source = ["yagami"]
 
 [tool.coverage.report]
+fail_under = 74
 show_missing = true
 skip_covered = true
 

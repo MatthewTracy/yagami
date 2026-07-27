@@ -88,13 +88,17 @@ def test_remote_admin_requires_oidc_and_explicit_https_origins() -> None:
                 admin_allowed_origins="http://admin.test",
             )
         )
-    assert "https://admin.test" in _admin_origins(
+    assert _admin_origins(
         Settings(
             remote_admin_enabled=True,
             oidc_issuer="https://identity.test",
             admin_allowed_origins="https://admin.test",
         )
-    )
+    ) == [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://admin.test",
+    ]
 
 
 @pytest.mark.asyncio

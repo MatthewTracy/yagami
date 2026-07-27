@@ -4,7 +4,6 @@ import httpx
 import pytest
 import respx
 from langchain_core.messages import HumanMessage
-
 from langchain_yagami import ChatYagami
 
 
