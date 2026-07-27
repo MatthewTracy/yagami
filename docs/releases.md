@@ -1,10 +1,10 @@
 # Release integrity and verification
 
 Yagami publishes immutable, versioned artifacts through one reviewed GitHub
-Actions workflow. A release tag must be annotated, must match the versions in
-`pyproject.toml` and `src/yagami/__init__.py`, and must point to the current tip
-of the protected `main` branch. Release tags cannot be updated or deleted while
-the repository's release-tag ruleset is active.
+Actions workflow. A release tag must carry a verified SSH signature, must match
+the versions in `pyproject.toml` and `src/yagami/__init__.py`, and must point to
+the current tip of the protected `main` branch. Release tags cannot be updated
+or deleted while the repository's release-tag ruleset is active.
 
 The release workflow reruns the complete Python, UI, and container CI suite. It
 then performs a clean wheel install, imports the installed application, runs the
@@ -71,30 +71,31 @@ for project `yagami` with owner `MatthewTracy`, repository `yagami`, workflow
 repository variable `PYPI_PUBLISH_ENABLED=true`. Never add a PyPI API token or
 password to GitHub secrets.
 
-1. Update the stable version in `pyproject.toml` and
-   `src/yagami/__init__.py`, and move the shipped changelog entries from
-   `Unreleased` into that version. Run `uv lock` and regenerate
-   `requirements.container.lock` with the command recorded at the top of that
-   file whenever runtime dependencies change. Regenerate
-   `requirements.build.lock` from `requirements.build.in` when build tooling
-   changes.
-2. Merge the change through the protected branch after every required check
-   passes. Run the `Release` workflow manually on `main`; this executes all
-   release-only build, clean-install, runtime, vulnerability, SBOM, and
-   attestation steps without publishing anything.
-3. Create and push an annotated tag from the exact `origin/main` commit only
-   after the dry run succeeds:
+Before enabling automated tag creation, generate a dedicated Ed25519 signing
+key, add its public key to the maintainer's GitHub account as an SSH **signing**
+key, and store only the private key in the repository Actions secret
+`RELEASE_TAG_SIGNING_KEY`. Do not reuse an authentication key. Keep an offline
+recovery copy and rotate both the account key and repository secret together.
+
+1. Run the `Prepare release pull request` workflow with the stable version and
+   release notes. It updates the core, adapters, npm provider, Helm chart, MCP
+   manifest, compatibility manifest, documentation, and changelog in lockstep.
+2. Merge the generated pull request through protected `main` after every
+   required check passes.
+3. The `Create immutable release tag` workflow validates the merged source,
+   creates an SSH-signed tag, verifies its signature locally, and pushes it.
+   The tag ruleset prevents later update or deletion.
+4. The signed tag starts the protected `Release` workflow. Approve the `pypi`
+   and `release` environments only after the release-only build,
+   clean-install, runtime, vulnerability, SBOM, and attestation steps pass.
+5. Do not create or upload release artifacts by hand. Verify the PyPI project,
+   GitHub release, GHCR digest, checksums, attestations, package visibility, and
+   the tag signature:
 
    ```bash
-   git switch main
-   git pull --ff-only
-   git tag -a v0.6.0 -m "Yagami 0.6.0"
-   git push origin v0.6.0
+   git fetch --tags origin
+   git verify-tag v0.6.2
    ```
-
-4. Do not create or upload release artifacts by hand. Wait for the `Release`
-   workflow and verify the PyPI project, GitHub release, GHCR digest,
-   checksums, attestations, and package visibility.
 
 Published PyPI filenames and versions cannot be replaced. If a release has a
 serious defect, yank it on PyPI, document the reason in the GitHub release,

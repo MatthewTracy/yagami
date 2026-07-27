@@ -25,21 +25,42 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - name: Validate and create annotated tag
+      - name: Validate and create signed immutable tag
+        env:
+          RELEASE_TAG_SIGNING_KEY: ${{ secrets.RELEASE_TAG_SIGNING_KEY }}
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${RELEASE_TAG_SIGNING_KEY:-}" ]; then
+            echo "::error::RELEASE_TAG_SIGNING_KEY is required for cryptographic tag signing."
+            exit 1
+          fi
+          umask 077
+          SIGNING_KEY="${RUNNER_TEMP}/yagami-release-tag-signing"
+          ALLOWED_SIGNERS="${RUNNER_TEMP}/yagami-release-allowed-signers"
+          trap 'rm -f "${SIGNING_KEY}" "${ALLOWED_SIGNERS}"' EXIT
+          printf '%s\n' "${RELEASE_TAG_SIGNING_KEY}" > "${SIGNING_KEY}"
+          PUBLIC_KEY="$(ssh-keygen -y -f "${SIGNING_KEY}")"
+          printf '%s %s\n' \
+            "41898282+github-actions[bot]@users.noreply.github.com" \
+            "${PUBLIC_KEY}" > "${ALLOWED_SIGNERS}"
+
           VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
           python scripts/prepare_release.py --version "${VERSION}" --check
           python scripts/check_release.py
           TAG="v${VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config gpg.format ssh
+          git config user.signingkey "${SIGNING_KEY}"
+          git config gpg.ssh.allowedSignersFile "${ALLOWED_SIGNERS}"
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             test "$(git rev-list -n 1 "${TAG}")" = "${GITHUB_SHA}"
+            git verify-tag "${TAG}"
             echo "${TAG} already identifies this immutable source revision."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag --annotate "${TAG}" --message "Yagami ${VERSION}"
+          git tag --sign "${TAG}" --message "Yagami ${VERSION}"
+          git verify-tag "${TAG}"
           git push origin "refs/tags/${TAG}"
-
