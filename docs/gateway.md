@@ -51,6 +51,20 @@ When keys are configured, every `/v1` and `/metrics` request requires
 `Authorization: Bearer <key>`. The project ID is taken only from the matched
 key; callers cannot impersonate another project through request metadata.
 
+## Capability discovery
+
+`GET /v1/capabilities` returns a versioned, content-free capability document
+for deployment checks and adapters. It reports supported APIs, storage and
+coordination modes, detectors, provider trust zones, retrieval and memory
+features, tool governance, and MCP support. It deliberately omits provider
+URLs, credentials, policy contents, identities, and customer data.
+
+The endpoint requires `gateway:read`. Clients should branch on
+`schema_version`, not the Yagami package version, because capability and
+evidence schemas evolve independently from server releases. The MCP tool
+`yagami_capabilities` returns the same runtime document together with the
+governed downstream catalog.
+
 ## Routing models
 
 - `yagami-auto`, `yagami`, or `auto`: allow Yagami to select a backend.

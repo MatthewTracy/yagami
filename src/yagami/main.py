@@ -317,7 +317,7 @@ def build_app() -> FastAPI:
         nonlocal embedding_worker, embedder, mcp_manager, retention_task
         mcp_lifespan_task: asyncio.Task | None = None
         mcp_lifespan_stop = asyncio.Event()
-        await open_db(db_path)
+        await open_db(db_path, database_url=settings.database_url)
         audit.start()
         try:
             expired_tokens = await transformer.cleanup_expired()

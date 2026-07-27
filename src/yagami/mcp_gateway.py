@@ -20,6 +20,7 @@ from starlette.routing import Route
 
 from .auth import Authenticator, Principal
 from .backends.base import Message
+from .capabilities import runtime_capabilities
 from .gateway import GatewayRequestOptions, GatewayService
 from .governance import inspect_context, inspect_output
 from .policy import PolicyContext, PolicyMode, RoutePolicy
@@ -517,11 +518,15 @@ def build_mcp_server(
         from .skills.mcp_manager import get_manager
 
         manager = get_manager()
-        return (
+        catalog = (
             manager.catalog()
             if manager is not None
             else {"tools": [], "resources": [], "prompts": [], "quarantined": []}
         )
+        return {
+            "runtime": runtime_capabilities(backends=gateway.backends),
+            "downstream": catalog,
+        }
 
     @server.tool(
         name="yagami_execute_tool",

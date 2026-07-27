@@ -1,0 +1,1 @@
+"""Versioned Yagami database migrations."""

@@ -258,11 +258,14 @@ class RoutingPolicy:
         elif _has_secret(override.stripped_text):
             sensitive = Sensitivity.SECRET
 
-        if sensitive not in {None, Sensitivity.NONE} and self._config.phi_must_be_local:
+        sensitive_value = (
+            sensitive.value if sensitive is not None and sensitive is not Sensitivity.NONE else None
+        )
+        if sensitive_value is not None and self._config.phi_must_be_local:
             target = self._backends.get(override.forced_backend or "")
             if target is not None and not target.is_local:
                 raise OverrideRefused(
-                    f"override ignored: sensitivity={sensitive.value} requires local backend, "
+                    f"override ignored: sensitivity={sensitive_value} requires local backend, "
                     f"requested {override.forced_backend!r} is cloud"
                 )
 
@@ -301,8 +304,8 @@ class RoutingPolicy:
             reason=f"slash override → {backend.name}",
             classification=cls_dict,
             system_prompt=sysprompt,
-            model_override=self._config.local_model_overrides.get(sensitive.value)
-            if sensitive not in {None, Sensitivity.NONE}
+            model_override=self._config.local_model_overrides.get(sensitive_value)
+            if sensitive_value is not None
             else None,
             effective_user_text=override.stripped_text or None,
             required_capabilities=_classification_requirements(cls),
@@ -327,14 +330,13 @@ class RoutingPolicy:
         backend = self._backends.get(name)
         if backend is None:
             raise OverrideRefused(f"force_backend {name!r} not registered")
-        if (
-            sensitive not in {None, Sensitivity.NONE}
-            and self._config.phi_must_be_local
-            and not backend.is_local
-        ):
+        sensitive_value = (
+            sensitive.value if sensitive is not None and sensitive is not Sensitivity.NONE else None
+        )
+        if sensitive_value is not None and self._config.phi_must_be_local and not backend.is_local:
             raise OverrideRefused(
                 f"force_backend {name!r} is cloud but content is "
-                f"{sensitive.value}-sensitive; refused"
+                f"{sensitive_value}-sensitive; refused"
             )
         if _is_cloud_text(backend) and history_has_phi:
             raise OverrideRefused(
@@ -351,8 +353,8 @@ class RoutingPolicy:
             reason=f"force_backend → {backend.name}",
             classification=cls_dict,
             system_prompt=sysprompt,
-            model_override=self._config.local_model_overrides.get(sensitive.value)
-            if sensitive not in {None, Sensitivity.NONE}
+            model_override=self._config.local_model_overrides.get(sensitive_value)
+            if sensitive_value is not None
             else None,
             required_capabilities=_classification_requirements(cls),
         )

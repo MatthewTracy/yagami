@@ -181,6 +181,14 @@ class AuditLedger:
                     pending = await cursor.fetchone()
                 if pending is not None and int(pending["count"]) >= self._outbox_max_pending:
                     raise RuntimeError("required audit outbox backpressure limit reached")
+            if db.dialect == "postgresql":
+                # Serialize one project's hash chain across every Yagami
+                # replica. The transaction lock is released automatically on
+                # commit or rollback.
+                await db.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (project_id,),
+                )
             async with db.execute(
                 "SELECT event_hash FROM audit_events WHERE project_id=? ORDER BY id DESC LIMIT 1",
                 (project_id,),
@@ -199,7 +207,8 @@ class AuditLedger:
             )
             cursor = await db.execute(
                 "INSERT INTO audit_events(created_at, project_id, request_id, event_type, payload,"
-                " previous_hash, event_hash, key_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                " previous_hash, event_hash, key_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)"
+                " RETURNING id",
                 (
                     created_at,
                     project_id,
@@ -211,7 +220,10 @@ class AuditLedger:
                     self.key_id,
                 ),
             )
-            event_id = int(cursor.lastrowid or 0)
+            inserted = await cursor.fetchone()
+            if inserted is None:
+                raise RuntimeError("audit event insert did not return a row id")
+            event_id = int(inserted["id"])
             await db.execute(
                 "INSERT INTO audit_key_epochs(key_id, first_used_at, last_used_at)"
                 " VALUES(?, ?, ?) ON CONFLICT(key_id) DO UPDATE SET last_used_at=excluded.last_used_at",

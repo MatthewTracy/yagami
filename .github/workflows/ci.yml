@@ -142,6 +142,66 @@ jobs:
           npm run build
           npm pack --dry-run
 
+  postgres:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: yagami
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: yagami
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U yagami -d yagami"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: test-only-password
+      YAGAMI_DATABASE_URL: postgresql://yagami:test-only-password@127.0.0.1:5432/yagami
+      YAGAMI_TEST_POSTGRES_URL: postgresql://yagami:test-only-password@127.0.0.1:5432/yagami
+      YAGAMI_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install production test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,production]"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Migrate and test PostgreSQL
+        run: |
+          yagami db migrate
+          pytest -q tests/test_postgres_storage.py
+          pytest -q tests/test_redis_coordination.py
+      - name: Verify PostgreSQL backup and restore
+        run: |
+          yagami db backup --output /tmp/yagami.dump
+          yagami db verify --format postgresql /tmp/yagami.dump
+          createdb --host 127.0.0.1 --username yagami yagami_restore
+          pg_restore --host 127.0.0.1 --username yagami \
+            --dbname yagami_restore --no-owner --no-privileges /tmp/yagami.dump
+          YAGAMI_TEST_POSTGRES_URL=postgresql://yagami:test-only-password@127.0.0.1:5432/yagami_restore \
+            pytest -q tests/test_postgres_storage.py
+
   container:
     timeout-minutes: 25
     runs-on: ubuntu-latest
@@ -170,3 +230,9 @@ jobs:
         run: helm lint deploy/helm/yagami --strict
       - name: Render secure defaults
         run: helm template test deploy/helm/yagami > /dev/null
+      - name: Render PostgreSQL multi-replica profile
+        run: |
+          helm template test deploy/helm/yagami \
+            --set replicaCount=3 \
+            --set database.existingSecret=yagami-postgresql \
+            --set coordination.existingSecret=yagami-redis > /dev/null

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import json
+import math
 import struct
 from dataclasses import dataclass
 
@@ -64,6 +65,35 @@ _FTS_QUERY_EXCLUDING_SESSION = """
     ORDER BY rank
     LIMIT ?
 """
+_POSTGRES_VEC_QUERY = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id, v.embedding,
+           o.project_id, o.data_labels, o.provenance
+    FROM observations_vec v
+    JOIN observations o ON o.id = v.rowid
+    WHERE o.project_id = ? AND o.quarantined = 0
+      AND o.embedding_status = 'ready'
+    ORDER BY o.id DESC
+    LIMIT 1000
+"""
+_POSTGRES_VEC_QUERY_EXCLUDING_SESSION = _POSTGRES_VEC_QUERY.replace(
+    "    ORDER BY o.id DESC",
+    "      AND o.session_id != ?\n    ORDER BY o.id DESC",
+)
+_POSTGRES_FTS_QUERY = """
+    SELECT o.id, o.role, o.text, o.sensitivity, o.session_id,
+           o.project_id, o.data_labels, o.provenance
+    FROM observations o
+    WHERE o.project_id = ? AND o.quarantined = 0
+      AND to_tsvector('simple', o.text) @@ plainto_tsquery('simple', ?)
+    ORDER BY ts_rank_cd(
+      to_tsvector('simple', o.text), plainto_tsquery('simple', ?)
+    ) DESC
+    LIMIT ?
+"""
+_POSTGRES_FTS_QUERY_EXCLUDING_SESSION = _POSTGRES_FTS_QUERY.replace(
+    "      AND to_tsvector",
+    "      AND o.session_id != ?\n      AND to_tsvector",
+)
 
 
 @dataclass
@@ -82,6 +112,20 @@ class Hit:
 
 def _vec_blob(vec: list[float]) -> bytes:
     return struct.pack(f"<{len(vec)}f", *vec)
+
+
+def _cosine_distance(left: list[float], blob: bytes) -> float:
+    if not blob or len(blob) % 4:
+        return 1.0
+    right = struct.unpack(f"<{len(blob) // 4}f", blob)
+    if len(left) != len(right):
+        return 1.0
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return 1.0
+    return max(0.0, 1.0 - dot / (left_norm * right_norm))
 
 
 def _sens(value: str) -> Sensitivity:
@@ -181,6 +225,35 @@ class Retriever:
         project_id: str,
     ) -> list[Hit]:
         db = get_db()
+        if db.dialect == "postgresql":
+            query = (
+                _POSTGRES_VEC_QUERY_EXCLUDING_SESSION if exclude_session else _POSTGRES_VEC_QUERY
+            )
+            parameters = (project_id, exclude_session) if exclude_session else (project_id,)
+            async with db.execute(
+                query,
+                parameters,
+            ) as cursor:
+                candidates = await cursor.fetchall()
+            ranked = sorted(
+                ((_cosine_distance(vec, bytes(row[5])), row) for row in candidates),
+                key=lambda item: item[0],
+            )[:k]
+            return [
+                Hit(
+                    id=int(row[0]),
+                    role=str(row[1]),
+                    text=str(row[2]),
+                    sensitivity=_sens(row[3]),
+                    session_id=str(row[4]),
+                    distance=distance,
+                    source="vec",
+                    project_id=str(row[6]),
+                    data_labels=_labels(row[7]),
+                    provenance=str(row[8]),
+                )
+                for distance, row in ranked
+            ]
         params: list = [
             _vec_blob(vec),
             k * 3,
@@ -225,6 +298,33 @@ class Retriever:
         cleaned = query.replace('"', "").strip()
         if not cleaned:
             return []
+        if db.dialect == "postgresql":
+            sql = _POSTGRES_FTS_QUERY_EXCLUDING_SESSION if exclude_session else _POSTGRES_FTS_QUERY
+            parameters = (
+                (project_id, exclude_session, cleaned, cleaned, k)
+                if exclude_session
+                else (project_id, cleaned, cleaned, k)
+            )
+            async with db.execute(
+                sql,
+                parameters,
+            ) as cursor:
+                rows = await cursor.fetchall()
+            return [
+                Hit(
+                    id=int(row[0]),
+                    role=str(row[1]),
+                    text=str(row[2]),
+                    sensitivity=_sens(row[3]),
+                    session_id=str(row[4]),
+                    distance=None,
+                    source="fts",
+                    project_id=str(row[5]),
+                    data_labels=_labels(row[6]),
+                    provenance=str(row[7]),
+                )
+                for row in rows
+            ]
         params: list = [cleaned, project_id]
         if exclude_session:
             params.append(exclude_session)

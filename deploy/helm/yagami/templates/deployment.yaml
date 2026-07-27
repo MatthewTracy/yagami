@@ -1,5 +1,9 @@
-{{- if or (gt (int .Values.replicaCount) 1) (and .Values.autoscaling.enabled (gt (int .Values.autoscaling.minReplicas) 1)) }}
-{{- fail "Yagami's bundled SQLite store supports exactly one writable replica; PostgreSQL support is required before scaling replicas" }}
+{{- $multiReplica := or (gt (int .Values.replicaCount) 1) (and .Values.autoscaling.enabled (gt (int .Values.autoscaling.minReplicas) 1)) }}
+{{- if and $multiReplica (not .Values.database.existingSecret) }}
+{{- fail "A PostgreSQL database.existingSecret is required before scaling Yagami beyond one replica" }}
+{{- end }}
+{{- if and $multiReplica (not .Values.coordination.existingSecret) }}
+{{- fail "A Redis coordination.existingSecret is required before scaling Yagami beyond one replica" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -60,6 +64,13 @@ spec:
               value: /app/config/projects.yaml
             - name: YAGAMI_DB_PATH
               value: /data/yagami.db
+            {{- if .Values.database.existingSecret }}
+            - name: YAGAMI_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret | quote }}
+                  key: {{ .Values.database.secretKey | quote }}
+            {{- end }}
             - name: YAGAMI_COORDINATION_PREFIX
               value: {{ .Values.coordination.prefix | quote }}
             - name: YAGAMI_COORDINATION_SLOT_TTL_SECONDS

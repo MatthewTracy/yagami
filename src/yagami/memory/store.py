@@ -96,7 +96,8 @@ async def queue_observation(
                   ttl_until, created_at, chunk_index, parent_id, embedding_status,
                   project_id, data_labels, provenance, policy_hash, quarantined,
                   quarantine_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               RETURNING id""",
             (
                 session_id,
                 role,
@@ -116,9 +117,10 @@ async def queue_observation(
                 quarantine_reason,
             ),
         )
-        new_id = cur.lastrowid
-        if new_id is None:
+        inserted = await cur.fetchone()
+        if inserted is None:
             raise RuntimeError("observation insert did not return a row id")
+        new_id = int(inserted["id"])
         if i == 0:
             parent_id = new_id
         ids.append(new_id)

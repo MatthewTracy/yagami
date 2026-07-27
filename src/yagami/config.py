@@ -458,6 +458,7 @@ class Settings(BaseSettings):
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
     )
     db_path: str = Field(default="yagami.db", validation_alias=AliasChoices("YAGAMI_DB_PATH"))
+    database_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_DATABASE_URL"))
     coordination_url: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_COORDINATION_URL")
     )

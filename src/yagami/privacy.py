@@ -7,9 +7,14 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-import aiosqlite
-
-from .storage.db import exclusive_db, get_db, now_ms, snapshot_db
+from .storage.db import (
+    DatabaseConnection,
+    DatabaseRow,
+    exclusive_db,
+    get_db,
+    now_ms,
+    snapshot_db,
+)
 
 _DAY_MS = 24 * 60 * 60 * 1000
 
@@ -33,7 +38,7 @@ _EXPORT_TABLES: tuple[tuple[str, str], ...] = (
 )
 
 
-async def _data_counts(db: aiosqlite.Connection) -> dict[str, int]:
+async def _data_counts(db: DatabaseConnection) -> dict[str, int]:
     counts: dict[str, int] = {}
     for name in (
         "sessions",
@@ -141,7 +146,7 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         return {name: before[name] - after[name] for name in before}
 
 
-def _json_record(row: aiosqlite.Row, *, table: str) -> str:
+def _json_record(row: DatabaseRow, *, table: str) -> str:
     record = {key: row[key] for key in row.keys()}
     if table == "message_attachments":
         record["data_b64"] = base64.b64encode(record.pop("data")).decode("ascii")

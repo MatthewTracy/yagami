@@ -50,6 +50,7 @@ dependencies = [
     "opentelemetry-api>=1.28",
     "cryptography>=43",
     "PyJWT[crypto]>=2.10",
+    "sqlalchemy[asyncio]>=2.0.41",
 ]
 
 [project.urls]
@@ -78,7 +79,6 @@ production = [
     "alembic>=1.16",
     "asyncpg>=0.30",
     "redis>=5.2",
-    "sqlalchemy[asyncio]>=2.0.41",
 ]
 
 [project.scripts]

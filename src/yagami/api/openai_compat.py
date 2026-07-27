@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..auth import Principal, require_scope
 from ..backends.base import Capability, ImageAttachment, Message
+from ..capabilities import runtime_capabilities
 from ..gateway import GatewayError, GatewayRequestOptions, PolicyDeniedError
 from ..governance import TransformationError, TransformationSession
 from ..policy import PolicyContext, PolicyMode, RoutePolicy, TransformPolicy, replay_decisions
@@ -64,6 +65,18 @@ async def shutdown_response_jobs() -> None:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@router.get("/capabilities")
+async def capabilities(
+    request: Request,
+    _principal: Principal = Depends(_gateway_read),
+) -> dict[str, Any]:
+    runtime = request.app.state.runtime
+    return runtime_capabilities(
+        backends=runtime.backends,
+        embedder_available=runtime.embedder is not None,
+    )
 
 
 class ImageURL(BaseModel):

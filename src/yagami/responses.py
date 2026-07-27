@@ -60,8 +60,9 @@ async def append_response_event(
     response_id: str, sequence_number: int, event: dict[str, Any]
 ) -> None:
     await get_db().execute(
-        "INSERT OR IGNORE INTO response_events(response_id, sequence_number, event_json,"
-        " created_at) VALUES(?, ?, ?, ?)",
+        "INSERT INTO response_events(response_id, sequence_number, event_json,"
+        " created_at) VALUES(?, ?, ?, ?)"
+        " ON CONFLICT(response_id, sequence_number) DO NOTHING",
         (
             response_id,
             sequence_number,

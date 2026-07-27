@@ -27,9 +27,34 @@ operator. The chart never creates secret values. Enable its NetworkPolicy only
 after setting the ingress namespace selector appropriate to your cluster.
 
 The bundled SQLite database is suited to a single writable replica. Keep
-`replicaCount: 1` unless all stateful features are externalized; horizontal
-autoscaling is opt-in for that reason. The chart rejects an unsafe multi-replica
-configuration instead of allowing several pods to contend for one SQLite file.
+`replicaCount: 1` for workstation and small single-pod deployments. PostgreSQL
+is the production store and Redis provides distributed rate/concurrency
+coordination. The chart rejects unsafe multi-replica configurations unless both
+external services are supplied:
+
+```yaml
+replicaCount: 3
+database:
+  existingSecret: yagami-postgresql
+  secretKey: YAGAMI_DATABASE_URL
+coordination:
+  existingSecret: yagami-redis
+  secretKey: YAGAMI_COORDINATION_URL
+```
+
+Initialize a clean PostgreSQL database before starting Yagami:
+
+```bash
+export YAGAMI_DATABASE_URL='postgresql://yagami@postgres.example/yagami'
+yagami db migrate
+```
+
+The asynchronous SQLAlchemy data layer supports SQLite and PostgreSQL. SQLite
+uses sqlite-vec and FTS5; PostgreSQL stores portable embedding bytes and ranks a
+bounded candidate set in the application while using native full-text search.
+This avoids requiring a privileged database extension. For a large corpus,
+measure retrieval latency before raising the 1,000-candidate bound or adopting
+a separately reviewed pgvector migration.
 
 ## Distributed coordination
 
@@ -45,8 +70,8 @@ coordination:
 ```
 
 Redis coordination does not turn SQLite into a multi-writer database. It is a
-production foundation for the PostgreSQL deployment profile, and it can already
-coordinate multiple gateway workers that share no mutable SQLite state.
+required component alongside PostgreSQL for deployments with more than one
+replica.
 
 ## Remote administration
 
@@ -105,3 +130,41 @@ The chart can create a Prometheus `ServiceMonitor`. Because `/metrics` is
 authenticated, point `bearerTokenSecret` at a gateway credential with only the
 `metrics:read` scope. Example collector, alert, dashboard, and SLO assets live
 under `deploy/observability`.
+
+## Backup, restore, upgrade, and rollback
+
+Stop writes before restoring any database. For SQLite, the CLI creates a
+consistent backup through SQLite's backup API and verifies both `quick_check`
+and required schema history:
+
+```bash
+yagami db backup --source /data/yagami.db --output /backups/yagami.db
+yagami db verify /backups/yagami.db
+yagami db restore-sqlite /backups/yagami.db \
+  --target /data/yagami-restored.db
+```
+
+For PostgreSQL, install matching `pg_dump` and `pg_restore` client tools. The
+CLI creates a custom-format, ownership-free archive and verifies its table of
+contents:
+
+```bash
+yagami db backup \
+  --database-url "$YAGAMI_DATABASE_URL" \
+  --output /backups/yagami.dump
+yagami db verify --format postgresql /backups/yagami.dump
+```
+
+Before an upgrade:
+
+1. Build and verify a backup.
+2. Restore it into a temporary database and run application smoke tests there.
+3. Run `yagami db migrate` against the temporary database.
+4. Deploy the immutable image digest to one canary.
+5. Expand only after health, audit, policy-denial, and latency checks pass.
+
+Schema downgrades are intentionally non-destructive. Roll back the application
+only when its compatibility manifest supports the upgraded schema. Otherwise,
+stop writers and restore the verified pre-upgrade backup into a new database,
+then repoint the deployment. Never attempt to reverse an evidence migration by
+dropping columns in place.
