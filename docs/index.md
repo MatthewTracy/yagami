@@ -18,6 +18,10 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Demo mode uses the bundled
 UI and a local echo backend, disables cloud routing, and still exercises policy,
 classification, lineage, storage, and audit decisions.
 
+Continue with the [no-data security tour](tour.md) or run the three
+[flagship scenarios](https://github.com/MatthewTracy/yagami/tree/main/examples/flagship)
+for secret containment, poisoned retrieval, and one-time tool approval.
+
 ## Protect an application
 
 Initialize persistent user configuration, check the host, and start Yagami:
@@ -48,6 +52,10 @@ print(response.choices[0].message.content)
 For headless or remote deployments, configure a scoped API key and follow the
 [deployment guide](deployment.md). For sensitive workflows, callers should
 declare sensitivity rather than relying only on detection.
+
+Copy-ready examples are available for the OpenAI SDK, OpenAI Agents,
+PydanticAI, CrewAI, AutoGen, Semantic Kernel, LiteLLM, LangGraph, and Foundry
+Local in the [examples directory](https://github.com/MatthewTracy/yagami/tree/main/examples).
 
 ## The core guarantee
 

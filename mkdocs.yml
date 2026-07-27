@@ -29,6 +29,7 @@ markdown_extensions:
   - pymdownx.superfences
 nav:
   - Start here: index.md
+  - Security tour: tour.md
   - Gateway API: gateway.md
   - Policies: policies.md
   - Integrations: integrations.md
@@ -41,4 +42,5 @@ nav:
       - Threat model: threat-model.md
       - Release integrity: releases.md
   - Evaluation: benchmarks.md
+  - Design partners: design-partners.md
   - Roadmap: roadmap.md

@@ -15,7 +15,9 @@ _SERVICE = "yagami"
 
 
 def _backend_available() -> bool:
-    if os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"}:
+    if os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"} or os.getenv(
+        "YAGAMI_DEMO_MODE", ""
+    ).casefold() in {"1", "true", "yes", "on"}:
         return False
     try:
         import keyring

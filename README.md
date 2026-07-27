@@ -36,6 +36,10 @@ storage, and audit path.
 
 [Watch the two-minute demo](https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2).
 
+[Take the no-data security tour](https://matthewtracy.github.io/yagami/tour/) or
+run the [flagship security demos](https://github.com/MatthewTracy/yagami/tree/main/examples/flagship)
+for secret containment, poisoned retrieval, and identity-bound tool approval.
+
 ## Protect an application
 
 Initialize persistent user configuration, check the host, and start Yagami:
