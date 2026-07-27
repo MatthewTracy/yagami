@@ -1,33 +1,66 @@
 name: Create immutable release tag
 
 on:
-  push:
+  pull_request_target:
+    types: [closed]
     branches: [main]
     paths:
       - "release/compatibility.json"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: create-release-tag
   cancel-in-progress: false
 
 jobs:
-  tag:
+  validate:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - name: Validate and create signed immutable tag
+      - name: Validate reviewed release metadata
+        env:
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          RELEASE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"
+          VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
+          test "${RELEASE_BRANCH}" = "release/${VERSION}"
+          python scripts/prepare_release.py --version "${VERSION}" --check
+          python scripts/check_release.py
+
+  tag:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Create signed immutable tag from validated merge
         env:
           RELEASE_TAG_SIGNING_KEY: ${{ secrets.RELEASE_TAG_SIGNING_KEY }}
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          RELEASE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -42,16 +75,19 @@ jobs:
           printf '%s\n' "${RELEASE_TAG_SIGNING_KEY}" > "${SIGNING_KEY}"
           PUBLIC_KEY="$(ssh-keygen -y -f "${SIGNING_KEY}")"
           printf '%s %s\n' \
-            "41898282+github-actions[bot]@users.noreply.github.com" \
+            "77125799+MatthewTracy@users.noreply.github.com" \
             "${PUBLIC_KEY}" > "${ALLOWED_SIGNERS}"
 
-          VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
-          python scripts/prepare_release.py --version "${VERSION}" --check
-          python scripts/check_release.py
+          VERSION="$(jq -er '.release | select(type == "string")' release/compatibility.json)"
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "${RELEASE_BRANCH}" = "release/${VERSION}"
+          test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "${RELEASE_COMMIT}"
           TAG="v${VERSION}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "Matthew Tracy"
+          git config user.email "77125799+MatthewTracy@users.noreply.github.com"
           git config gpg.format ssh
           git config user.signingkey "${SIGNING_KEY}"
           git config gpg.ssh.allowedSignersFile "${ALLOWED_SIGNERS}"

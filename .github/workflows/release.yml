@@ -355,8 +355,12 @@ jobs:
 
   publish-npm:
     name: Publish AI SDK provider to npm
-    if: github.event_name == 'push' && vars.NPM_PUBLISH_ENABLED == 'true'
-    needs: [build-python, build-integrations, test-container]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      vars.NPM_PUBLISH_ENABLED == 'true' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+    needs: [build-python, build-integrations, test-container, publish-pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -387,8 +391,11 @@ jobs:
 
   publish-helm:
     name: Publish Helm chart to GHCR
-    if: github.event_name == 'push'
-    needs: [build-python, build-integrations, test-container]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
+    needs: [build-python, build-integrations, test-container, publish-pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -425,9 +432,6 @@ jobs:
     needs: [publish-pypi, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: release
-      url: https://registry.modelcontextprotocol.io/
     permissions:
       contents: read
       id-token: write
@@ -586,9 +590,6 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment:
-      name: release
-      url: https://github.com/${{ github.repository }}/pkgs/container/yagami
     permissions:
       contents: read
       packages: write
@@ -635,9 +636,6 @@ jobs:
       needs.promote-container.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: release
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       contents: write
     steps:

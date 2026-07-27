@@ -81,12 +81,19 @@ recovery copy and rotate both the account key and repository secret together.
    release notes. It updates the core, adapters, npm provider, Helm chart, MCP
    manifest, compatibility manifest, documentation, and changelog in lockstep.
 2. Merge the generated pull request through protected `main` after every
-   required check passes.
-3. The `Create immutable release tag` workflow validates the merged source,
-   creates an SSH-signed tag, verifies its signature locally, and pushes it.
-   The tag ruleset prevents later update or deletion.
+   required check passes. Only a merged same-repository `release/<version>`
+   pull request can start tag creation; ordinary feature merges cannot create
+   or recreate a release tag.
+3. The `Create immutable release tag` workflow validates the exact merge
+   commit in an unprivileged job. A separate signing job then confirms that
+   the commit is still the tip of `main`, creates an SSH-signed tag, verifies
+   its signature locally, and pushes it. The tag ruleset prevents later update
+   or deletion.
 4. The signed tag starts the protected `Release` workflow. Approve the `pypi`
-   and `release` environments only after the release-only build,
+   environment once for the Python publications and the `release` environment
+   once for the remaining registries. Downstream smoke tests, promotion, and
+   GitHub Release creation inherit those completed gates and do not request
+   additional approvals. Approve only after the release-only build,
    clean-install, runtime, vulnerability, SBOM, and attestation steps pass.
 5. Do not create or upload release artifacts by hand. Verify the PyPI project,
    GitHub release, GHCR digest, checksums, attestations, package visibility, and
