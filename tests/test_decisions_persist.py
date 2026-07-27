@@ -47,7 +47,8 @@ async def test_ledger_is_content_free(fresh_db):
     store = SessionStore()
     sid = await store.new_session()
     raw = (
-        "Jane Doe at 100 Main Street has CHF. SECRET_TOKEN=abc123. "
+        "Jane Doe at 100 Main Street has CHF. SSN 123-45-6789. "
+        "Phone 415-555-0199. SECRET_TOKEN=abc123. "
         "Retrieved: internal acquisition plan. Tool args: transfer(account=42)."
     )
     decision = {
@@ -70,6 +71,8 @@ async def test_ledger_is_content_free(fresh_db):
         "Jane Doe",
         "100 Main Street",
         "CHF",
+        "123-45-6789",
+        "415-555-0199",
         "abc123",
         "internal acquisition plan",
         "transfer(account=42)",

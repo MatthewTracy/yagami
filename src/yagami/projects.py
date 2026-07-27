@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import time
-from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -10,6 +7,7 @@ from typing import AsyncIterator
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from .coordination import Coordinator, LocalCoordinator
 from .telemetry.costs import spend_project_today_usd
 
 
@@ -69,12 +67,16 @@ class ProjectRegistry:
 
 
 class ProjectGovernor:
-    def __init__(self, registry: ProjectRegistry) -> None:
+    def __init__(
+        self,
+        registry: ProjectRegistry,
+        coordinator: Coordinator | None = None,
+        *,
+        slot_ttl_seconds: int = 300,
+    ) -> None:
         self.registry = registry
-        self._rate_lock = asyncio.Lock()
-        self._requests: dict[str, deque[float]] = defaultdict(deque)
-        self._concurrency_lock = asyncio.Lock()
-        self._active: dict[str, int] = defaultdict(int)
+        self.coordinator = coordinator or LocalCoordinator()
+        self.slot_ttl_seconds = slot_ttl_seconds
 
     async def check_request(
         self,
@@ -96,19 +98,17 @@ class ProjectGovernor:
                 f"jurisdiction {jurisdiction!r} is not allowed for project {project_id!r}",
                 code="jurisdiction_not_allowed",
             )
-        now = time.monotonic()
-        async with self._rate_lock:
-            window = self._requests[project_id]
-            while window and window[0] <= now - 60:
-                window.popleft()
-            if len(window) >= limits.requests_per_minute:
-                retry_after = max(1, int(60 - (now - window[0])))
-                raise ProjectLimitError(
-                    f"project {project_id!r} exceeded {limits.requests_per_minute} requests/minute",
-                    code="rate_limit_exceeded",
-                    retry_after=retry_after,
-                )
-            window.append(now)
+        retry_after = await self.coordinator.rate_limit(
+            project_id,
+            limit=limits.requests_per_minute,
+            window_seconds=60,
+        )
+        if retry_after is not None:
+            raise ProjectLimitError(
+                f"project {project_id!r} exceeded {limits.requests_per_minute} requests/minute",
+                code="rate_limit_exceeded",
+                retry_after=retry_after,
+            )
 
     async def spend_blocked(self, project_id: str) -> bool:
         cap = self.registry.limits_for(project_id).daily_spend_usd
@@ -119,16 +119,18 @@ class ProjectGovernor:
     @asynccontextmanager
     async def slot(self, project_id: str) -> AsyncIterator[None]:
         limits = self.registry.limits_for(project_id)
-        async with self._concurrency_lock:
-            if self._active[project_id] >= limits.max_concurrent_requests:
-                raise ProjectLimitError(
-                    f"project {project_id!r} has too many concurrent requests",
-                    code="concurrency_limit_exceeded",
-                    retry_after=1,
-                )
-            self._active[project_id] += 1
+        token = await self.coordinator.acquire_slot(
+            project_id,
+            limit=limits.max_concurrent_requests,
+            ttl_seconds=self.slot_ttl_seconds,
+        )
+        if token is None:
+            raise ProjectLimitError(
+                f"project {project_id!r} has too many concurrent requests",
+                code="concurrency_limit_exceeded",
+                retry_after=1,
+            )
         try:
             yield
         finally:
-            async with self._concurrency_lock:
-                self._active[project_id] = max(0, self._active[project_id] - 1)
+            await self.coordinator.release_slot(project_id, token)

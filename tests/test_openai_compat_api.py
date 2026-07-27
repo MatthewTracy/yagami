@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import asyncio
 import base64
 import json
 
@@ -10,12 +11,20 @@ from httpx import ASGITransport, AsyncClient
 from openai import AsyncOpenAI
 
 from yagami import config as config_mod
-from yagami.backends.base import BackendChunk, BackendOptions, Capability, Message, Pricing
+from yagami.backends.base import (
+    BackendChunk,
+    BackendOptions,
+    Capability,
+    Message,
+    Pricing,
+    TrustZone,
+)
 from yagami.config import RoutingConfig
 from yagami.main import build_app
 from yagami.policy import OutputPolicy
 from yagami.router.policy import RoutingPolicy
 from yagami.router.schema import Classification, Sensitivity
+from yagami.skills.mcp_oauth import OAuthCompletion, OAuthCredentialError
 from yagami.storage.db import get_db
 
 API_KEY = "test-key-0123456789abcdef"
@@ -77,6 +86,66 @@ class GatewayFakeBackend:
         return True
 
 
+class FakeEmbedder:
+    model = "test-embedding"
+
+    def __init__(self) -> None:
+        self.inputs: list[str] = []
+
+    async def embed(self, text: str) -> list[float] | None:
+        self.inputs.append(text)
+        return [0.25] * 384
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeOAuthStore:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def begin(self, **kwargs):
+        self.calls.append(("begin", kwargs))
+        return {
+            "authorization_url": "https://identity.test/authorize?state=opaque",
+            "expires_at": 123456,
+        }
+
+    async def complete(self, **kwargs):
+        self.calls.append(("complete", kwargs))
+        return OAuthCompletion(
+            server_name="crm",
+            project_id="test",
+            subject_hash="content-free-subject-hash",
+            access_expires_at=654321,
+        )
+
+    async def cancel(self, state: str) -> bool:
+        self.calls.append(("cancel", {"state": state}))
+        return True
+
+    async def revoke(self, **kwargs) -> bool:
+        self.calls.append(("revoke", kwargs))
+        return True
+
+
+class FakeOAuthMcpManager:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.config = object()
+
+    def configured_server(self, server_name: str):
+        self.calls.append(("configured_server", {"server_name": server_name}))
+        return self.config if server_name == "crm" else None
+
+    async def connect_for_subject(self, server_name: str, **kwargs) -> int:
+        self.calls.append(("connect", {"server_name": server_name, **kwargs}))
+        return 3
+
+    async def disconnect_subject(self, server_name: str, **kwargs) -> None:
+        self.calls.append(("disconnect", {"server_name": server_name, **kwargs}))
+
+
 @pytest_asyncio.fixture
 async def gateway_app(tmp_path, monkeypatch):
     monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(tmp_path / "missing.toml"))
@@ -125,9 +194,128 @@ async def gateway_app(tmp_path, monkeypatch):
     runtime.gateway.backends = backends
     runtime.gateway.routing_policy = routing
     async with app.router.lifespan_context(app):
+        runtime.embedder = FakeEmbedder()
         yield app, local, cloud
     config_mod.get_settings.cache_clear()
     config_mod.get_config.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_mcp_oauth_api_binds_authorization_to_authenticated_subject(
+    gateway_app, monkeypatch
+) -> None:
+    app, _local, _cloud = gateway_app
+    runtime = app.state.runtime
+    store = FakeOAuthStore()
+    manager = FakeOAuthMcpManager()
+    runtime.mcp_oauth = store
+    runtime.mcp_server = None
+    monkeypatch.setattr("yagami.api.openai_compat.get_manager", lambda: manager)
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        authorization = await client.post("/v1/mcp/oauth/crm/authorize", headers=headers)
+        callback = await client.get(
+            "/v1/mcp/oauth/callback",
+            params={"state": "one-time-state", "code": "one-time-code"},
+        )
+        activation = await client.post("/v1/mcp/oauth/crm/activate", headers=headers)
+        revocation = await client.delete("/v1/mcp/oauth/crm", headers=headers)
+
+    assert authorization.status_code == 200
+    assert authorization.json()["authorization_url"].startswith("https://identity.test/")
+    assert callback.status_code == 200
+    assert callback.json()["authorized"] is True
+    assert activation.json()["tool_count"] == 3
+    assert revocation.json()["deleted"] is True
+
+    begin = next(payload for name, payload in store.calls if name == "begin")
+    revoke = next(payload for name, payload in store.calls if name == "revoke")
+    connect = next(payload for name, payload in manager.calls if name == "connect")
+    disconnect = next(payload for name, payload in manager.calls if name == "disconnect")
+    assert begin["project_id"] == "test"
+    assert begin["subject_id"].startswith("api-key:")
+    assert revoke["subject_id"] == begin["subject_id"]
+    assert connect["subject_id"] == begin["subject_id"]
+    assert disconnect["subject_id"] == begin["subject_id"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_oauth_api_returns_safe_stable_failures(gateway_app, monkeypatch) -> None:
+    app, _local, _cloud = gateway_app
+    runtime = app.state.runtime
+    runtime.mcp_oauth = None
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    monkeypatch.setattr("yagami.api.openai_compat.get_manager", lambda: None)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing_server = await client.post("/v1/mcp/oauth/missing/authorize", headers=headers)
+        unavailable_callback = await client.get("/v1/mcp/oauth/callback")
+        unavailable_activation = await client.post(
+            "/v1/mcp/oauth/missing/activate", headers=headers
+        )
+        unavailable_revocation = await client.delete("/v1/mcp/oauth/missing", headers=headers)
+
+    assert missing_server.status_code == 404
+    assert missing_server.json()["error"]["code"] == "mcp_oauth_server_unavailable"
+    assert unavailable_callback.status_code == 503
+    assert unavailable_callback.json()["error"]["code"] == "mcp_oauth_configuration_invalid"
+    assert unavailable_activation.status_code == 404
+    assert unavailable_revocation.status_code == 404
+
+    store = FakeOAuthStore()
+    runtime.mcp_oauth = store
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        denied = await client.get(
+            "/v1/mcp/oauth/callback",
+            params={"state": "denied-state", "error": "access_denied"},
+        )
+    assert denied.status_code == 400
+    assert denied.json()["error"]["code"] == "mcp_oauth_authorization_denied"
+    assert ("cancel", {"state": "denied-state"}) in store.calls
+
+
+@pytest.mark.asyncio
+async def test_mcp_oauth_api_does_not_expose_internal_exchange_failures(
+    gateway_app, monkeypatch
+) -> None:
+    app, _local, _cloud = gateway_app
+    runtime = app.state.runtime
+    store = FakeOAuthStore()
+    manager = FakeOAuthMcpManager()
+    runtime.mcp_oauth = store
+    monkeypatch.setattr("yagami.api.openai_compat.get_manager", lambda: manager)
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+
+    async def fail_begin(**_kwargs):
+        raise OAuthCredentialError("mcp_oauth_exchange_failed", "safe failure")
+
+    async def fail_complete(**_kwargs):
+        raise OAuthCredentialError("mcp_oauth_state_invalid", "safe failure")
+
+    async def fail_connect(_server_name: str, **_kwargs):
+        raise OAuthCredentialError("mcp_oauth_authorization_required", "safe failure")
+
+    store.begin = fail_begin
+    store.complete = fail_complete
+    manager.connect_for_subject = fail_connect
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        begin = await client.post("/v1/mcp/oauth/crm/authorize", headers=headers)
+        complete = await client.get(
+            "/v1/mcp/oauth/callback",
+            params={"state": "state", "code": "code"},
+        )
+        activate = await client.post("/v1/mcp/oauth/crm/activate", headers=headers)
+
+    assert begin.json()["error"] == {
+        "message": "safe failure",
+        "type": "yagami_oauth_error",
+        "code": "mcp_oauth_exchange_failed",
+    }
+    assert complete.json()["error"]["code"] == "mcp_oauth_state_invalid"
+    assert activate.status_code == 401
+    assert activate.json()["error"]["code"] == "mcp_oauth_authorization_required"
 
 
 @pytest.mark.asyncio
@@ -150,6 +338,58 @@ async def test_chat_completions_is_openai_sdk_compatible(gateway_app) -> None:
     assert response.choices[0].message.content == "reply-from-local"
     assert response.model == "local"
     assert len(local.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_embeddings_are_openai_compatible_and_content_free(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    http_client = AsyncClient(transport=transport, base_url="http://test")
+    client = AsyncOpenAI(
+        api_key=API_KEY,
+        base_url="http://test/v1",
+        http_client=http_client,
+    )
+    private_input = "Internal codename is blue-orchid"
+    try:
+        response = await client.embeddings.create(
+            model="yagami-embedding",
+            input=[private_input, "safe input"],
+            dimensions=384,
+        )
+    finally:
+        await client.close()
+    assert response.model == "test-embedding"
+    assert len(response.data) == 2
+    assert len(response.data[0].embedding) == 384
+    async with get_db().execute(
+        "SELECT scrubbed_preview, channel, request_context FROM decisions"
+        " WHERE channel='embeddings' ORDER BY id DESC LIMIT 1"
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row["scrubbed_preview"] == ""
+    assert private_input not in str(dict(row))
+
+
+@pytest.mark.asyncio
+async def test_embeddings_enforce_sensitive_destination_boundary(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    runtime = app.state.runtime
+    runtime.config.memory.embedding_trust_zone = TrustZone.EXTERNAL
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/embeddings",
+            headers=headers,
+            json={
+                "model": "yagami-embedding",
+                "input": "api_key=supersecret123456789",
+            },
+        )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "policy_denied"
+    assert runtime.embedder.inputs == []
 
 
 @pytest.mark.asyncio
@@ -397,6 +637,69 @@ async def test_responses_stream_emits_function_call_events(gateway_app) -> None:
     assert "response.function_call_arguments.delta" in body
     assert "response.function_call_arguments.done" in body
     assert '"name":"weather.read"' in body
+
+
+@pytest.mark.asyncio
+async def test_responses_background_retrieval_and_event_resume(gateway_app) -> None:
+    app, _local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        accepted = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "model": "yagami-auto",
+                "input": "run in background",
+                "background": True,
+                "conversation": "support-case-7",
+            },
+        )
+        response_id = accepted.json()["id"]
+        for _ in range(100):
+            retrieved = await client.get(
+                f"/v1/responses/{response_id}",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+            if retrieved.json()["status"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        events = await client.get(
+            f"/v1/responses/{response_id}/events?after=0",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+        )
+
+    assert accepted.status_code == 202
+    assert retrieved.status_code == 200
+    assert retrieved.json()["output"][0]["content"][0]["text"] == "reply-from-local"
+    assert [item["event"]["type"] for item in events.json()["data"]] == ["response.completed"]
+
+
+@pytest.mark.asyncio
+async def test_previous_response_restores_governed_conversation_state(gateway_app) -> None:
+    app, local, _cloud = gateway_app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={"input": "first turn"},
+        )
+        second = await client.post(
+            "/v1/responses",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={
+                "input": "second turn",
+                "previous_response_id": first.json()["id"],
+            },
+        )
+
+    assert second.status_code == 200
+    sent = local.calls[-1]
+    assert [message.content for message in sent] == [
+        "first turn",
+        "reply-from-local",
+        "second turn",
+    ]
 
 
 @pytest.mark.asyncio

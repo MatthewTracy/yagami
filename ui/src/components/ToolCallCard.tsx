@@ -2,10 +2,9 @@ import { useState } from "react";
 
 export type ToolCallInfo = {
   name: string;
-  input: Record<string, unknown>;
   ok: boolean;
-  result?: string | null;
-  error?: string | null;
+  errorCode?: string | null;
+  resultBytes?: number;
   artifacts?: Record<string, unknown>;
 };
 
@@ -16,49 +15,39 @@ export function ToolCallCard({ call }: Props) {
   const tone = call.ok
     ? "border-zinc-700 bg-zinc-900/60"
     : "border-red-900/60 bg-red-950/30";
-  const preview = call.ok
-    ? (call.result ?? "").trim().slice(0, 200)
-    : (call.error ?? "error");
+  const status = call.ok
+    ? `completed (${call.resultBytes ?? 0} response bytes)`
+    : call.errorCode ?? "tool_failed";
   return (
-    <div className={`my-2 rounded border ${tone} text-[11px] overflow-hidden`}>
+    <div className={`my-2 overflow-hidden rounded border ${tone} text-[11px]`}>
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left px-2 py-1.5 flex items-center gap-2 hover:bg-zinc-800/40"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-800/40"
       >
-        <span>{call.ok ? "🔧" : "⚠"}</span>
+        <span aria-hidden="true">{call.ok ? "✓" : "!"}</span>
         <span className="font-mono text-zinc-300">{call.name}</span>
-        <span className="text-zinc-500 truncate flex-1 min-w-0">
-          {Object.entries(call.input)
-            .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-            .join(", ")}
+      <span className="min-w-0 flex-1 truncate text-zinc-400">{status}</span>
+      <span className="text-zinc-400" aria-hidden="true">
+          {open ? "▾" : "▸"}
         </span>
-        <span className="text-zinc-500">{open ? "▾" : "▸"}</span>
       </button>
-      {!open && preview && (
-        <div className="px-2 pb-1.5 text-zinc-400 italic truncate">→ {preview}</div>
-      )}
       {open && (
-        <div className="px-2 pb-2 space-y-1.5 border-t border-zinc-800/60">
-          <div>
-            <div className="text-[9px] uppercase tracking-wider text-zinc-500 mt-1">
-              Input
-            </div>
-            <pre className="bg-zinc-950 p-1.5 rounded text-zinc-300 overflow-x-auto">
-              {JSON.stringify(call.input, null, 2)}
-            </pre>
+        <div className="border-t border-zinc-800/60 px-2 pb-2">
+        <div className="mt-1 text-[9px] uppercase tracking-wider text-zinc-400">
+            Content-free evidence
           </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wider text-zinc-500">
-              {call.ok ? "Result" : "Error"}
-            </div>
-            <pre
-              className={`p-1.5 rounded overflow-x-auto whitespace-pre-wrap break-words ${
-                call.ok ? "bg-zinc-950 text-zinc-200" : "bg-red-950/40 text-red-200"
-              }`}
-            >
-              {call.ok ? call.result || "(empty)" : call.error}
-            </pre>
-          </div>
+          <pre className="overflow-x-auto rounded bg-zinc-950 p-1.5 text-zinc-300">
+            {JSON.stringify(
+              {
+                status,
+                ...call.artifacts,
+              },
+              null,
+              2,
+            )}
+          </pre>
         </div>
       )}
     </div>

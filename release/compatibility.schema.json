@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matthewtracy.github.io/yagami/schemas/release-compatibility.schema.json",
+  "title": "Yagami release compatibility manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "release",
+    "policySchema",
+    "evidenceSchema",
+    "packages",
+    "python",
+    "platforms",
+    "interfaces"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "release": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "policySchema": {
+      "type": "string"
+    },
+    "evidenceSchema": {
+      "type": "string"
+    },
+    "mcpRegistrySchema": {
+      "type": "string"
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "python": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      }
+    }
+  }
+}
+

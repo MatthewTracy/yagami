@@ -37,6 +37,41 @@ service:
   type: ClusterIP
   port: 8000
 
+database:
+  # PostgreSQL is required for more than one writable replica. Store the full
+  # asyncpg-compatible URL in a Secret; the chart never creates credentials.
+  existingSecret: ""
+  secretKey: YAGAMI_DATABASE_URL
+  migrationJob:
+    enabled: true
+    backoffLimit: 1
+
+coordination:
+  # Store authenticated Redis URLs in a Secret. This coordinates rate and
+  # concurrency limits but does not make the bundled SQLite store multi-writer.
+  existingSecret: ""
+  secretKey: YAGAMI_COORDINATION_URL
+  prefix: yagami
+  slotTtlSeconds: 300
+
+remoteAdmin:
+  enabled: false
+  allowedOrigins: []
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksUrl: ""
+
+observability:
+  metricsEnabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+    bearerTokenSecret:
+      name: ""
+      key: token
+
 ingress:
   enabled: false
   className: ""

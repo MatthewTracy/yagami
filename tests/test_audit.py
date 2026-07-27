@@ -82,6 +82,7 @@ async def test_audit_sink_receives_tamper_evident_record(fresh_db) -> None:
     result = await ledger.append(
         project_id="alpha", event_type="decision.created", payload={"backend": "local"}
     )
+    assert await ledger.deliver_pending() == 1
 
     assert sink.events == [result]
     assert result["project_id"] == "alpha"
@@ -93,19 +94,53 @@ async def test_optional_audit_sink_failure_does_not_lose_local_event(fresh_db) -
     ledger = AuditLedger(sink=RecordingSink(fail=True))
 
     result = await ledger.append(project_id="alpha", event_type="test", payload={})
+    assert await ledger.deliver_pending() == 0
 
     assert result["id"] > 0
     assert (await ledger.verify("alpha"))["valid"] is True
+    assert (await ledger.outbox_status())["pending"] == 1
 
 
 @pytest.mark.asyncio
-async def test_required_audit_sink_failure_is_reported(fresh_db) -> None:
+async def test_required_audit_sink_failure_is_durable_not_request_blocking(fresh_db) -> None:
     ledger = AuditLedger(sink=RecordingSink(fail=True), sink_required=True)
 
-    with pytest.raises(RuntimeError, match="sink unavailable"):
-        await ledger.append(project_id="alpha", event_type="test", payload={})
+    result = await ledger.append(project_id="alpha", event_type="test", payload={})
+    assert result["id"] > 0
+    assert await ledger.deliver_pending() == 0
+    assert (await ledger.outbox_status())["pending"] == 1
 
 
 def test_audit_sink_rejects_plaintext_remote_transport() -> None:
     with pytest.raises(ValueError, match="HTTPS"):
         HttpAuditSink("http://siem.example.test/events")
+
+
+@pytest.mark.asyncio
+async def test_audit_key_rotation_verifies_prior_epochs(fresh_db) -> None:
+    old_key = "old-audit-key-0123456789"
+    new_key = "new-audit-key-0123456789"
+    old = AuditLedger(key=old_key)
+    await old.append(project_id="alpha", event_type="old.event", payload={})
+    rotated = AuditLedger(key=new_key, previous_keys=[old_key])
+    await rotated.append(project_id="alpha", event_type="new.event", payload={})
+
+    verified = await rotated.verify("alpha")
+
+    assert verified["valid"] is True
+    assert len(verified["key_epochs"]) == 2
+    assert AuditLedger(key=new_key).key_id == verified["key_id"]
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_can_be_replayed(fresh_db) -> None:
+    sink = RecordingSink(fail=True)
+    ledger = AuditLedger(sink=sink, outbox_max_attempts=1)
+    await ledger.append(project_id="alpha", event_type="test", payload={})
+    assert await ledger.deliver_pending() == 0
+    assert (await ledger.outbox_status())["dead_lettered"] == 1
+
+    sink.fail = False
+    assert await ledger.replay_dead_letters(project_id="alpha") == 1
+    assert await ledger.deliver_pending() == 1
+    assert (await ledger.outbox_status())["delivered"] == 1

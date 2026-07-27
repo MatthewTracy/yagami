@@ -56,7 +56,7 @@ async def persist_decision(
         " session_id, created_at, backend, is_local, reason, classification, scrubbed_preview,"
         " source, t_classify_ms, t_first_token_ms, t_total_ms, profile, request_id, project_id,"
         " channel, policy_decision, request_context"
-        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         (
             session_id,
             now_ms(),
@@ -77,8 +77,9 @@ async def persist_decision(
             json.dumps(request_context, sort_keys=True) if request_context is not None else None,
         ),
     )
+    inserted = await cur.fetchone()
     await db.commit()
-    return cur.lastrowid or 0
+    return int(inserted["id"]) if inserted is not None else 0
 
 
 async def update_decision_timings(

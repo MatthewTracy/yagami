@@ -30,6 +30,7 @@ from ..ingest.extract import extract
 from ..storage.db import get_db
 from .chunker import chunk
 from .embedder import Embedder
+from .retriever import _cosine_distance
 
 log = logging.getLogger("yagami.memory.documents")
 
@@ -106,10 +107,11 @@ async def _replace_document(source_path: str, chunks: list[str], *, embedder: Em
     for i, text in enumerate(chunks):
         cur = await db.execute(
             "INSERT INTO kb_documents (source_path, chunk_index, text, created_at, embedding_status)"
-            " VALUES (?, ?, ?, ?, 'pending')",
+            " VALUES (?, ?, ?, ?, 'pending') RETURNING id",
             (source_path, i, text, now),
         )
-        row_id = cur.lastrowid
+        inserted = await cur.fetchone()
+        row_id = int(inserted["id"]) if inserted is not None else None
         vec = await embedder.embed(text)
         if vec is not None:
             try:
@@ -229,29 +231,56 @@ async def search(query: str, *, embedder: Embedder, k: int = 5) -> list[dict]:
     vec = await embedder.embed(query)
     if vec is not None:
         try:
-            async with db.execute(
-                """
-                SELECT d.id, d.source_path, d.chunk_index, d.text, v.distance
-                FROM kb_documents_vec v
-                JOIN kb_documents d ON d.id = v.rowid
-                WHERE v.embedding MATCH ? AND k = ?
-                  AND d.embedding_status = 'ready'
-                ORDER BY v.distance ASC
-                LIMIT ?
-                """,
-                (_vec_blob(vec), k, k),
-            ) as cur:
-                rows = await cur.fetchall()
-            hits = [
-                {
-                    "id": int(r[0]),
-                    "source_path": str(r[1]),
-                    "chunk_index": int(r[2]),
-                    "text": str(r[3]),
-                    "distance": float(r[4]),
-                }
-                for r in rows
-            ]
+            if db.dialect == "postgresql":
+                async with db.execute(
+                    """
+                    SELECT d.id, d.source_path, d.chunk_index, d.text, v.embedding
+                    FROM kb_documents_vec v
+                    JOIN kb_documents d ON d.id = v.rowid
+                    WHERE d.embedding_status = 'ready'
+                    ORDER BY d.id DESC
+                    LIMIT 1000
+                    """
+                ) as cur:
+                    rows = await cur.fetchall()
+                ranked = sorted(
+                    ((_cosine_distance(vec, bytes(row[4])), row) for row in rows),
+                    key=lambda item: item[0],
+                )[:k]
+                hits = [
+                    {
+                        "id": int(row[0]),
+                        "source_path": str(row[1]),
+                        "chunk_index": int(row[2]),
+                        "text": str(row[3]),
+                        "distance": distance,
+                    }
+                    for distance, row in ranked
+                ]
+            else:
+                async with db.execute(
+                    """
+                    SELECT d.id, d.source_path, d.chunk_index, d.text, v.distance
+                    FROM kb_documents_vec v
+                    JOIN kb_documents d ON d.id = v.rowid
+                    WHERE v.embedding MATCH ? AND k = ?
+                      AND d.embedding_status = 'ready'
+                    ORDER BY v.distance ASC
+                    LIMIT ?
+                    """,
+                    (_vec_blob(vec), k, k),
+                ) as cur:
+                    rows = await cur.fetchall()
+                hits = [
+                    {
+                        "id": int(r[0]),
+                        "source_path": str(r[1]),
+                        "chunk_index": int(r[2]),
+                        "text": str(r[3]),
+                        "distance": float(r[4]),
+                    }
+                    for r in rows
+                ]
         except Exception as exc:  # noqa: BLE001 - vec query failure shouldn't break search
             log.warning("kb vec search failed: %s; falling back to FTS only", exc)
 
@@ -260,18 +289,35 @@ async def search(query: str, *, embedder: Embedder, k: int = 5) -> list[dict]:
         cleaned = query.replace('"', "").strip()
         if cleaned:
             try:
-                async with db.execute(
-                    """
-                    SELECT d.id, d.source_path, d.chunk_index, d.text
-                    FROM kb_documents_fts f
-                    JOIN kb_documents d ON d.id = f.rowid
-                    WHERE f.text MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                    """,
-                    (cleaned, k - len(hits)),
-                ) as cur:
-                    rows = await cur.fetchall()
+                if db.dialect == "postgresql":
+                    async with db.execute(
+                        """
+                        SELECT d.id, d.source_path, d.chunk_index, d.text
+                        FROM kb_documents d
+                        WHERE to_tsvector('simple', d.text)
+                          @@ plainto_tsquery('simple', ?)
+                        ORDER BY ts_rank_cd(
+                          to_tsvector('simple', d.text),
+                          plainto_tsquery('simple', ?)
+                        ) DESC
+                        LIMIT ?
+                        """,
+                        (cleaned, cleaned, k - len(hits)),
+                    ) as cur:
+                        rows = await cur.fetchall()
+                else:
+                    async with db.execute(
+                        """
+                        SELECT d.id, d.source_path, d.chunk_index, d.text
+                        FROM kb_documents_fts f
+                        JOIN kb_documents d ON d.id = f.rowid
+                        WHERE f.text MATCH ?
+                        ORDER BY rank
+                        LIMIT ?
+                        """,
+                        (cleaned, k - len(hits)),
+                    ) as cur:
+                        rows = await cur.fetchall()
                 for r in rows:
                     if int(r[0]) not in seen:
                         hits.append(

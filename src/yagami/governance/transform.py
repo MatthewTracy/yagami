@@ -9,6 +9,13 @@ from dataclasses import dataclass, field
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from ..key_management import (
+    KeyWrappingError,
+    KeyWrappingProvider,
+    LocalAesKeyWrapper,
+    WrappedDataKey,
+    parse_aes256_key,
+)
 from ..storage.db import get_db, now_ms
 
 
@@ -73,12 +80,9 @@ def generate_transform_key() -> str:
 
 def _parse_key(encoded: str) -> bytes:
     try:
-        value = base64.urlsafe_b64decode(encoded.encode("ascii"))
-    except (ValueError, UnicodeEncodeError) as exc:
-        raise TransformationError("YAGAMI_TRANSFORM_KEY must be URL-safe base64") from exc
-    if len(value) != 32:
-        raise TransformationError("YAGAMI_TRANSFORM_KEY must decode to exactly 32 bytes")
-    return value
+        return parse_aes256_key(encoded, label="YAGAMI_TRANSFORM_KEY")
+    except KeyWrappingError as exc:
+        raise TransformationError(str(exc)) from exc
 
 
 def _entity_matches(text: str) -> list[EntityMatch]:
@@ -110,19 +114,44 @@ def detect_entity_types(text: str) -> list[str]:
 
 
 class PrivacyTransformer:
-    def __init__(self, *, key: str, ttl_seconds: int = 3600) -> None:
+    def __init__(
+        self,
+        *,
+        key: str,
+        ttl_seconds: int = 3600,
+        key_id: str = "local-1",
+        key_epoch: int = 1,
+        previous_keys: dict[str, str] | None = None,
+        key_wrapper: KeyWrappingProvider | None = None,
+    ) -> None:
         self._key = _parse_key(key) if key else None
         self._hash_key = (
             hmac.new(self._key, b"yagami-value-hash-v1", hashlib.sha256).digest()
             if self._key is not None
             else None
         )
+        self._key_wrapper = key_wrapper or (
+            LocalAesKeyWrapper(
+                key=key,
+                key_id=key_id,
+                key_epoch=key_epoch,
+                previous_keys=previous_keys,
+            )
+            if key
+            else None
+        )
+        # Used only to decrypt rows written before envelope migration 019.
         self._aesgcm = AESGCM(self._key) if self._key is not None else None
         self.ttl_seconds = ttl_seconds
 
     @property
     def tokenization_available(self) -> bool:
-        return self._aesgcm is not None
+        return self._key_wrapper is not None
+
+    @property
+    def key_wrapper(self) -> KeyWrappingProvider | None:
+        """Expose the configured envelope boundary to other secret stores."""
+        return self._key_wrapper
 
     async def transform_text(
         self,
@@ -143,7 +172,7 @@ class PrivacyTransformer:
             if session.mode == "redact":
                 placeholder = f"[REDACTED_{match.entity_type}]"
             elif session.mode == "tokenize":
-                if self._aesgcm is None:
+                if self._key_wrapper is None:
                     raise TransformationError(
                         "tokenize policy requires YAGAMI_TRANSFORM_KEY; generate one with "
                         "yagami-keygen"
@@ -173,16 +202,22 @@ class PrivacyTransformer:
         entity_type: str,
         value: str,
     ) -> None:
-        if self._aesgcm is None or self._hash_key is None:
+        if self._key_wrapper is None or self._hash_key is None:
             raise TransformationError("tokenization key is not configured")
-        nonce = os.urandom(12)
         aad = f"{request_id}:{project_id}:{placeholder}".encode("utf-8")
-        ciphertext = self._aesgcm.encrypt(nonce, value.encode("utf-8"), aad)
+        data_key = os.urandom(32)
+        nonce = os.urandom(12)
+        ciphertext = AESGCM(data_key).encrypt(nonce, value.encode("utf-8"), aad)
+        try:
+            wrapped_key = self._key_wrapper.wrap(data_key, context=aad)
+        except KeyWrappingError as exc:
+            raise TransformationError(str(exc)) from exc
         created_at = now_ms()
         await get_db().execute(
             "INSERT INTO privacy_tokens(request_id, project_id, placeholder, entity_type,"
-            " nonce, ciphertext, value_hash, created_at, expires_at)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " nonce, ciphertext, value_hash, created_at, expires_at, wrapped_key,"
+            " wrapping_key_id, key_epoch)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 request_id,
                 project_id,
@@ -193,6 +228,9 @@ class PrivacyTransformer:
                 hmac.new(self._hash_key, value.encode("utf-8"), hashlib.sha256).hexdigest(),
                 created_at,
                 created_at + self.ttl_seconds * 1000,
+                wrapped_key.ciphertext,
+                wrapped_key.key_id,
+                wrapped_key.key_epoch,
             ),
         )
         await get_db().commit()
@@ -211,11 +249,12 @@ class PrivacyTransformer:
         project_id: str,
         delete: bool = True,
     ) -> str:
-        if self._aesgcm is None:
+        if self._aesgcm is None and self._key_wrapper is None:
             raise TransformationError("rehydration requires YAGAMI_TRANSFORM_KEY")
         db = get_db()
         async with db.execute(
-            "SELECT placeholder, nonce, ciphertext, expires_at FROM privacy_tokens"
+            "SELECT placeholder, nonce, ciphertext, expires_at, wrapped_key,"
+            " wrapping_key_id, key_epoch FROM privacy_tokens"
             " WHERE request_id=? AND project_id=? ORDER BY id",
             (request_id, project_id),
         ) as cursor:
@@ -234,7 +273,34 @@ class PrivacyTransformer:
             placeholder = str(row["placeholder"])
             aad = f"{request_id}:{project_id}:{placeholder}".encode("utf-8")
             try:
-                value = self._aesgcm.decrypt(row["nonce"], row["ciphertext"], aad).decode("utf-8")
+                if row["wrapped_key"] is not None:
+                    if self._key_wrapper is None:
+                        raise TransformationError("tokenization key wrapper is not configured")
+                    data_key = self._key_wrapper.unwrap(
+                        WrappedDataKey(
+                            ciphertext=bytes(row["wrapped_key"]),
+                            key_id=str(row["wrapping_key_id"]),
+                            key_epoch=int(row["key_epoch"]),
+                        ),
+                        context=aad,
+                    )
+                    value = (
+                        AESGCM(data_key)
+                        .decrypt(row["nonce"], row["ciphertext"], aad)
+                        .decode("utf-8")
+                    )
+                else:
+                    if self._aesgcm is None:
+                        raise TransformationError(
+                            "legacy token record requires its original transform key"
+                        )
+                    value = self._aesgcm.decrypt(row["nonce"], row["ciphertext"], aad).decode(
+                        "utf-8"
+                    )
+            except TransformationError:
+                raise
+            except KeyWrappingError as exc:
+                raise TransformationError(str(exc)) from exc
             except Exception as exc:  # noqa: BLE001 - authenticated decryption has one safe outcome
                 raise TransformationError("token vault authentication failed") from exc
             result = result.replace(placeholder, value)

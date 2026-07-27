@@ -15,7 +15,7 @@ from ..memory import store as memory_store
 from ..memory.retriever import Retriever
 from ..policy import PolicyContext, PolicyMode
 from ..router.overrides import parse as parse_override
-from ..router.schema import Sensitivity
+from ..router.schema import DataLabel, Sensitivity
 from .session import SessionStore
 
 # Module-level worker + retriever handles so main.py can register them
@@ -275,6 +275,7 @@ async def chat_endpoint(
                         k=5,
                         exclude_session=session_id,
                         current_sens=recall_sens,
+                        project_id=context.project_id,
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("retriever failed; continuing without recall")
@@ -377,6 +378,9 @@ async def chat_endpoint(
                 user_text=user_text,
                 assistant_text=assistant_text,
                 classification=prepared.decision.classification,
+                project_id=prepared.context.project_id,
+                retention_days=prepared.policy.retention_days,
+                policy_hash=prepared.policy.policy_hash,
             )
     except Exception:
         log.exception("stream error")
@@ -436,6 +440,9 @@ async def _maybe_queue_memory(
     user_text: str,
     assistant_text: str,
     classification: dict,
+    project_id: str = "local",
+    retention_days: int | None = None,
+    policy_hash: str | None = None,
 ) -> None:
     """Write gate for cross-session memory.
 
@@ -454,6 +461,12 @@ async def _maybe_queue_memory(
         return
 
     intent = classification.get("intent", "simple_qa")
+    labels: set[DataLabel] = set()
+    for value in classification.get("data_labels", []):
+        try:
+            labels.add(DataLabel(value))
+        except (TypeError, ValueError):
+            continue
     skip_user = intent == "simple_qa" and len(user_text.strip()) < memory_store.MIN_REMEMBER_CHARS
 
     try:
@@ -463,6 +476,11 @@ async def _maybe_queue_memory(
                 role="user",
                 text=user_text,
                 sensitivity=sens,
+                project_id=project_id,
+                data_labels=labels,
+                provenance="interactive-user",
+                retention_days=retention_days,
+                policy_hash=policy_hash,
             )
         if assistant_text:
             await memory_store.queue_observation(
@@ -470,6 +488,11 @@ async def _maybe_queue_memory(
                 role="assistant",
                 text=assistant_text,
                 sensitivity=sens,
+                project_id=project_id,
+                data_labels=labels,
+                provenance="model-output",
+                retention_days=retention_days,
+                policy_hash=policy_hash,
             )
     except Exception:  # noqa: BLE001 - memory failures NEVER break the chat
         log.exception("memory write failed; chat continues")

@@ -256,8 +256,14 @@ async def require_admin(
     non-loopback caller must present a key carrying the ``local-admin`` role or
     the ``admin:*``/``admin:access`` scope.
     """
-    if _is_loopback_client(request):
-        return Principal(project_id="local", key_fingerprint=None, authenticated=False)
+    settings: Settings = request.app.state.runtime.settings
+    # The unauthenticated loopback convenience is only for the local desktop
+    # UI. Headless deployments must authenticate every administrative caller,
+    # including sidecars and other software on the same host.
+    if _is_loopback_client(request) and not settings.headless:
+        principal = Principal(project_id="local", key_fingerprint=None, authenticated=False)
+        request.state.admin_principal = principal
+        return principal
     authenticator: Authenticator = request.app.state.runtime.authenticator
     token = credentials.credentials if credentials is not None else None
     principal = await asyncio.to_thread(authenticator.authenticate, token)
@@ -267,6 +273,7 @@ async def require_admin(
         or "admin:*" in principal.scopes
     ):
         raise HTTPException(status_code=403, detail="administrator privileges required")
+    request.state.admin_principal = principal
     return principal
 
 

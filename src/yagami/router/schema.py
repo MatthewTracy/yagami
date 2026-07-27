@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Intent(str, Enum):
@@ -20,6 +20,17 @@ class Sensitivity(str, Enum):
     SECRET = "secret"  # noqa: S105 - data classification label, not a credential
 
 
+class DataLabel(str, Enum):
+    """Semantic data categories, independent from routing severity."""
+
+    PII = "pii"
+    PHI = "phi"
+    PCI = "pci"
+    SECRET = "secret"  # noqa: S105 - data classification label, not a credential
+    SOURCE_CODE = "source_code"
+    CONFIDENTIAL = "confidential"
+
+
 class Complexity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -30,6 +41,7 @@ class Classification(BaseModel):
     intent: Intent = Intent.SIMPLE_QA
     sensitivity: Sensitivity = Sensitivity.NONE
     complexity: Complexity = Complexity.LOW
+    data_labels: set[DataLabel] = Field(default_factory=set)
     # v0.2.14: opt-in tool use. Classifier sets True for prompts that name
     # arithmetic / lookups / "fetch" / "calculate" / etc. Routing then
     # branches into the tool_loop when the chosen backend has TOOLS capability.

@@ -116,7 +116,7 @@ export function StatsDashboard({ open, onClose }: Props) {
             <Group title="By backend">
               <table className="w-full">
                 <thead>
-                  <tr className="text-[10px] uppercase tracking-wider text-zinc-500 text-left">
+                  <tr className="text-[10px] uppercase tracking-wider text-zinc-400 text-left">
                     <th className="py-1">Backend</th>
                     <th className="py-1">Turns</th>
                     <th className="py-1">Cost</th>
@@ -201,9 +201,9 @@ export function StatsDashboard({ open, onClose }: Props) {
 function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="p-3 rounded border border-zinc-800 bg-zinc-950/40">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{label}</div>
       <div className="text-xl font-semibold text-zinc-100 font-mono">{value}</div>
-      <div className="text-[10px] text-zinc-500 italic">{sub}</div>
+      <div className="text-[10px] text-zinc-400 italic">{sub}</div>
     </div>
   );
 }
@@ -211,7 +211,7 @@ function Tile({ label, value, sub }: { label: string; value: string; sub: string
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2 p-2.5 rounded border border-zinc-800 bg-zinc-950/30">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-500">{title}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{title}</div>
       {children}
     </div>
   );

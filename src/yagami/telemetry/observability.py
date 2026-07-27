@@ -40,8 +40,7 @@ class GatewayMetrics:
         )
         self.policy_matches = Counter(
             "yagami_policy_rule_matches_total",
-            "Policy rule matches. Rule IDs are administrator-controlled.",
-            ("rule_id",),
+            "Number of policy rule matches without customer-defined labels.",
             registry=self.registry,
         )
 
@@ -101,13 +100,12 @@ def gateway_span(
         span.set_attribute("gen_ai.request.temperature", temperature)
         span.set_attribute("gen_ai.request.max_tokens", max_tokens)
         span.set_attribute("gen_ai.output.type", "text")
-        if conversation_id:
-            span.set_attribute("gen_ai.conversation.id", conversation_id)
-        span.set_attribute("yagami.request.id", request_id)
-        span.set_attribute("yagami.project.id", project_id)
+        # Exported telemetry must not become an identity side channel. These
+        # values remain available in the content-free local audit ledger, but
+        # are deliberately excluded from spans.
+        _ = (request_id, project_id, conversation_id, policy_hash)
         span.set_attribute("yagami.backend.is_local", is_local)
         span.set_attribute("yagami.sensitivity", sensitivity)
-        span.set_attribute("yagami.policy.hash", policy_hash)
         yield span
 
 

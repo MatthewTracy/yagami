@@ -4,7 +4,7 @@ import asyncio
 from typing import AsyncIterator
 
 from ..config import YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
 
 
 def build(_cfg: YagamiConfig, _secrets_get) -> "EchoBackend":
@@ -15,6 +15,7 @@ class EchoBackend(Backend):
     name = "echo"
     capabilities = {Capability.TEXT}
     is_local = True
+    trust_zone = TrustZone.DEVICE
     pricing = Pricing()
 
     async def generate(

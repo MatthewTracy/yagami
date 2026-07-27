@@ -7,9 +7,14 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-import aiosqlite
-
-from .storage.db import exclusive_db, get_db, now_ms, snapshot_db
+from .storage.db import (
+    DatabaseConnection,
+    DatabaseRow,
+    exclusive_db,
+    get_db,
+    now_ms,
+    snapshot_db,
+)
 
 _DAY_MS = 24 * 60 * 60 * 1000
 
@@ -33,7 +38,7 @@ _EXPORT_TABLES: tuple[tuple[str, str], ...] = (
 )
 
 
-async def _data_counts(db: aiosqlite.Connection) -> dict[str, int]:
+async def _data_counts(db: DatabaseConnection) -> dict[str, int]:
     counts: dict[str, int] = {}
     for name in (
         "sessions",
@@ -44,6 +49,8 @@ async def _data_counts(db: aiosqlite.Connection) -> dict[str, int]:
         "observations",
         "kb_documents",
         "privacy_tokens",
+        "mcp_oauth_states",
+        "mcp_oauth_credentials",
         "audit_events",
         "tool_approvals",
     ):
@@ -93,6 +100,39 @@ async def cleanup_expired_sessions(retention_days: int) -> int:
         return count
 
 
+async def cleanup_policy_retention(*, current_time_ms: int | None = None) -> int:
+    """Delete decision records after the retention period in their policy receipt.
+
+    Rows created before policy receipts existed are left to the installation's
+    session-retention setting. Memory and tokenized transformations have their
+    own TTL cleanup paths.
+    """
+    current = current_time_ms if current_time_ms is not None else now_ms()
+    expired: list[int] = []
+    async with exclusive_db() as db:
+        async with db.execute(
+            "SELECT id, created_at, policy_decision FROM decisions"
+            " WHERE policy_decision IS NOT NULL"
+        ) as cursor:
+            async for row in cursor:
+                try:
+                    receipt = json.loads(row["policy_decision"])
+                    retention_days = int(receipt["retention_days"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                expires_at = int(row["created_at"]) + retention_days * _DAY_MS
+                if expires_at <= current:
+                    expired.append(int(row["id"]))
+        if not expired:
+            return 0
+        placeholders = ",".join("?" for _ in expired)
+        await db.execute(
+            f"DELETE FROM decisions WHERE id IN ({placeholders})",  # noqa: S608 -- generated placeholders only
+            expired,
+        )
+    return len(expired)
+
+
 async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
     """Delete conversations, memory, and optionally explicitly indexed documents."""
     async with exclusive_db() as db:
@@ -100,6 +140,8 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         await db.execute("DELETE FROM observations_vec")
         await db.execute("DELETE FROM observations")
         await db.execute("DELETE FROM privacy_tokens")
+        await db.execute("DELETE FROM mcp_oauth_states")
+        await db.execute("DELETE FROM mcp_oauth_credentials")
         await db.execute("DELETE FROM sessions")
         if include_knowledge_base:
             await db.execute("DELETE FROM kb_documents_vec")
@@ -108,7 +150,7 @@ async def purge_data(*, include_knowledge_base: bool) -> dict[str, int]:
         return {name: before[name] - after[name] for name in before}
 
 
-def _json_record(row: aiosqlite.Row, *, table: str) -> str:
+def _json_record(row: DatabaseRow, *, table: str) -> str:
     record = {key: row[key] for key in row.keys()}
     if table == "message_attachments":
         record["data_b64"] = base64.b64encode(record.pop("data")).decode("ascii")

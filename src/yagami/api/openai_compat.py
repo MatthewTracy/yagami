@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
 import logging
 import re
+import struct
 import time
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -14,11 +16,30 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..auth import Principal, require_scope
-from ..backends.base import ImageAttachment, Message
+from ..backends.base import Capability, ImageAttachment, Message
+from ..capabilities import runtime_capabilities
 from ..gateway import GatewayError, GatewayRequestOptions, PolicyDeniedError
 from ..governance import TransformationError, TransformationSession
-from ..policy import PolicyContext, replay_decisions
-from ..router.schema import Sensitivity
+from ..policy import PolicyContext, PolicyMode, RoutePolicy, TransformPolicy, replay_decisions
+from ..projects import ProjectLimitError
+from ..router.schema import DataLabel, Sensitivity
+from ..telemetry.costs import rough_token_count
+from ..telemetry.decisions import persist_decision
+from ..responses import (
+    ResponseNotFoundError,
+    append_response_event,
+    complete_response_job,
+    create_response_job,
+    fail_response_job,
+    get_response_context,
+    get_response_job,
+    list_response_events,
+    request_response_cancel,
+    response_cancel_requested,
+    set_response_status,
+)
+from ..skills.mcp_manager import get_manager
+from ..skills.mcp_oauth import OAuthCredentialError
 
 router = APIRouter(prefix="/v1", tags=["OpenAI compatibility"])
 log = logging.getLogger("yagami.openai_compat")
@@ -34,7 +55,212 @@ _policy_preview = require_scope("policy:preview")
 _policy_replay = require_scope("policy:replay")
 _privacy_transform = require_scope("privacy:transform")
 _audit_read = require_scope("audit:read")
+_audit_manage = require_scope("audit:manage")
 _tool_approve = require_scope("tools:approve")
+_response_tasks: dict[str, asyncio.Task[None]] = {}
+
+
+async def shutdown_response_jobs() -> None:
+    tasks = list(_response_tasks.values())
+    _response_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@router.get("/capabilities")
+async def capabilities(
+    request: Request,
+    _principal: Principal = Depends(_gateway_read),
+) -> dict[str, Any]:
+    runtime = request.app.state.runtime
+    return runtime_capabilities(
+        backends=runtime.backends,
+        embedder_available=runtime.embedder is not None,
+    )
+
+
+def _oauth_failure(exc: OAuthCredentialError, *, status_code: int = 400) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": exc.safe_message,
+                "type": "yagami_oauth_error",
+                "code": exc.code,
+            }
+        },
+    )
+
+
+@router.post("/mcp/oauth/{server_name}/authorize")
+async def begin_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_read),
+):
+    runtime = request.app.state.runtime
+    manager = get_manager()
+    config = manager.configured_server(server_name) if manager is not None else None
+    if config is None:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    if runtime.mcp_oauth is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "user-bound OAuth requires an identity and an encryption key",
+            ),
+            status_code=503,
+        )
+    try:
+        authorization = await runtime.mcp_oauth.begin(
+            server_name=server_name,
+            config=config,
+            project_id=principal.project_id,
+            subject_id=principal.subject_id,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc)
+    return {
+        "object": "yagami.mcp_oauth_authorization",
+        "server": server_name,
+        **authorization,
+    }
+
+
+@router.get("/mcp/oauth/callback")
+async def complete_mcp_oauth(
+    request: Request,
+    state: str = Query(default="", max_length=1024),
+    code: str = Query(default="", max_length=8192),
+    error: str = Query(default="", max_length=256),
+):
+    runtime = request.app.state.runtime
+    if runtime.mcp_oauth is None:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_configuration_invalid",
+                "encrypted OAuth credential storage is unavailable",
+            ),
+            status_code=503,
+        )
+    if error:
+        await runtime.mcp_oauth.cancel(state)
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_authorization_denied",
+                "the OAuth authorization was denied or canceled",
+            )
+        )
+    try:
+        completion = await runtime.mcp_oauth.complete(
+            state=state,
+            code=code,
+            configs=runtime.config.mcp_servers,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc)
+    await runtime.gateway.append_audit(
+        project_id=completion.project_id,
+        event_type="mcp.oauth_authorized",
+        payload={
+            "server": completion.server_name,
+            "access_expires_at": completion.access_expires_at,
+        },
+    )
+    return {
+        "object": "yagami.mcp_oauth_callback",
+        "server": completion.server_name,
+        "authorized": True,
+        "next": f"/v1/mcp/oauth/{completion.server_name}/activate",
+    }
+
+
+@router.post("/mcp/oauth/{server_name}/activate")
+async def activate_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    manager = get_manager()
+    if manager is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    try:
+        tool_count = await manager.connect_for_subject(
+            server_name,
+            project_id=principal.project_id,
+            subject_id=principal.subject_id,
+        )
+    except OAuthCredentialError as exc:
+        return _oauth_failure(exc, status_code=401)
+    runtime = request.app.state.runtime
+    if runtime.mcp_server is not None:
+        from ..mcp_gateway import register_downstream_tools
+
+        register_downstream_tools(runtime.mcp_server, runtime.gateway, manager)
+    await runtime.gateway.append_audit(
+        project_id=principal.project_id,
+        event_type="mcp.oauth_activated",
+        payload={"server": server_name, "tool_count": tool_count},
+    )
+    return {
+        "object": "yagami.mcp_oauth_connection",
+        "server": server_name,
+        "active": True,
+        "tool_count": tool_count,
+    }
+
+
+@router.delete("/mcp/oauth/{server_name}")
+async def revoke_mcp_oauth(
+    server_name: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    runtime = request.app.state.runtime
+    manager = get_manager()
+    if runtime.mcp_oauth is None or manager is None or not principal.subject_id:
+        return _oauth_failure(
+            OAuthCredentialError(
+                "mcp_oauth_server_unavailable",
+                "the configured MCP server is unavailable",
+            ),
+            status_code=404,
+        )
+    await manager.disconnect_subject(
+        server_name,
+        project_id=principal.project_id,
+        subject_id=principal.subject_id,
+    )
+    deleted = await runtime.mcp_oauth.revoke(
+        server_name=server_name,
+        project_id=principal.project_id,
+        subject_id=principal.subject_id,
+    )
+    if deleted:
+        await runtime.gateway.append_audit(
+            project_id=principal.project_id,
+            event_type="mcp.oauth_revoked",
+            payload={"server": server_name},
+        )
+    return {
+        "object": "yagami.mcp_oauth_connection",
+        "server": server_name,
+        "deleted": deleted,
+    }
 
 
 class ImageURL(BaseModel):
@@ -156,6 +382,10 @@ class ResponsesRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
     parallel_tool_calls: bool = True
+    background: bool = False
+    store: bool = True
+    previous_response_id: str | None = Field(default=None, pattern=r"^resp_[A-Za-z0-9_-]{8,128}$")
+    conversation: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("tools")
     @classmethod
@@ -169,6 +399,10 @@ class ResponsesRequest(BaseModel):
 
     @model_validator(mode="after")
     def aggregate_text_is_bounded(self):
+        if self.background and self.stream:
+            raise ValueError("background responses cannot use request-bound streaming")
+        if self.background and not self.store:
+            raise ValueError("background responses require store=true")
         total = len(self.instructions or "")
         if isinstance(self.input, str):
             total += len(self.input)
@@ -187,6 +421,37 @@ class ResponsesRequest(BaseModel):
                         total += sum(len(part.text or "") for part in item.output)
         if total > _MAX_REQUEST_TEXT_CHARS:
             raise ValueError("aggregate input text exceeds 4,000,000 characters")
+        return self
+
+
+class EmbeddingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(default="yagami-embedding", min_length=1, max_length=128)
+    input: str | list[str]
+    encoding_format: Literal["float", "base64"] = "float"
+    dimensions: int | None = Field(default=None, ge=1, le=65_536)
+    user: str | None = Field(default=None, max_length=128)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_metadata(value)
+
+    @model_validator(mode="after")
+    def input_is_bounded(self):
+        values = [self.input] if isinstance(self.input, str) else self.input
+        if not values:
+            raise ValueError("embedding input cannot be empty")
+        if len(values) > 2_048:
+            raise ValueError("embedding input supports at most 2,048 strings")
+        if any(not value for value in values):
+            raise ValueError("embedding input strings cannot be empty")
+        if any(len(value) > _MAX_MESSAGE_CHARS for value in values):
+            raise ValueError("an embedding input exceeds 1,000,000 characters")
+        if sum(len(value) for value in values) > _MAX_REQUEST_TEXT_CHARS:
+            raise ValueError("aggregate embedding input exceeds 4,000,000 characters")
         return self
 
 
@@ -233,6 +498,8 @@ class PolicyReplayRequest(BaseModel):
 
 class ToolApprovalRequest(BaseModel):
     tools: list[str] = Field(min_length=1, max_length=100)
+    subject_id: str | None = Field(default=None, min_length=1, max_length=128)
+    schema_hash: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     purpose: str | None = Field(default=None, min_length=1, max_length=64)
     ticket: str | None = Field(default=None, min_length=1, max_length=128)
     ttl_seconds: int = Field(default=900, ge=60, le=86_400)
@@ -530,6 +797,235 @@ async def list_models(request: Request, _principal: Principal = Depends(_gateway
     return {"object": "list", "data": rows}
 
 
+@router.post("/embeddings")
+async def create_embeddings(
+    body: EmbeddingsRequest,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    """Embed content only after classifying and enforcing its destination boundary."""
+    runtime = request.app.state.runtime
+    embedder = runtime.embedder
+    if embedder is None:
+        return _openai_error(
+            GatewayError(
+                "no embedding provider is configured",
+                code="embedding_provider_unavailable",
+                status_code=503,
+            )
+        )
+    aliases = {"yagami-auto", "yagami-embedding", embedder.model}
+    if body.model not in aliases:
+        return _openai_error(
+            GatewayError(
+                f"embedding model {body.model!r} is not available",
+                code="model_not_found",
+                status_code=404,
+                param="model",
+            )
+        )
+
+    values = [body.input] if isinstance(body.input, str) else body.input
+    combined = "\n".join(values)
+    context = _policy_context(
+        principal=principal,
+        metadata=body.metadata,
+        user=body.user,
+        tools=None,
+    )
+    try:
+        await runtime.governor.check_request(
+            project_id=context.project_id,
+            purpose=context.purpose,
+            jurisdiction=context.jurisdiction,
+        )
+        routing = await runtime.routing_policy.decide([Message(role="user", content=combined)])
+    except ProjectLimitError as exc:
+        return _openai_error(
+            GatewayError(
+                str(exc),
+                code=exc.code,
+                status_code=429 if exc.code == "rate_limit_exceeded" else 403,
+            )
+        )
+    except Exception:
+        log.warning("embedding classification failed closed", exc_info=True)
+        return _openai_error(
+            GatewayError(
+                "embedding request could not be classified safely",
+                code="classification_unavailable",
+                status_code=503,
+            )
+        )
+
+    classification = routing.classification
+    try:
+        sensitivity = Sensitivity(classification.get("sensitivity", "none"))
+    except ValueError:
+        sensitivity = Sensitivity.SECRET
+    labels = {
+        DataLabel(value)
+        for value in classification.get("data_labels", [])
+        if value in {label.value for label in DataLabel}
+    }
+    provider = runtime.config.memory.embedding_provider
+    zone = runtime.config.memory.embedding_trust_zone
+    evaluation = runtime.policy_engine.evaluate(
+        context=context,
+        detected_sensitivity=sensitivity,
+        candidate_backend=provider,
+        data_labels=labels,
+        candidate_trust_zone=zone,
+        required_capabilities={Capability.EMBEDDINGS},
+    )
+    if evaluation.route == RoutePolicy.LOCAL and not zone.is_private:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding destination is outside the required local boundary")
+    if evaluation.route == RoutePolicy.CLOUD and zone.is_private:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding destination does not satisfy the required cloud route")
+    if evaluation.allowed_backends is not None and provider not in evaluation.allowed_backends:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding provider is not in the policy allowlist")
+    if evaluation.allowed_trust_zones is not None and zone not in evaluation.allowed_trust_zones:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding trust zone is not in the policy allowlist")
+    unsupported = set(evaluation.required_capabilities) - {Capability.EMBEDDINGS}
+    if unsupported:
+        evaluation.denied = True
+        evaluation.reasons.append("embedding provider lacks policy-required capabilities")
+
+    request_id = "ygm_" + uuid4().hex
+    decision = {
+        "backend": provider,
+        "is_local": zone.is_private,
+        "reason": "governed embedding destination",
+        "classification": classification,
+    }
+    await runtime.sessions.ensure_gateway_session(
+        request_id,
+        project_id=context.project_id,
+    )
+    decision_id = await persist_decision(
+        session_id=request_id,
+        user_text="",
+        decision=decision,
+        request_id=request_id,
+        project_id=context.project_id,
+        channel="embeddings",
+        policy_decision=evaluation.passport(),
+        request_context={
+            "project_id": context.project_id,
+            "purpose": context.purpose,
+            "jurisdiction": context.jurisdiction,
+            "metadata_keys": sorted(context.metadata),
+        },
+    )
+    await runtime.gateway.append_audit(
+        project_id=context.project_id,
+        request_id=request_id,
+        event_type="embedding.decision",
+        payload={
+            "decision_id": decision_id,
+            "provider": provider,
+            "trust_zone": zone.value,
+            "policy_hash": evaluation.policy_hash,
+            "denied": evaluation.denied,
+            "input_count": len(values),
+        },
+    )
+    if evaluation.denied and evaluation.mode == PolicyMode.ENFORCE:
+        return _openai_error(
+            GatewayError(
+                "embedding request denied by Yagami policy",
+                code="policy_denied",
+                status_code=403,
+            )
+        )
+
+    transformed = list(values)
+    if evaluation.transform != TransformPolicy.NONE:
+        transform_session = TransformationSession(
+            request_id=request_id,
+            project_id=context.project_id,
+            mode=evaluation.transform.value,
+        )
+        try:
+            transformed = [
+                await runtime.transformer.transform_text(value, session=transform_session)
+                for value in values
+            ]
+        except TransformationError:
+            return _openai_error(
+                GatewayError(
+                    "embedding privacy transformation could not be completed",
+                    code="transformation_failed",
+                    status_code=422,
+                )
+            )
+
+    vectors: list[list[float]] = []
+    try:
+        async with runtime.governor.slot(context.project_id):
+            for value in transformed:
+                vector = await embedder.embed(value)
+                if vector is None:
+                    raise RuntimeError("embedding provider returned no vector")
+                if body.dimensions is not None and len(vector) != body.dimensions:
+                    return _openai_error(
+                        GatewayError(
+                            f"configured embedding provider returns {len(vector)} dimensions",
+                            code="unsupported_dimensions",
+                            param="dimensions",
+                        )
+                    )
+                vectors.append(vector)
+    except ProjectLimitError as exc:
+        return _openai_error(GatewayError(str(exc), code=exc.code, status_code=429))
+    except Exception:
+        log.warning(
+            "embedding provider failed request_id=%s provider=%s",
+            request_id,
+            provider,
+            exc_info=True,
+        )
+        return _openai_error(
+            GatewayError(
+                "embedding provider failed",
+                code="embedding_provider_error",
+                status_code=502,
+            )
+        )
+
+    tokens = sum(rough_token_count(value) for value in values)
+    encoded_vectors: list[list[float] | str] = []
+    if body.encoding_format == "base64":
+        encoded_vectors.extend(
+            base64.b64encode(struct.pack(f"<{len(vector)}f", *vector)).decode("ascii")
+            for vector in vectors
+        )
+    else:
+        encoded_vectors.extend(vectors)
+    return JSONResponse(
+        content={
+            "object": "list",
+            "data": [
+                {"object": "embedding", "embedding": vector, "index": index}
+                for index, vector in enumerate(encoded_vectors)
+            ],
+            "model": embedder.model,
+            "usage": {"prompt_tokens": tokens, "total_tokens": tokens},
+        },
+        headers={
+            "x-yagami-request-id": request_id,
+            "x-yagami-decision-id": str(decision_id),
+            "x-yagami-backend": provider,
+            "x-yagami-policy-hash": evaluation.policy_hash,
+            "x-yagami-trust-zone": zone.value,
+        },
+    )
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     body: ChatCompletionRequest,
@@ -798,12 +1294,31 @@ async def create_response(
     runtime = request.app.state.runtime
     chat_tools = _responses_chat_tools(body.tools)
     try:
+        historical_messages = await get_response_context(
+            project_id=principal.project_id,
+            previous_response_id=body.previous_response_id,
+            conversation_id=body.conversation if body.previous_response_id is None else None,
+        )
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "previous response was not found for this project",
+                code="response_not_found",
+                status_code=404,
+                param="previous_response_id",
+            )
+        )
+    current_messages = _convert_messages(_responses_messages(body))
+    policy_metadata = dict(body.metadata)
+    if body.conversation and "session_id" not in policy_metadata:
+        policy_metadata["session_id"] = body.conversation
+    try:
         prepared = await runtime.gateway.prepare(
-            messages=_convert_messages(_responses_messages(body)),
+            messages=[*historical_messages, *current_messages],
             model=body.model,
             context=_policy_context(
                 principal=principal,
-                metadata=body.metadata,
+                metadata=policy_metadata,
                 user=body.user,
                 tools=chat_tools,
             ),
@@ -818,6 +1333,122 @@ async def create_response(
         return _openai_error(exc)
     created = int(time.time())
     response_id = "resp_" + prepared.request_id.removeprefix("ygm_")
+    safe_metadata = {
+        key: value
+        for key, value in body.metadata.items()
+        if key not in {"approval_tokens", "approved_tools"}
+    }
+    should_store = body.store or body.background
+    if should_store:
+        await create_response_job(
+            response_id=response_id,
+            project_id=principal.project_id,
+            request_id=prepared.request_id,
+            decision_id=prepared.decision_id,
+            model=prepared.decision.backend.name,
+            status="queued" if body.background else "in_progress",
+            messages=[*historical_messages, *current_messages],
+            metadata=safe_metadata,
+            previous_response_id=body.previous_response_id,
+            conversation_id=body.conversation,
+            retention_days=prepared.policy.retention_days,
+        )
+        await append_response_event(
+            response_id,
+            0,
+            {
+                "type": "response.created",
+                "sequence_number": 0,
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": created,
+                    "status": "queued" if body.background else "in_progress",
+                    "model": prepared.decision.backend.name,
+                },
+            },
+        )
+
+    if body.background:
+
+        async def execute_background() -> None:
+            try:
+                await set_response_status(response_id, "in_progress")
+                if await response_cancel_requested(response_id):
+                    raise asyncio.CancelledError
+                result = await runtime.gateway.execute(prepared)
+                output = _response_object(
+                    response_id=response_id,
+                    created=created,
+                    result=result,
+                    metadata=safe_metadata,
+                    tools=body.tools,
+                    tool_choice=body.tool_choice,
+                    parallel_tool_calls=body.parallel_tool_calls,
+                )
+                await complete_response_job(response_id, output)
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.completed",
+                        "sequence_number": 1,
+                        "response": output,
+                    },
+                )
+            except asyncio.CancelledError:
+                await fail_response_job(
+                    response_id,
+                    status="cancelled",
+                    code="response_cancelled",
+                    message="response execution was cancelled",
+                )
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.cancelled",
+                        "sequence_number": 1,
+                        "response": {"id": response_id, "status": "cancelled"},
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - persist safe terminal state
+                log.exception("background response %s failed: %s", response_id, type(exc).__name__)
+                await fail_response_job(
+                    response_id,
+                    status="failed",
+                    code="response_execution_failed",
+                    message="background response execution failed",
+                )
+                await append_response_event(
+                    response_id,
+                    1,
+                    {
+                        "type": "response.failed",
+                        "sequence_number": 1,
+                        "response": {"id": response_id, "status": "failed"},
+                    },
+                )
+            finally:
+                _response_tasks.pop(response_id, None)
+
+        task = asyncio.create_task(execute_background())
+        _response_tasks[response_id] = task
+        return JSONResponse(
+            status_code=202,
+            headers=_headers(prepared),
+            content={
+                "id": response_id,
+                "object": "response",
+                "created_at": created,
+                "status": "queued",
+                "model": prepared.decision.backend.name,
+                "output": [],
+                "metadata": safe_metadata,
+                "previous_response_id": body.previous_response_id,
+                "conversation": body.conversation,
+            },
+        )
 
     if body.stream:
 
@@ -834,7 +1465,7 @@ async def create_response(
                     "status": "in_progress",
                     "model": prepared.decision.backend.name,
                     "output": [],
-                    "metadata": body.metadata,
+                    "metadata": safe_metadata,
                 },
             }
             yield "data: " + json.dumps(created_event, separators=(",", ":")) + "\n\n"
@@ -842,6 +1473,23 @@ async def create_response(
             tool_calls: dict[int, dict[str, Any]] = {}
             text_item_added = False
             async for chunk in runtime.gateway.stream(prepared):
+                if should_store and await response_cancel_requested(response_id):
+                    await fail_response_job(
+                        response_id,
+                        status="cancelled",
+                        code="response_cancelled",
+                        message="response execution was cancelled",
+                    )
+                    sequence += 1
+                    cancelled = {
+                        "type": "response.cancelled",
+                        "sequence_number": sequence,
+                        "response": {"id": response_id, "status": "cancelled"},
+                    }
+                    await append_response_event(response_id, sequence, cancelled)
+                    yield "data: " + json.dumps(cancelled, separators=(",", ":")) + "\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 if chunk["type"] == "text":
                     if not text_item_added:
                         sequence += 1
@@ -857,6 +1505,8 @@ async def create_response(
                                 "content": [],
                             },
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, added)
                         yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
                         text_item_added = True
                     text_parts.append(chunk["content"])
@@ -869,6 +1519,8 @@ async def create_response(
                         "content_index": 0,
                         "delta": chunk["content"],
                     }
+                    if should_store:
+                        await append_response_event(response_id, sequence, event)
                     yield "data: " + json.dumps(event, separators=(",", ":")) + "\n\n"
                 elif (
                     chunk["type"] == "tool_call"
@@ -894,6 +1546,8 @@ async def create_response(
                             "output_index": index,
                             "item": dict(call),
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, added)
                         yield "data: " + json.dumps(added, separators=(",", ":")) + "\n\n"
                     if meta.get("id"):
                         call["call_id"] = str(meta["id"])
@@ -910,86 +1564,76 @@ async def create_response(
                             "output_index": index,
                             "delta": arguments,
                         }
+                        if should_store:
+                            await append_response_event(response_id, sequence, delta)
                         yield "data: " + json.dumps(delta, separators=(",", ":")) + "\n\n"
                 elif chunk["type"] == "error":
                     sequence += 1
-                    yield (
-                        "data: "
-                        + json.dumps(
-                            {
-                                "type": "error",
-                                "sequence_number": sequence,
-                                "error": {"message": chunk["content"], "type": "api_error"},
-                            },
-                            separators=(",", ":"),
-                        )
-                        + "\n\n"
-                    )
+                    error_event = {
+                        "type": "error",
+                        "sequence_number": sequence,
+                        "error": {"message": chunk["content"], "type": "api_error"},
+                    }
+                    if should_store:
+                        await append_response_event(response_id, sequence, error_event)
+                    yield ("data: " + json.dumps(error_event, separators=(",", ":")) + "\n\n")
             if text_item_added:
                 sequence += 1
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "type": "response.output_text.done",
-                            "sequence_number": sequence,
-                            "item_id": item_id,
-                            "output_index": 0,
-                            "content_index": 0,
-                            "text": "".join(text_parts),
-                        },
-                        separators=(",", ":"),
-                    )
-                    + "\n\n"
-                )
+                text_done = {
+                    "type": "response.output_text.done",
+                    "sequence_number": sequence,
+                    "item_id": item_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "text": "".join(text_parts),
+                }
+                if should_store:
+                    await append_response_event(response_id, sequence, text_done)
+                yield ("data: " + json.dumps(text_done, separators=(",", ":")) + "\n\n")
             for index, call in sorted(tool_calls.items()):
                 sequence += 1
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "type": "response.function_call_arguments.done",
-                            "sequence_number": sequence,
-                            "item_id": call["id"],
-                            "output_index": index,
-                            "arguments": call["arguments"],
-                        },
-                        separators=(",", ":"),
-                    )
-                    + "\n\n"
-                )
+                arguments_done = {
+                    "type": "response.function_call_arguments.done",
+                    "sequence_number": sequence,
+                    "item_id": call["id"],
+                    "output_index": index,
+                    "arguments": call["arguments"],
+                }
+                if should_store:
+                    await append_response_event(response_id, sequence, arguments_done)
+                yield ("data: " + json.dumps(arguments_done, separators=(",", ":")) + "\n\n")
             sequence += 1
-            yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "type": "response.completed",
-                        "sequence_number": sequence,
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "created_at": created,
-                            "status": "completed",
-                            "model": prepared.decision.backend.name,
-                            "output": [
-                                *(
-                                    _response_output(
-                                        response_id=response_id,
-                                        text="".join(text_parts),
-                                        tool_calls=[],
-                                    )
-                                    if text_item_added
-                                    else []
-                                ),
-                                *(dict(call, status="completed") for call in tool_calls.values()),
-                            ],
-                            "metadata": body.metadata,
-                        },
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n\n"
-            )
+            completed_response = {
+                "id": response_id,
+                "object": "response",
+                "created_at": created,
+                "status": "completed",
+                "model": prepared.decision.backend.name,
+                "output": [
+                    *(
+                        _response_output(
+                            response_id=response_id,
+                            text="".join(text_parts),
+                            tool_calls=[],
+                        )
+                        if text_item_added
+                        else []
+                    ),
+                    *(dict(call, status="completed") for call in tool_calls.values()),
+                ],
+                "metadata": safe_metadata,
+                "previous_response_id": body.previous_response_id,
+                "conversation": body.conversation,
+            }
+            completed_event = {
+                "type": "response.completed",
+                "sequence_number": sequence,
+                "response": completed_response,
+            }
+            if should_store:
+                await complete_response_job(response_id, completed_response)
+                await append_response_event(response_id, sequence, completed_event)
+            yield ("data: " + json.dumps(completed_event, separators=(",", ":")) + "\n\n")
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -999,19 +1643,125 @@ async def create_response(
     try:
         result = await runtime.gateway.execute(prepared)
     except GatewayError as exc:
+        if should_store:
+            await fail_response_job(
+                response_id,
+                status="failed",
+                code=exc.code,
+                message="response execution failed",
+            )
         return _openai_error(exc)
+    response_object = _response_object(
+        response_id=response_id,
+        created=created,
+        result=result,
+        metadata=safe_metadata,
+        tools=body.tools,
+        tool_choice=body.tool_choice,
+        parallel_tool_calls=body.parallel_tool_calls,
+    )
+    response_object["previous_response_id"] = body.previous_response_id
+    response_object["conversation"] = body.conversation
+    if should_store:
+        await complete_response_job(response_id, response_object)
+        await append_response_event(
+            response_id,
+            1,
+            {
+                "type": "response.completed",
+                "sequence_number": 1,
+                "response": response_object,
+            },
+        )
     return JSONResponse(
         headers=_headers(prepared),
-        content=_response_object(
-            response_id=response_id,
-            created=created,
-            result=result,
-            metadata=body.metadata,
-            tools=body.tools,
-            tool_choice=body.tool_choice,
-            parallel_tool_calls=body.parallel_tool_calls,
-        ),
+        content=response_object,
     )
+
+
+@router.get("/responses/{response_id}")
+async def retrieve_response(
+    response_id: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_read),
+):
+    try:
+        return await get_response_job(response_id, principal.project_id)
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "response not found",
+                code="response_not_found",
+                status_code=404,
+                param="response_id",
+            )
+        )
+
+
+@router.post("/responses/{response_id}/cancel")
+async def cancel_response(
+    response_id: str,
+    request: Request,
+    principal: Principal = Depends(_gateway_invoke),
+):
+    if not await request_response_cancel(response_id, principal.project_id):
+        try:
+            existing = await get_response_job(response_id, principal.project_id)
+        except ResponseNotFoundError:
+            return _openai_error(
+                GatewayError(
+                    "response not found",
+                    code="response_not_found",
+                    status_code=404,
+                    param="response_id",
+                )
+            )
+        return _openai_error(
+            GatewayError(
+                f"response is already {existing['status']}",
+                code="response_not_cancellable",
+                status_code=409,
+                param="response_id",
+            )
+        )
+    task = _response_tasks.get(response_id)
+    if task is not None:
+        task.cancel()
+    return {
+        "id": response_id,
+        "object": "response",
+        "status": "cancelling",
+    }
+
+
+@router.get("/responses/{response_id}/events")
+async def retrieve_response_events(
+    response_id: str,
+    request: Request,
+    after: int = Query(default=-1, ge=-1),
+    stream: bool = Query(default=False),
+    principal: Principal = Depends(_gateway_read),
+):
+    try:
+        events = await list_response_events(response_id, principal.project_id, after=after)
+    except ResponseNotFoundError:
+        return _openai_error(
+            GatewayError(
+                "response not found",
+                code="response_not_found",
+                status_code=404,
+                param="response_id",
+            )
+        )
+    if not stream:
+        return {"object": "list", "data": events}
+
+    async def replay():
+        for item in events:
+            yield "data: " + json.dumps(item["event"], separators=(",", ":")) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(replay(), media_type="text/event-stream")
 
 
 @router.get("/policy")
@@ -1209,6 +1959,26 @@ async def audit_events(
     )
 
 
+@router.get("/audit/outbox")
+async def audit_outbox_status(
+    request: Request,
+    _principal: Principal = Depends(_audit_read),
+) -> dict:
+    """Return content-free durable-delivery health."""
+    return await request.app.state.runtime.audit.outbox_status()
+
+
+@router.post("/audit/outbox/replay")
+async def replay_audit_dead_letters(
+    request: Request,
+    principal: Principal = Depends(_audit_manage),
+) -> dict:
+    replayed = await request.app.state.runtime.audit.replay_dead_letters(
+        project_id=principal.project_id
+    )
+    return {"replayed": replayed}
+
+
 @router.post("/tool-approvals", status_code=201)
 async def create_tool_approval(
     body: ToolApprovalRequest,
@@ -1220,6 +1990,8 @@ async def create_tool_approval(
     grant = await runtime.approvals.create(
         project_id=principal.project_id,
         tools=body.tools,
+        subject_id=body.subject_id,
+        schema_hash=body.schema_hash,
         purpose=body.purpose,
         ticket=body.ticket,
         created_by=principal.key_fingerprint,
@@ -1231,6 +2003,8 @@ async def create_tool_approval(
         payload={
             "approval_id": grant.id,
             "tools": grant.tools,
+            "subject_id": grant.subject_id,
+            "schema_hash": grant.schema_hash,
             "purpose": grant.purpose,
             "ticket": grant.ticket,
             "expires_at": grant.expires_at,
@@ -1243,6 +2017,8 @@ async def create_tool_approval(
         "token": grant.token,
         "project_id": grant.project_id,
         "tools": grant.tools,
+        "subject_id": grant.subject_id,
+        "schema_hash": grant.schema_hash,
         "purpose": grant.purpose,
         "ticket": grant.ticket,
         "created_at": grant.created_at,

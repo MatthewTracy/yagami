@@ -8,12 +8,14 @@ The background worker (worker.py) picks them up.
 
 from __future__ import annotations
 
+import json
 import logging
 import struct
 import time
 from typing import Iterable
 
-from ..router.schema import Sensitivity
+from ..governance.context_firewall import inspect_context
+from ..router.schema import DataLabel, Sensitivity
 from ..storage.db import get_db
 from .chunker import chunk
 
@@ -24,16 +26,19 @@ log = logging.getLogger("yagami.memory.store")
 _DAY_MS = 24 * 60 * 60 * 1000
 TTL_PHI_MS = 7 * _DAY_MS
 TTL_DEFAULT_MS = 90 * _DAY_MS
+_SENSITIVE_MEMORY = {Sensitivity.PHI, Sensitivity.PHI_MEDICAL}
 
 # Don't store anything shorter than this - captures "thanks", "lol", "ok"
 # without paying a row + embedding for them.
 MIN_REMEMBER_CHARS = 20
 
 
-def _ttl_for(sens: Sensitivity) -> int | None:
-    if sens in (Sensitivity.PHI, Sensitivity.PHI_MEDICAL):
-        return int(time.time() * 1000) + TTL_PHI_MS
-    return int(time.time() * 1000) + TTL_DEFAULT_MS
+def _ttl_for(sens: Sensitivity, retention_days: int | None = None) -> int | None:
+    now = int(time.time() * 1000)
+    sensitivity_ttl = TTL_PHI_MS if sens in _SENSITIVE_MEMORY else TTL_DEFAULT_MS
+    if retention_days is None:
+        return now + sensitivity_ttl
+    return now + min(sensitivity_ttl, retention_days * _DAY_MS)
 
 
 def _vec_blob(vec: list[float]) -> bytes:
@@ -48,6 +53,12 @@ async def queue_observation(
     text: str,
     sensitivity: Sensitivity,
     source_app: str = "chat",
+    project_id: str = "local",
+    data_labels: Iterable[DataLabel] = (),
+    provenance: str | None = None,
+    policy_hash: str | None = None,
+    retention_days: int | None = None,
+    quarantine_reason: str | None = None,
 ) -> list[int]:
     """Apply the write gate and insert pending observations.
 
@@ -55,6 +66,8 @@ async def queue_observation(
     """
     if sensitivity == Sensitivity.SECRET:
         return []  # never written. Defense in depth.
+    if retention_days == 0:
+        return []
     text = text.strip()
     if len(text) < MIN_REMEMBER_CHARS:
         return []
@@ -65,15 +78,26 @@ async def queue_observation(
         return []
 
     now = int(time.time() * 1000)
-    ttl = _ttl_for(sensitivity)
+    ttl = _ttl_for(sensitivity, retention_days)
+    labels = set(data_labels)
+    if sensitivity in _SENSITIVE_MEMORY:
+        labels.add(DataLabel.PHI)
+    inspection = inspect_context(text)
+    if inspection.suspicious and quarantine_reason is None:
+        quarantine_reason = "content_firewall"
+    quarantined = quarantine_reason is not None
+    serialized_labels = json.dumps(sorted(label.value for label in labels), separators=(",", ":"))
     ids: list[int] = []
     parent_id: int | None = None
     for i, ch in enumerate(chunks):
         cur = await db.execute(
             """INSERT INTO observations
                  (session_id, role, text, sensitivity, source_app,
-                  ttl_until, created_at, chunk_index, parent_id, embedding_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                  ttl_until, created_at, chunk_index, parent_id, embedding_status,
+                  project_id, data_labels, provenance, policy_hash, quarantined,
+                  quarantine_reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               RETURNING id""",
             (
                 session_id,
                 role,
@@ -84,11 +108,19 @@ async def queue_observation(
                 now,
                 i,
                 parent_id,
+                "skipped" if quarantined else "pending",
+                project_id,
+                serialized_labels,
+                provenance or source_app,
+                policy_hash,
+                1 if quarantined else 0,
+                quarantine_reason,
             ),
         )
-        new_id = cur.lastrowid
-        if new_id is None:
+        inserted = await cur.fetchone()
+        if inserted is None:
             raise RuntimeError("observation insert did not return a row id")
+        new_id = int(inserted["id"])
         if i == 0:
             parent_id = new_id
         ids.append(new_id)
@@ -101,12 +133,41 @@ async def list_pending(limit: int = 32) -> list[tuple[int, str]]:
     db = get_db()
     async with db.execute(
         "SELECT id, text FROM observations"
-        " WHERE embedding_status = 'pending'"
+        " WHERE embedding_status = 'pending' AND quarantined = 0"
         " ORDER BY id ASC LIMIT ?",
         (limit,),
     ) as cur:
         rows = await cur.fetchall()
     return [(int(r[0]), str(r[1])) for r in rows]
+
+
+async def list_quarantined(*, project_id: str, limit: int = 100) -> list[dict]:
+    db = get_db()
+    async with db.execute(
+        "SELECT id, session_id, role, sensitivity, data_labels, provenance,"
+        " policy_hash, quarantine_reason, created_at"
+        " FROM observations WHERE project_id=? AND quarantined=1"
+        " ORDER BY id DESC LIMIT ?",
+        (project_id, limit),
+    ) as cursor:
+        rows = [dict(row) async for row in cursor]
+    for row in rows:
+        try:
+            row["data_labels"] = json.loads(row["data_labels"])
+        except (TypeError, ValueError):
+            row["data_labels"] = []
+    return rows
+
+
+async def release_quarantined(*, project_id: str, observation_id: int) -> bool:
+    db = get_db()
+    cursor = await db.execute(
+        "UPDATE observations SET quarantined=0, quarantine_reason=NULL,"
+        " embedding_status='pending' WHERE id=? AND project_id=? AND quarantined=1",
+        (observation_id, project_id),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
 
 
 async def write_embeddings(rows: Iterable[tuple[int, list[float] | None]]) -> None:

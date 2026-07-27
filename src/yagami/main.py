@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
+from .admin_audit import AdminAuditMiddleware
 from .api import config as config_api
 from .api import costs as costs_api
 from .api import decisions as decisions_api
@@ -31,25 +32,28 @@ from .backends.registry import build_all
 from .auth import Authenticator, Principal, require_admin, require_scope
 from .chat.session import SessionStore
 from .chat.stream import chat_endpoint, set_memory_worker, set_retriever
-from .memory.embedder import Embedder
+from .memory.embedder import EmbedderProtocol, build_embedder
 from .memory.retriever import Retriever
 from .memory.worker import EmbeddingWorker
 from .middleware import RequestSizeLimitMiddleware
-from .mcp_gateway import build_mcp_server
+from .mcp_gateway import build_mcp_server, register_downstream_tools
 from .paths import configure_default_state, project_root, ui_dist
-from .privacy import cleanup_expired_sessions
+from .privacy import cleanup_expired_sessions, cleanup_policy_retention
+from .responses import cleanup_expired_responses
 from . import secrets
-from .config import effective_routing, get_config, get_settings
+from .config import Settings, effective_routing, get_config, get_settings
+from .coordination import build_coordinator
 from .gateway import GatewayService
-from .key_management import resolve_secret
+from .key_management import parse_aes256_key, resolve_secret, resolve_secret_reference_map
 from .governance import ApprovalNotifier, ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
 from .governance.presidio import PresidioInspector
 from .policy import PolicyEngine
 from .projects import ProjectGovernor, ProjectRegistry
-from .router.classifier import OllamaJSONClassifier
+from .router.classifier import build_classifier
 from .router.policy import RoutingPolicy
 from .skills import mcp_manager as mcp_manager_mod
 from .skills.mcp_manager import McpManager
+from .skills.mcp_oauth import OAuthCredentialStore
 from .storage.db import close_db, open_db
 from .runtime import AppRuntime
 from .telemetry.observability import GatewayMetrics
@@ -112,6 +116,28 @@ def _is_allowed_websocket_origin(
     return normalized in normalized_trusted
 
 
+def _admin_origins(settings: Settings) -> list[str]:
+    local = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    if not settings.remote_admin_enabled:
+        return local
+    if not settings.oidc_issuer:
+        raise ValueError("remote administration requires YAGAMI_OIDC_ISSUER")
+    configured = [
+        value.strip() for value in settings.admin_allowed_origins.split(",") if value.strip()
+    ]
+    if not configured:
+        raise ValueError(
+            "remote administration requires at least one YAGAMI_ADMIN_ALLOWED_ORIGINS entry"
+        )
+    for origin in configured:
+        normalized = _normalize_web_origin(origin)
+        if normalized is None:
+            raise ValueError(f"invalid remote administration origin {origin!r}")
+        if normalized[0] != "https" and normalized[1] not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("remote administration origins must use HTTPS unless loopback")
+    return [*local, *configured]
+
+
 async def _close_resource(name: str, resource: object) -> None:
     close = getattr(resource, "close", None)
     if not callable(close):
@@ -136,6 +162,7 @@ def build_app() -> FastAPI:
     load_dotenv()
     cfg = get_config()
     settings = get_settings()  # also picks up YAGAMI_* env overrides for non-secret config
+    admin_origins = _admin_origins(settings)
     if settings.demo_mode:
         cfg.routing.default_backend = "echo"
         cfg.routing.block_cloud = True
@@ -158,7 +185,7 @@ def build_app() -> FastAPI:
         log.info("backends not loaded: %s (missing key or model)", sorted(missing))
     log.info("backends loaded: %s", sorted(backends.keys()))
 
-    classifier = None if settings.demo_mode else OllamaJSONClassifier(cfg.ollama)
+    classifier = None if settings.demo_mode else build_classifier(cfg, secrets.get)
     presidio = (
         PresidioInspector(
             settings.presidio_url,
@@ -183,15 +210,32 @@ def build_app() -> FastAPI:
         sensitivity_inspector=presidio,
     )
     config_api.set_policy(policy)
-    policy_path = Path(settings.policy_path)
+    policy_path = Path(settings.policy_bundle_path or settings.policy_path)
     if not policy_path.is_absolute():
         policy_path = project_root() / policy_path
-    policy_engine = PolicyEngine(policy_path)
+    policy_public_key_path = (
+        Path(settings.policy_public_key_path) if settings.policy_public_key_path else None
+    )
+    if policy_public_key_path is not None and not policy_public_key_path.is_absolute():
+        policy_public_key_path = project_root() / policy_public_key_path
+    policy_engine = PolicyEngine(
+        policy_path,
+        public_key_path=policy_public_key_path,
+        require_signature=settings.policy_signature_required,
+    )
     projects_path = Path(settings.projects_path)
     if not projects_path.is_absolute():
         projects_path = project_root() / projects_path
     projects = ProjectRegistry(projects_path)
-    governor = ProjectGovernor(projects)
+    coordinator = build_coordinator(
+        settings.coordination_url,
+        prefix=settings.coordination_prefix,
+    )
+    governor = ProjectGovernor(
+        projects,
+        coordinator,
+        slot_ttl_seconds=settings.coordination_slot_ttl_seconds,
+    )
     authenticator = Authenticator(settings)
     metrics = GatewayMetrics()
     audit_key = resolve_secret(
@@ -214,9 +258,12 @@ def build_app() -> FastAPI:
     )
     audit = AuditLedger(
         key=audit_key,
+        previous_keys=settings.audit_previous_keys,
         required=settings.audit_required,
         sink=audit_sink,
         sink_required=settings.audit_sink_required,
+        outbox_max_pending=settings.audit_outbox_max_pending,
+        outbox_max_attempts=settings.audit_outbox_max_attempts,
     )
     approval_notifier = (
         ApprovalNotifier(
@@ -229,13 +276,28 @@ def build_app() -> FastAPI:
     )
     approvals = ApprovalStore(approval_notifier)
     tool_schemas = ToolSchemaRegistry()
+    transform_key = resolve_secret(
+        settings.transform_key,
+        settings.transform_key_ref,
+        label="YAGAMI_TRANSFORM_KEY_REF",
+    )
     transformer = PrivacyTransformer(
-        key=resolve_secret(
-            settings.transform_key,
-            settings.transform_key_ref,
-            label="YAGAMI_TRANSFORM_KEY_REF",
+        key=transform_key,
+        key_id=settings.transform_key_id,
+        key_epoch=settings.transform_key_epoch,
+        previous_keys=resolve_secret_reference_map(
+            settings.transform_previous_key_refs,
+            label="YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS",
         ),
         ttl_seconds=settings.transform_vault_ttl_seconds,
+    )
+    oauth_credentials = (
+        OAuthCredentialStore(
+            key_wrapper=transformer.key_wrapper,
+            identity_key=parse_aes256_key(transform_key, label="YAGAMI_TRANSFORM_KEY"),
+        )
+        if transformer.key_wrapper is not None and transform_key
+        else None
     )
     gateway = GatewayService(
         routing_policy=policy,
@@ -251,11 +313,12 @@ def build_app() -> FastAPI:
     )
     mcp_http_app = None
     mcp_endpoint = None
+    mcp_server = None
     if settings.mcp_server_enabled:
-        _mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
+        mcp_server, mcp_http_app, mcp_endpoint = build_mcp_server(gateway, authenticator)
 
     embedding_worker: EmbeddingWorker | None = None
-    embedder: Embedder | None = None
+    embedder: EmbedderProtocol | None = None
     mcp_manager: McpManager | None = None
     retention_task: asyncio.Task | None = None
 
@@ -264,7 +327,8 @@ def build_app() -> FastAPI:
         nonlocal embedding_worker, embedder, mcp_manager, retention_task
         mcp_lifespan_task: asyncio.Task | None = None
         mcp_lifespan_stop = asyncio.Event()
-        await open_db(db_path)
+        await open_db(db_path, database_url=settings.database_url)
+        audit.start()
         try:
             expired_tokens = await transformer.cleanup_expired()
             if expired_tokens:
@@ -275,32 +339,53 @@ def build_app() -> FastAPI:
             sessions_api.set_store(sessions)
             set_memory_worker(None)
             set_retriever(None)
+            if cfg.memory.embedding_provider != "none":
+                embedder = build_embedder(cfg, secrets.get)
+                _app.state.runtime.embedder = embedder
             if cfg.memory.enabled:
-                embedder = Embedder(url=cfg.ollama.url, model=cfg.memory.embedding_model)
-                embedding_worker = EmbeddingWorker(embedder)
-                embedding_worker.start()
-                set_memory_worker(embedding_worker)
+                if embedder is not None:
+                    embedding_worker = EmbeddingWorker(embedder)
+                    embedding_worker.start()
+                    set_memory_worker(embedding_worker)
                 set_retriever(Retriever(embedder))
                 log.info(
-                    "memory worker + retriever started (model=%s)",
-                    cfg.memory.embedding_model,
+                    "memory retriever started (provider=%s, model=%s)",
+                    cfg.memory.embedding_provider,
+                    embedder.model if embedder is not None else "fts-only",
                 )
             if cfg.mcp_servers:
-                mcp_manager = McpManager()
+                mcp_manager = McpManager(
+                    schema_registry=tool_schemas,
+                    oauth_credentials=oauth_credentials,
+                )
                 await mcp_manager.connect_all(cfg.mcp_servers)
                 mcp_manager_mod.set_manager(mcp_manager)
+                if mcp_server is not None:
+                    registered = register_downstream_tools(mcp_server, gateway, mcp_manager)
+                    log.info(
+                        "mcp: registered %d governed downstream tool(s)",
+                        len(registered),
+                    )
                 log.info(
                     "mcp: %d server(s) configured, %d tool(s) connected",
                     len(cfg.mcp_servers),
                     len(mcp_manager.get_skills()),
                 )
             await cleanup_expired_sessions(get_config().privacy.session_retention_days)
+            await cleanup_policy_retention()
+            await cleanup_expired_responses()
+            if oauth_credentials is not None:
+                await oauth_credentials.cleanup_expired_states()
 
             async def retention_loop() -> None:
                 while True:
                     await asyncio.sleep(6 * 60 * 60)
                     try:
                         await cleanup_expired_sessions(get_config().privacy.session_retention_days)
+                        await cleanup_policy_retention()
+                        await cleanup_expired_responses()
+                        if oauth_credentials is not None:
+                            await oauth_credentials.cleanup_expired_states()
                     except Exception:  # noqa: BLE001 - maintenance must not stop the app
                         log.exception("session retention cleanup failed")
 
@@ -326,10 +411,12 @@ def build_app() -> FastAPI:
                     raise mcp_lifespan_errors[0]
             yield
         finally:
+            await audit.stop()
             if mcp_lifespan_task is not None:
                 mcp_lifespan_stop.set()
                 await asyncio.gather(mcp_lifespan_task, return_exceptions=True)
             await kb_api.shutdown_jobs()
+            await openai_compat_api.shutdown_response_jobs()
             if retention_task is not None:
                 retention_task.cancel()
                 await asyncio.gather(retention_task, return_exceptions=True)
@@ -354,7 +441,9 @@ def build_app() -> FastAPI:
                 resources.append(("presidio", presidio))
             if embedder is not None:
                 resources.append(("embedder", embedder))
+            _app.state.runtime.embedder = None
             await asyncio.gather(*(_close_resource(name, resource) for name, resource in resources))
+            await coordinator.close()
             await close_db()
 
     app = FastAPI(
@@ -380,23 +469,27 @@ def build_app() -> FastAPI:
         tool_schemas=tool_schemas,
         projects=projects,
         governor=governor,
+        coordinator=coordinator,
         audit=audit,
         gateway=gateway,
+        mcp_oauth=oauth_credentials,
+        mcp_server=mcp_server,
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=admin_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    app.add_middleware(AdminAuditMiddleware)
 
     app.include_router(openai_compat_api.router)
     if mcp_endpoint is not None:
         app.router.routes.append(
             Route("/mcp", endpoint=mcp_endpoint, methods=None, include_in_schema=False)
         )
-    if not settings.headless:
+    if not settings.headless or settings.remote_admin_enabled:
         admin_dependencies = [Depends(require_admin)]
         app.include_router(decisions_api.router, dependencies=admin_dependencies)
         app.include_router(sessions_api.router, dependencies=admin_dependencies)
@@ -425,10 +518,10 @@ def build_app() -> FastAPI:
 
             return Response(content=metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
-    if not settings.headless:
+    if not settings.headless or settings.remote_admin_enabled:
 
         @app.get("/api/health")
-        async def health() -> dict:
+        async def health(_principal: Principal = Depends(require_admin)) -> dict:
             return {
                 "ok": True,
                 "backends": [
@@ -438,7 +531,7 @@ def build_app() -> FastAPI:
             }
 
         @app.get("/api/models")
-        async def models() -> dict:
+        async def models(_principal: Principal = Depends(require_admin)) -> dict:
             current_routing = effective_routing(get_config())
             return {
                 "backends": [

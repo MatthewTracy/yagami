@@ -1,0 +1,50 @@
+name: Design partner pilot
+description: Request a non-production Yagami design-partner pilot.
+labels: ["design-partner"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share only public, non-confidential information. Do not include prompts,
+        customer names, credentials, private architecture, or vulnerabilities.
+  - type: dropdown
+    id: workload
+    attributes:
+      label: Workload type
+      options:
+        - Coding agent
+        - Retrieval / RAG
+        - MCP or tool-using agent
+        - Internal assistant
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Intended deployment
+      options:
+        - Local workstation
+        - Docker or Compose
+        - Kubernetes
+        - Other self-hosted environment
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Public pilot goal
+      description: Describe the security or governance outcome without confidential details.
+    validations:
+      required: true
+  - type: checkboxes
+    id: commitment
+    attributes:
+      label: Pilot readiness
+      options:
+        - label: We can operate the pilot weekly for at least 30 days.
+          required: true
+        - label: We can run synthetic organization-specific security tests.
+          required: true
+        - label: We understand this public issue must contain no sensitive information.
+          required: true

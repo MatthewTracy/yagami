@@ -19,7 +19,8 @@ from typing import AsyncIterator
 
 from openai import APIError, AsyncOpenAI
 
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 class OpenAICompatBackend(Backend):
@@ -27,6 +28,7 @@ class OpenAICompatBackend(Backend):
     `pricing`, and pass model/base_url/api_key into `__init__`."""
 
     is_local = False
+    trust_zone = TrustZone.EXTERNAL
 
     def __init__(
         self,
@@ -36,12 +38,16 @@ class OpenAICompatBackend(Backend):
         model: str,
         max_tokens: int,
         capabilities: set[Capability] | None = None,
+        trust_zone: TrustZone | None = None,
     ) -> None:
         self._model = model
         self._max_tokens = max_tokens
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         if capabilities is not None:
             self.capabilities = capabilities
+        if trust_zone is not None:
+            self.trust_zone = trust_zone
+            self.is_local = trust_zone.is_private
 
     async def generate(
         self, messages: list[Message], *, options: BackendOptions
@@ -95,6 +101,8 @@ class OpenAICompatBackend(Backend):
                 kwargs["tools"] = options.tools
                 if options.tool_choice is not None:
                     kwargs["tool_choice"] = options.tool_choice
+            if options.request_id:
+                kwargs["extra_headers"] = {"Idempotency-Key": options.request_id}
             stream = await self._client.chat.completions.create(**kwargs)
             async for event in stream:
                 if not event.choices:
@@ -118,7 +126,7 @@ class OpenAICompatBackend(Backend):
                     }
             yield {"type": "done", "content": "", "meta": {"model": self._model}}
         except APIError as exc:
-            yield {"type": "error", "content": f"{self.name} error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._model}}
 
     async def health(self) -> bool:

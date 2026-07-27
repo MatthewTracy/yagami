@@ -18,5 +18,16 @@ conversation history, retrieved-document contamination, tool approvals, and
 benign controls. A release should report per-category recall, benign false
 positive rate, policy-preview latency, and the exact commit/configuration.
 
+Generate the public JSON and Markdown report with
+`python -m evals.generate_report`. The report schema lives at
+`benchmarks/report.schema.json`; published results are stored under a versioned
+`benchmarks/vX.Y.Z/` directory. A valid report discloses:
+
+- The commit and cryptographic hash of the fixture corpus.
+- Operating system, hardware, Python version, and model names.
+- Detector set and material threshold/configuration choices.
+- Overall accuracy, attack recall, benign false-positive rate, explicit
+  prompt-injection detection, and policy-preview p50/p95 latency.
+
 Counts are not a security claim. Add organization-specific failure cases to a
 private fixture set and require a clean run before policy or model promotion.

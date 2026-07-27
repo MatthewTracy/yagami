@@ -58,8 +58,15 @@ def test_gateway_span_uses_content_free_genai_semantic_conventions(monkeypatch):
     assert tracer.span.attributes["gen_ai.provider.name"] == "anthropic"
     assert tracer.span.attributes["gen_ai.operation.name"] == "chat"
     assert tracer.span.attributes["gen_ai.request.temperature"] == 0.2
-    assert tracer.span.attributes["gen_ai.conversation.id"] == "conversation-one"
-    assert "prompt" not in " ".join(tracer.span.attributes)
+    exported = " ".join(tracer.span.attributes)
+    assert "prompt" not in exported
+    assert "conversation" not in exported
+    assert "request.id" not in exported
+    assert "project.id" not in exported
+    assert "policy" not in exported
+    assert "alpha" not in repr(tracer.span.attributes)
+    assert "conversation-one" not in repr(tracer.span.attributes)
+    assert "sha256:abc" not in repr(tracer.span.attributes)
 
 
 def test_local_model_span_uses_internal_kind(monkeypatch):
@@ -82,6 +89,14 @@ def test_local_model_span_uses_internal_kind(monkeypatch):
     assert tracer.kind == SpanKind.INTERNAL
     assert tracer.span.attributes["gen_ai.provider.name"] == "local"
     assert "gen_ai.conversation.id" not in tracer.span.attributes
+
+
+def test_prometheus_policy_match_metric_has_no_customer_defined_labels():
+    metrics = observability.GatewayMetrics()
+    metrics.policy_matches.inc()
+    rendered = metrics.render().decode("utf-8")
+    assert "yagami_policy_rule_matches_total 1.0" in rendered
+    assert "rule_id=" not in rendered
 
 
 def test_genai_metrics_use_standard_names_and_low_cardinality_labels(monkeypatch):

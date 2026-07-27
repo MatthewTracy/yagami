@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://matthewtracy.github.io/yagami/schemas/benchmark-report-1.0.0.json",
+  "title": "Yagami benchmark report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "release",
+    "commit",
+    "generated_at",
+    "suite",
+    "environment",
+    "metrics",
+    "categories",
+    "disclosure"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "release": {"type": "string", "pattern": "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "commit": {"type": "string", "minLength": 7},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "suite": {"type": "object"},
+    "environment": {"type": "object"},
+    "metrics": {"type": "object"},
+    "categories": {"type": "object"},
+    "disclosure": {"type": "string"}
+  },
+  "additionalProperties": false
+}

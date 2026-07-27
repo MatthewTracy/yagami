@@ -1,0 +1,56 @@
+{
+  "name": "@yagami/ai-sdk-provider",
+  "version": "0.6.2",
+  "description": "Vercel AI SDK provider for the Yagami AI context firewall.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Matthew Tracy",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "^4.0.3"
+  },
+  "devDependencies": {
+    "ai": "^7.0.37",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MatthewTracy/yagami.git",
+    "directory": "integrations/ai-sdk-provider"
+  },
+  "homepage": "https://matthewtracy.github.io/yagami/integrations/",
+  "bugs": "https://github.com/MatthewTracy/yagami/issues",
+  "keywords": [
+    "ai-sdk",
+    "vercel",
+    "yagami",
+    "ai-security",
+    "context-firewall",
+    "data-governance"
+  ]
+}

@@ -1,0 +1,41 @@
+groups:
+  - name: yagami
+    rules:
+      - alert: YagamiGatewayErrorRatioHigh
+        expr: |
+          sum(rate(yagami_gateway_requests_total{outcome=~"error|failed"}[10m]))
+          /
+          clamp_min(sum(rate(yagami_gateway_requests_total[10m])), 0.001)
+          > 0.01
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Yagami gateway error ratio exceeds 1%
+      - alert: YagamiGatewayP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(yagami_gateway_request_duration_seconds_bucket[10m]))
+          ) > 5
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Yagami end-to-end p95 latency exceeds five seconds
+      - alert: YagamiPolicyDenialsChangedRapidly
+        expr: |
+          sum(rate(yagami_policy_denials_total[10m]))
+          > 3 * clamp_min(sum(rate(yagami_policy_denials_total[1h] offset 1h)), 0.001)
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Yagami policy-denial rate increased rapidly
+      - alert: YagamiTargetMissing
+        expr: absent(up{job=~".*yagami.*"} == 1)
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Prometheus cannot scrape a Yagami target

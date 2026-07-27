@@ -1,6 +1,8 @@
 # Yagami
 
-**An open-source, self-hosted context firewall for AI applications and agents.**
+<!-- mcp-name: io.github.matthewtracy/yagami -->
+
+**Open-source AI context firewall for governed model, retrieval, memory, and tool access.**
 
 [![CI](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml/badge.svg)](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/yagami.svg)](https://pypi.org/project/yagami/)
@@ -33,6 +35,10 @@ echo backend, blocks cloud routing, and exercises the UI, policy, lineage,
 storage, and audit path.
 
 [Watch the two-minute demo](https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2).
+
+[Take the no-data security tour](https://matthewtracy.github.io/yagami/tour/) or
+run the [flagship security demos](https://github.com/MatthewTracy/yagami/tree/main/examples/flagship)
+for secret containment, poisoned retrieval, and identity-bound tool approval.
 
 ## Protect an application
 

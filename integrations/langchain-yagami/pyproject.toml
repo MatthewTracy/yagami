@@ -1,0 +1,46 @@
+[project]
+name = "langchain-yagami"
+version = "0.6.2"
+description = "LangChain integration for the Yagami AI context firewall."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Matthew Tracy" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "httpx>=0.27",
+    "langchain-core>=1.0,<2",
+]
+
+[project.optional-dependencies]
+middleware = ["langchain>=1.0,<2"]
+test = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.22",
+]
+
+[project.urls]
+Homepage = "https://github.com/MatthewTracy/yagami"
+Documentation = "https://matthewtracy.github.io/yagami/integrations/"
+Repository = "https://github.com/MatthewTracy/yagami/tree/main/integrations/langchain-yagami"
+Issues = "https://github.com/MatthewTracy/yagami/issues"
+
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langchain_yagami"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+

@@ -15,10 +15,9 @@ export type ServerMsg =
       content: string;
       meta: {
         name: string;
-        input: Record<string, unknown>;
         ok: boolean;
-        result?: string | null;
-        error?: string | null;
+        error_code?: string | null;
+        result_bytes?: number;
         artifacts?: Record<string, unknown>;
       };
     }

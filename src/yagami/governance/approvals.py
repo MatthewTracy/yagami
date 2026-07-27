@@ -29,6 +29,8 @@ class ApprovalGrant:
     token: str
     project_id: str
     tools: list[str]
+    subject_id: str | None
+    schema_hash: str | None
     purpose: str | None
     ticket: str | None
     created_at: int
@@ -69,6 +71,8 @@ class ApprovalStore:
         *,
         project_id: str,
         tools: list[str],
+        subject_id: str | None = None,
+        schema_hash: str | None = None,
         purpose: str | None,
         ticket: str | None,
         created_by: str | None,
@@ -79,14 +83,23 @@ class ApprovalStore:
         created_at = now_ms()
         expires_at = created_at + ttl_seconds * 1000
         normalized_tools = list(dict.fromkeys(tool.strip() for tool in tools if tool.strip()))
+        if subject_id is not None and (not subject_id.strip() or len(subject_id) > 128):
+            raise ApprovalError("approval subject_id must contain 1 to 128 characters")
+        if schema_hash is not None and (
+            len(schema_hash) != 71 or not schema_hash.startswith("sha256:")
+        ):
+            raise ApprovalError("approval schema_hash must be a sha256 digest")
         await get_db().execute(
-            "INSERT INTO tool_approvals(id, project_id, token_hash, tools, purpose, ticket,"
-            " created_by, created_at, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tool_approvals(id, project_id, token_hash, tools, subject_id,"
+            " schema_hash, purpose, ticket, created_by, created_at, expires_at)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 approval_id,
                 project_id,
                 _token_hash(token),
                 json.dumps(normalized_tools, separators=(",", ":")),
+                subject_id,
+                schema_hash,
                 purpose,
                 ticket,
                 created_by,
@@ -100,6 +113,8 @@ class ApprovalStore:
             token=token,
             project_id=project_id,
             tools=normalized_tools,
+            subject_id=subject_id,
+            schema_hash=schema_hash,
             purpose=purpose,
             ticket=ticket,
             created_at=created_at,
@@ -111,6 +126,8 @@ class ApprovalStore:
                 "approval_id": grant.id,
                 "project_id": grant.project_id,
                 "tools": grant.tools,
+                "subject_id": grant.subject_id,
+                "schema_hash": grant.schema_hash,
                 "purpose": grant.purpose,
                 "expires_at": grant.expires_at,
             },
@@ -126,6 +143,8 @@ class ApprovalStore:
         purpose: str,
         request_id: str,
         consume: bool,
+        subject_id: str | None = None,
+        schema_hash: str | None = None,
     ) -> ApprovalResolution:
         approved: set[str] = set()
         approval_ids: list[str] = []
@@ -136,7 +155,8 @@ class ApprovalStore:
                 if not token.startswith("ygma_") or len(token) < 32:
                     raise ApprovalError("invalid tool approval token")
                 async with db.execute(
-                    "SELECT id, tools, purpose, expires_at, consumed_at, revoked_at"
+                    "SELECT id, tools, subject_id, schema_hash, purpose, expires_at,"
+                    " consumed_at, revoked_at"
                     " FROM tool_approvals WHERE project_id=? AND token_hash=?",
                     (project_id, _token_hash(token)),
                 ) as cursor:
@@ -149,6 +169,10 @@ class ApprovalStore:
                     raise ApprovalError("tool approval has already been consumed")
                 if int(row["expires_at"]) < current:
                     raise ApprovalError("tool approval has expired")
+                if row["subject_id"] is not None and str(row["subject_id"]) != subject_id:
+                    raise ApprovalError("tool approval identity does not match this request")
+                if row["schema_hash"] is not None and str(row["schema_hash"]) != schema_hash:
+                    raise ApprovalError("tool approval schema does not match this request")
                 if row["purpose"] is not None and str(row["purpose"]) != purpose:
                     raise ApprovalError("tool approval purpose does not match this request")
                 try:
@@ -185,8 +209,9 @@ class ApprovalStore:
         current = now_ms()
         rows: list[dict] = []
         async with get_db().execute(
-            "SELECT id, project_id, tools, purpose, ticket, created_by, created_at, expires_at,"
-            " consumed_at, consumed_request_id, revoked_at FROM tool_approvals"
+            "SELECT id, project_id, tools, subject_id, schema_hash, purpose, ticket,"
+            " created_by, created_at, expires_at, consumed_at, consumed_request_id,"
+            " revoked_at FROM tool_approvals"
             " WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
             (project_id, limit),
         ) as cursor:

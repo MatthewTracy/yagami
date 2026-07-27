@@ -162,6 +162,74 @@ def _doctor(argv: list[str]) -> int:
     return asyncio.run(doctor_main())
 
 
+def _database(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="yagami db",
+        description="Create and verify offline Yagami database backups.",
+    )
+    commands = parser.add_subparsers(dest="database_command", required=True)
+    backup_parser = commands.add_parser("backup", help="Create and verify a backup")
+    backup_parser.add_argument("--source", type=Path, default=Path("yagami.db"))
+    backup_parser.add_argument("--database-url", default=os.getenv("YAGAMI_DATABASE_URL", ""))
+    backup_parser.add_argument("--output", type=Path, required=True)
+    backup_parser.add_argument("--force", action="store_true")
+    verify_parser = commands.add_parser("verify", help="Verify a backup archive")
+    verify_parser.add_argument("backup", type=Path)
+    verify_parser.add_argument(
+        "--format",
+        choices=("sqlite", "postgresql"),
+        default="sqlite",
+    )
+    restore_parser = commands.add_parser(
+        "restore-sqlite",
+        help="Verify and restore a SQLite backup while Yagami is stopped",
+    )
+    restore_parser.add_argument("backup", type=Path)
+    restore_parser.add_argument("--target", type=Path, required=True)
+    restore_parser.add_argument("--force", action="store_true")
+    migrate_parser = commands.add_parser(
+        "migrate",
+        help="Apply packaged Alembic migrations to PostgreSQL",
+    )
+    migrate_parser.add_argument(
+        "--database-url",
+        default=os.getenv("YAGAMI_DATABASE_URL", ""),
+        required=not bool(os.getenv("YAGAMI_DATABASE_URL")),
+    )
+    args = parser.parse_args(argv)
+
+    from .storage.backup import (
+        backup_postgresql,
+        backup_sqlite,
+        restore_sqlite_backup,
+        verify_postgresql_backup,
+        verify_sqlite_backup,
+    )
+
+    if args.database_command == "backup":
+        result = (
+            backup_postgresql(args.database_url, args.output, force=args.force)
+            if args.database_url
+            else backup_sqlite(args.source, args.output, force=args.force)
+        )
+    elif args.database_command == "verify":
+        result = (
+            verify_postgresql_backup(args.backup)
+            if args.format == "postgresql"
+            else verify_sqlite_backup(args.backup)
+        )
+    elif args.database_command == "restore-sqlite":
+        result = restore_sqlite_backup(args.backup, args.target, force=args.force)
+    else:
+        from .storage.migrate import upgrade_database
+
+        upgrade_database(args.database_url)
+        print("Database migration reached Alembic head")
+        return 0
+    print(f"Verified {result['format']} backup: {result['path']}")
+    return 0
+
+
 def _policy(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="yagami policy", description="Test, sign, and verify Yagami policies."
@@ -229,6 +297,7 @@ def _print_help() -> None:
         "  yagami init      Create ~/.yagami with safe starter configuration\n"
         "  yagami doctor    Check config, storage, Ollama, and optional providers\n"
         "  yagami demo      Launch a no-credential, local-only interactive demo\n"
+        "  yagami db        Create, verify, and restore offline backups\n"
         "  yagami policy    Test and cryptographically sign policy bundles\n"
         "  yagami serve     Start the API and bundled control surface\n\n"
         "Compatibility: `yagami --host ...` still starts the server.\n"
@@ -247,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "doctor":
         configure_default_state()
         return _doctor(args[1:])
+    if command == "db":
+        configure_default_state()
+        return _database(args[1:])
     if command == "policy":
         configure_default_state()
         return _policy(args[1:])

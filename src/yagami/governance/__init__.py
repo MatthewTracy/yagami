@@ -2,7 +2,14 @@ from .approvals import ApprovalError, ApprovalGrant, ApprovalResolution, Approva
 from .approval_notifications import ApprovalNotifier
 from .lineage import LineageGraph, LineageSource
 from .output import OutputInspection, inspect_output
-from .context_firewall import ContextInspection, TrustLevel, inspect_context
+from .context_firewall import (
+    ContentDetector,
+    ContextFirewall,
+    ContextInspection,
+    DetectorSignal,
+    TrustLevel,
+    inspect_context,
+)
 from .tool_schemas import ToolSchemaCheck, ToolSchemaRegistry
 from .transform import (
     PrivacyTransformer,
@@ -28,6 +35,9 @@ __all__ = [
     "generate_transform_key",
     "inspect_output",
     "ContextInspection",
+    "ContentDetector",
+    "ContextFirewall",
+    "DetectorSignal",
     "TrustLevel",
     "inspect_context",
     "ToolSchemaCheck",

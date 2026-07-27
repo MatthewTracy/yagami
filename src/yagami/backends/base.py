@@ -16,6 +16,20 @@ class Capability(str, Enum):
     CODE = "code"
     VISION = "vision"
     TOOLS = "tools"  # backend supports tool/function calling (v0.3 surface)
+    EMBEDDINGS = "embeddings"
+
+
+class TrustZone(str, Enum):
+    """Where a backend executes and which network boundary receives data."""
+
+    DEVICE = "device"
+    PRIVATE_NETWORK = "private_network"
+    APPROVED_CLOUD = "approved_cloud"
+    EXTERNAL = "external"
+
+    @property
+    def is_private(self) -> bool:
+        return self in {TrustZone.DEVICE, TrustZone.PRIVATE_NETWORK}
 
 
 @dataclass(frozen=True)
@@ -67,6 +81,8 @@ class BackendOptions(BaseModel):
     system_prompt: str | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
+    request_id: str | None = None
+    deadline_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
 
 
 class BackendChunk(TypedDict):
@@ -79,6 +95,7 @@ class BackendChunk(TypedDict):
 class Backend(Protocol):
     name: str
     capabilities: set[Capability]
+    trust_zone: TrustZone
     is_local: bool
     pricing: Pricing
 

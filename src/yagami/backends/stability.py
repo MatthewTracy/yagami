@@ -6,7 +6,8 @@ from typing import AsyncIterator
 import httpx
 
 from ..config import StabilityConfig, YagamiConfig
-from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing
+from .base import Backend, BackendChunk, BackendOptions, Capability, Message, Pricing, TrustZone
+from .errors import from_exception
 
 
 def build(cfg: YagamiConfig, secrets_get) -> "StabilityImageBackend | None":
@@ -20,6 +21,7 @@ class StabilityImageBackend(Backend):
     name = "stability"
     capabilities = {Capability.IMAGE}
     is_local = False
+    trust_zone = TrustZone.EXTERNAL
     # Stable Image Core: $0.03/image as of 2026-06.
     pricing = Pricing(per_image_usd=0.03)
 
@@ -38,6 +40,8 @@ class StabilityImageBackend(Backend):
             yield {"type": "error", "content": "empty prompt", "meta": {}}
             return
         headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "image/*"}
+        if options.request_id:
+            headers["Idempotency-Key"] = options.request_id
         data = {"prompt": prompt, "output_format": "png"}
         try:
             r = await self._client.post(
@@ -56,7 +60,7 @@ class StabilityImageBackend(Backend):
             }
             yield {"type": "done", "content": "", "meta": {}}
         except httpx.HTTPError as exc:
-            yield {"type": "error", "content": f"stability error: {exc}", "meta": {}}
+            yield from_exception(self.name, exc).chunk()
             yield {"type": "done", "content": "", "meta": {"model": self._config.model}}
 
     async def health(self) -> bool:

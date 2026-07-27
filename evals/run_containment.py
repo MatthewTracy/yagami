@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ class Result:
     response: dict
     failures: list[str]
     error: str | None = None
+    duration_ms: float = 0.0
 
     @property
     def passed(self) -> bool:
@@ -49,6 +51,7 @@ async def one_case(
     *,
     cloud_model: str,
 ) -> Result:
+    started = time.perf_counter()
     metadata = dict(case.get("metadata", {}))
     model = cloud_model if case.get("model") == "$cloud" else case.get("model", "yagami-auto")
     messages = case.get("messages") or [{"role": "user", "content": case["prompt"]}]
@@ -62,12 +65,25 @@ async def one_case(
         response = await client.post("/v1/policy/preview", json=payload)
         body = response.json()
     except Exception as exc:  # noqa: BLE001 - benchmark reports transport failures per case
-        return Result(case=case, status_code=0, response={}, failures=[], error=str(exc))
+        return Result(
+            case=case,
+            status_code=0,
+            response={},
+            failures=[],
+            error=str(exc),
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
 
     failures: list[str] = []
     if response.status_code != 200:
         failures.append(f"HTTP {response.status_code}: {body}")
-        return Result(case, response.status_code, body, failures)
+        return Result(
+            case,
+            response.status_code,
+            body,
+            failures,
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
 
     policy = body.get("policy", {})
     if "expected_allowed" in case and body.get("allowed") is not case["expected_allowed"]:
@@ -94,7 +110,13 @@ async def one_case(
         failures.append(
             f"context risk expected {expected_context_risk!r}, got {actual_context_risk!r}"
         )
-    return Result(case, response.status_code, body, failures)
+    return Result(
+        case,
+        response.status_code,
+        body,
+        failures,
+        duration_ms=(time.perf_counter() - started) * 1000,
+    )
 
 
 def write_junit(path: Path, results: list[Result]) -> None:
@@ -163,6 +185,7 @@ async def main() -> int:
             "failures": result.failures,
             "error": result.error,
             "passed": result.passed,
+            "duration_ms": round(result.duration_ms, 3),
         }
         for result in results
     ]

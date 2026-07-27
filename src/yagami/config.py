@@ -12,6 +12,45 @@ from uuid import uuid4
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .backends.base import TrustZone
+
+
+def _validate_service_endpoint(
+    url: str,
+    *,
+    trust_zone: TrustZone,
+    label: str,
+    allowed_paths: set[str] | None = None,
+) -> None:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a valid HTTP(S) service URL") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{label} must be an absolute HTTP(S) service URL")
+    if trust_zone in {TrustZone.APPROVED_CLOUD, TrustZone.EXTERNAL} and parsed.scheme != "https":
+        raise ValueError(f"{label} in {trust_zone.value} must use HTTPS")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(f"{label} cannot contain credentials, query, or fragment")
+    if port == 0:
+        raise ValueError(f"{label} requires a valid nonzero port")
+    normalized_path = parsed.path.rstrip("/")
+    if allowed_paths is not None and normalized_path not in allowed_paths:
+        raise ValueError(f"{label} has an unsupported URL path")
+    host = parsed.hostname.rstrip(".").casefold()
+    is_device = host in {"localhost", "host.docker.internal", "gateway.docker.internal"}
+    if not is_device:
+        try:
+            is_device = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_device = False
+    if trust_zone == TrustZone.DEVICE and not is_device:
+        raise ValueError(
+            f"non-device {label} requires an explicit non-device trust zone "
+            "(for example, trust_zone='private_network')"
+        )
+
 
 class OllamaConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
@@ -19,7 +58,7 @@ class OllamaConfig(BaseModel):
     url: str = "http://localhost:11434"
     model: str = "llama3.2:3b-instruct-q4_K_M"
     classifier_model: str = "llama3.2:3b-instruct-q4_K_M"
-    trust_zone: Literal["device", "private_network"] = "device"
+    trust_zone: TrustZone = TrustZone.DEVICE
 
     @model_validator(mode="after")
     def validate_trusted_service(self) -> "OllamaConfig":
@@ -30,32 +69,14 @@ class OllamaConfig(BaseModel):
         host gateway is still the same physical device; Kubernetes/service-mesh
         deployments must opt into ``private_network`` explicitly.
         """
-        try:
-            parsed = urlsplit(self.url)
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("Ollama url must be a valid HTTP(S) service URL") from exc
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("Ollama url must be an absolute HTTP(S) service URL")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("Ollama url cannot contain credentials, query, or fragment")
-        if parsed.path.rstrip("/"):
-            raise ValueError("Ollama url cannot contain a path")
-        if port == 0:
-            raise ValueError("Ollama url requires a valid nonzero port")
-
-        host = parsed.hostname.rstrip(".").casefold()
-        device_host = host in {"localhost", "host.docker.internal", "gateway.docker.internal"}
-        if not device_host:
-            try:
-                device_host = ipaddress.ip_address(host).is_loopback
-            except ValueError:
-                device_host = False
-        if self.trust_zone == "device" and not device_host:
-            raise ValueError(
-                "non-device Ollama endpoints require trust_zone='private_network'; "
-                "Ollama receives prompts for classification, generation, and embeddings"
-            )
+        if self.trust_zone not in {TrustZone.DEVICE, TrustZone.PRIVATE_NETWORK}:
+            raise ValueError("Ollama trust_zone must be device or private_network")
+        _validate_service_endpoint(
+            self.url,
+            trust_zone=self.trust_zone,
+            label="Ollama url",
+            allowed_paths={""},
+        )
         return self
 
 
@@ -83,6 +104,19 @@ class UpstreamConfig(BaseModel):
     max_tokens: int = 4096
     api_key_env: str = "UPSTREAM_API_KEY"
     allow_unauthenticated: bool = False
+    trust_zone: TrustZone = TrustZone.EXTERNAL
+
+    @model_validator(mode="after")
+    def validate_upstream_service(self) -> "UpstreamConfig":
+        if not self.enabled:
+            return self
+        _validate_service_endpoint(
+            self.base_url,
+            trust_zone=self.trust_zone,
+            label="upstream base_url",
+            allowed_paths={"", "/v1"},
+        )
+        return self
 
 
 class FoundryLocalConfig(BaseModel):
@@ -187,6 +221,41 @@ class RoutingConfig(BaseModel):
     # "" = no profile active, [routing] above applies directly. Otherwise a
     # key into YagamiConfig.profiles - see ProfileOverrides.
     active_profile: str = ""
+    # Selection is capability-first, then follows these operator-controlled
+    # priorities. Unknown or unavailable names are skipped safely.
+    backend_priority: list[str] = Field(
+        default_factory=lambda: [
+            "ollama",
+            "foundry_local",
+            "llama_cpp",
+            "anthropic",
+            "openai",
+            "gemini",
+            "mistral",
+            "groq",
+            "openrouter",
+            "upstream",
+            "stability",
+            "echo",
+        ]
+    )
+    complex_backend_priority: list[str] = Field(
+        default_factory=lambda: [
+            "anthropic",
+            "openai",
+            "gemini",
+            "mistral",
+            "openrouter",
+            "groq",
+            "upstream",
+            "foundry_local",
+            "ollama",
+            "llama_cpp",
+        ]
+    )
+    vision_backend_priority: list[str] = Field(
+        default_factory=lambda: ["anthropic", "gemini", "openai", "openrouter", "upstream"]
+    )
 
 
 class ProfileOverrides(BaseModel):
@@ -210,7 +279,49 @@ class ProfileOverrides(BaseModel):
 
 class MemoryConfig(BaseModel):
     enabled: bool = True
-    embedding_model: str = "all-minilm"  # Ollama model name (384 dim)
+    embedding_provider: Literal["ollama", "openai_compatible", "none"] = "ollama"
+    embedding_url: str = ""
+    embedding_model: str = "all-minilm"  # 384 dimensions, or provider supports dimensions=384
+    embedding_api_key_env: str = ""
+    embedding_trust_zone: TrustZone = TrustZone.DEVICE
+
+    @model_validator(mode="after")
+    def validate_embedding_service(self) -> "MemoryConfig":
+        if self.embedding_provider == "none":
+            return self
+        if self.embedding_provider == "openai_compatible" and not self.embedding_url:
+            raise ValueError("openai_compatible embeddings require embedding_url")
+        if self.embedding_url:
+            _validate_service_endpoint(
+                self.embedding_url,
+                trust_zone=self.embedding_trust_zone,
+                label="embedding_url",
+                allowed_paths={"", "/v1"},
+            )
+        return self
+
+
+class ClassifierConfig(BaseModel):
+    provider: Literal["ollama", "openai_compatible", "rules"] = "ollama"
+    url: str = ""
+    model: str = ""
+    api_key_env: str = ""
+    trust_zone: TrustZone = TrustZone.DEVICE
+
+    @model_validator(mode="after")
+    def validate_classifier_service(self) -> "ClassifierConfig":
+        if self.provider == "rules":
+            return self
+        if self.provider == "openai_compatible" and (not self.url or not self.model):
+            raise ValueError("openai_compatible classifier requires url and model")
+        if self.url:
+            _validate_service_endpoint(
+                self.url,
+                trust_zone=self.trust_zone,
+                label="classifier url",
+                allowed_paths={"", "/v1"},
+            )
+        return self
 
 
 class PrivacyConfig(BaseModel):
@@ -233,25 +344,57 @@ class McpServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
-    auth: Literal["none", "bearer_env", "client_credentials"] = "none"
+    auth: Literal[
+        "none",
+        "bearer_env",
+        "client_credentials",
+        "authorization_code_pkce",
+    ] = "none"
     bearer_token_env: str = ""
+    oauth_authorization_url: str = ""
     oauth_token_url: str = ""
+    oauth_redirect_uri: str = ""
     oauth_client_id_env: str = ""
     oauth_client_secret_env: str = ""
     oauth_scopes: list[str] = Field(default_factory=list)
     oauth_resource: str = ""
-    oauth_token_endpoint_auth_method: Literal["client_secret_basic", "client_secret_post"] = (
-        "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
-    )
+    oauth_token_endpoint_auth_method: Literal[
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+    ] = "client_secret_basic"  # noqa: S105 - OAuth method name, not a credential
+    trust_zone: TrustZone | None = None
+    data_ceiling: Literal["none", "phi", "phi_medical", "secret"] = "none"
+    risk_level: Literal["low", "medium", "high", "critical"] = "medium"
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allow_private_addresses: bool = False
+    max_retries: int = Field(default=2, ge=0, le=5)
+    call_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    reconnect_backoff_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
+    schema_drift: Literal["block", "warn"] = "block"
 
     @model_validator(mode="after")
     def validate_transport(self) -> "McpServerConfig":
+        if self.trust_zone is None:
+            self.trust_zone = TrustZone.DEVICE if self.transport == "stdio" else TrustZone.EXTERNAL
+        self.allowed_hosts = list(
+            dict.fromkeys(
+                host.strip().rstrip(".").casefold() for host in self.allowed_hosts if host.strip()
+            )
+        )
         if self.transport == "stdio":
             if not self.command:
                 raise ValueError("stdio MCP servers require command")
+            if self.trust_zone not in {TrustZone.DEVICE, TrustZone.PRIVATE_NETWORK}:
+                raise ValueError("stdio MCP servers must use device or private_network trust")
             return self
         if not self.url:
             raise ValueError("streamable_http MCP servers require url")
+        _validate_service_endpoint(
+            self.url,
+            trust_zone=self.trust_zone,
+            label="streamable_http MCP URL",
+        )
         if self.auth == "bearer_env" and not self.bearer_token_env:
             raise ValueError("bearer_env MCP auth requires bearer_token_env")
         if self.auth == "client_credentials":
@@ -265,6 +408,48 @@ class McpServerConfig(BaseModel):
             if missing:
                 raise ValueError(
                     "client_credentials MCP auth missing " + ", ".join(sorted(missing))
+                )
+        if self.auth == "authorization_code_pkce":
+            required = {
+                "oauth_authorization_url": self.oauth_authorization_url,
+                "oauth_token_url": self.oauth_token_url,
+                "oauth_redirect_uri": self.oauth_redirect_uri,
+                "oauth_client_id_env": self.oauth_client_id_env,
+                "oauth_resource": self.oauth_resource,
+            }
+            missing = [name for name, value in required.items() if not value]
+            if missing:
+                raise ValueError(
+                    "authorization_code_pkce MCP auth missing " + ", ".join(sorted(missing))
+                )
+            _validate_service_endpoint(
+                self.oauth_authorization_url,
+                trust_zone=TrustZone.EXTERNAL,
+                label="OAuth authorization URL",
+            )
+            _validate_service_endpoint(
+                self.oauth_token_url,
+                trust_zone=TrustZone.EXTERNAL,
+                label="OAuth token URL",
+            )
+            parsed_redirect = urlsplit(self.oauth_redirect_uri)
+            redirect_host = (parsed_redirect.hostname or "").rstrip(".").casefold()
+            redirect_trust = (
+                TrustZone.DEVICE
+                if redirect_host in {"localhost", "127.0.0.1", "::1"}
+                else TrustZone.EXTERNAL
+            )
+            _validate_service_endpoint(
+                self.oauth_redirect_uri,
+                trust_zone=redirect_trust,
+                label="OAuth redirect URI",
+            )
+            if (
+                self.oauth_token_endpoint_auth_method != "none"  # noqa: S105
+                and not self.oauth_client_secret_env
+            ):
+                raise ValueError(
+                    "confidential authorization_code_pkce requires oauth_client_secret_env"
                 )
         return self
 
@@ -284,6 +469,7 @@ class YagamiConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
@@ -314,7 +500,7 @@ class Settings(BaseSettings):
     stability_api_key: str = Field(default="", validation_alias=AliasChoices("STABILITY_API_KEY"))
     ollama_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_URL"))
     ollama_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_OLLAMA_MODEL"))
-    ollama_trust_zone: Literal["device", "private_network"] | None = Field(
+    ollama_trust_zone: TrustZone | None = Field(
         default=None,
         validation_alias=AliasChoices("YAGAMI_OLLAMA_TRUST_ZONE"),
     )
@@ -323,8 +509,31 @@ class Settings(BaseSettings):
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
     )
     db_path: str = Field(default="yagami.db", validation_alias=AliasChoices("YAGAMI_DB_PATH"))
+    database_url: str = Field(default="", validation_alias=AliasChoices("YAGAMI_DATABASE_URL"))
+    coordination_url: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_COORDINATION_URL")
+    )
+    coordination_prefix: str = Field(
+        default="yagami", validation_alias=AliasChoices("YAGAMI_COORDINATION_PREFIX")
+    )
+    coordination_slot_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        validation_alias=AliasChoices("YAGAMI_COORDINATION_SLOT_TTL_SECONDS"),
+    )
     policy_path: str = Field(
         default="config/policy.yaml", validation_alias=AliasChoices("YAGAMI_POLICY_PATH")
+    )
+    policy_bundle_path: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_POLICY_BUNDLE_PATH")
+    )
+    policy_public_key_path: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_POLICY_PUBLIC_KEY_PATH")
+    )
+    policy_signature_required: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("YAGAMI_POLICY_SIGNATURE_REQUIRED"),
     )
     projects_path: str = Field(
         default="config/projects.yaml", validation_alias=AliasChoices("YAGAMI_PROJECTS_PATH")
@@ -344,6 +553,12 @@ class Settings(BaseSettings):
     oidc_scopes_claim: str = Field(
         default="scope", validation_alias=AliasChoices("YAGAMI_OIDC_SCOPES_CLAIM")
     )
+    remote_admin_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("YAGAMI_REMOTE_ADMIN_ENABLED")
+    )
+    admin_allowed_origins: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_ADMIN_ALLOWED_ORIGINS")
+    )
     headless: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_HEADLESS"))
     demo_mode: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_DEMO_MODE"))
     mcp_server_enabled: bool = Field(
@@ -358,9 +573,30 @@ class Settings(BaseSettings):
         le=268_435_456,
         validation_alias=AliasChoices("YAGAMI_MAX_REQUEST_BYTES"),
     )
+    provider_deadline_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        le=3600.0,
+        validation_alias=AliasChoices("YAGAMI_PROVIDER_DEADLINE_SECONDS"),
+    )
     transform_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY"))
     transform_key_ref: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_REF")
+    )
+    transform_key_id: str = Field(
+        default="local-1",
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_ID"),
+    )
+    transform_key_epoch: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_EPOCH"),
+    )
+    transform_previous_key_refs: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS"),
     )
     transform_vault_ttl_seconds: int = Field(
         default=3600,
@@ -370,6 +606,10 @@ class Settings(BaseSettings):
     )
     audit_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY"))
     audit_key_ref: str = Field(default="", validation_alias=AliasChoices("YAGAMI_AUDIT_KEY_REF"))
+    audit_previous_keys: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_PREVIOUS_KEYS"),
+    )
     audit_required: bool = Field(
         default=False, validation_alias=AliasChoices("YAGAMI_AUDIT_REQUIRED")
     )
@@ -391,6 +631,18 @@ class Settings(BaseSettings):
         ge=0.5,
         le=30.0,
         validation_alias=AliasChoices("YAGAMI_AUDIT_SINK_TIMEOUT_SECONDS"),
+    )
+    audit_outbox_max_pending: int = Field(
+        default=100_000,
+        ge=100,
+        le=10_000_000,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_OUTBOX_MAX_PENDING"),
+    )
+    audit_outbox_max_attempts: int = Field(
+        default=12,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("YAGAMI_AUDIT_OUTBOX_MAX_ATTEMPTS"),
     )
     approval_webhook_url: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_APPROVAL_WEBHOOK_URL")

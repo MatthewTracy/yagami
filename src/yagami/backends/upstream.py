@@ -33,4 +33,5 @@ def build(cfg: YagamiConfig, secrets_get) -> UpstreamBackend | None:
         model=upstream.model or "yagami-auto",
         max_tokens=upstream.max_tokens,
         capabilities=set(UpstreamBackend.capabilities),
+        trust_zone=upstream.trust_zone,
     )

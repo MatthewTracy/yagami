@@ -51,6 +51,20 @@ When keys are configured, every `/v1` and `/metrics` request requires
 `Authorization: Bearer <key>`. The project ID is taken only from the matched
 key; callers cannot impersonate another project through request metadata.
 
+## Capability discovery
+
+`GET /v1/capabilities` returns a versioned, content-free capability document
+for deployment checks and adapters. It reports supported APIs, storage and
+coordination modes, detectors, provider trust zones, retrieval and memory
+features, tool governance, and MCP support. It deliberately omits provider
+URLs, credentials, policy contents, identities, and customer data.
+
+The endpoint requires `gateway:read`. Clients should branch on
+`schema_version`, not the Yagami package version, because capability and
+evidence schemas evolve independently from server releases. The MCP tool
+`yagami_capabilities` returns the same runtime document together with the
+governed downstream catalog.
+
 ## Routing models
 
 - `yagami-auto`, `yagami`, or `auto`: allow Yagami to select a backend.
@@ -119,6 +133,52 @@ For server-managed built-in/MCP tools, pass the approval token without a
 caller `tools` array; its approved patterns are made available to Yagami's
 tool loop. For caller-defined tools, the token is narrowed to the function
 names actually advertised in that request.
+
+## User-bound OAuth for remote MCP
+
+Remote MCP services can use a machine credential (`client_credentials`) or a
+delegated user credential (`authorization_code_pkce`). Yagami never forwards
+its inbound API key or OIDC token to the downstream service.
+
+Configure a public OAuth 2.1 client and an exact callback URI:
+
+```toml
+[mcp_servers.work_tools]
+transport = "streamable_http"
+url = "https://tools.example.com/mcp"
+auth = "authorization_code_pkce"
+oauth_authorization_url = "https://identity.example.com/oauth2/authorize"
+oauth_token_url = "https://identity.example.com/oauth2/token"
+oauth_redirect_uri = "https://yagami.example.com/v1/mcp/oauth/callback"
+oauth_client_id_env = "WORK_TOOLS_OAUTH_CLIENT_ID"
+oauth_token_endpoint_auth_method = "none"
+oauth_scopes = ["tools.read", "tools.execute"]
+oauth_resource = "https://tools.example.com/mcp"
+trust_zone = "approved_cloud"
+allowed_hosts = ["tools.example.com"]
+```
+
+`YAGAMI_TRANSFORM_KEY` (or its secret reference) is required. Yagami derives
+an HMAC identity key from it and envelope-encrypts authorization state,
+access tokens, and refresh tokens. The database stores no raw subject ID,
+OAuth state, verifier, or token. Each credential is bound to the configured
+server, authenticated project, and authenticated subject.
+
+The client flow is:
+
+1. Call `POST /v1/mcp/oauth/work_tools/authorize` with the user's Yagami
+   bearer credential.
+2. Open the returned `authorization_url`. The provider redirects to Yagami's
+   configured callback, which consumes the state exactly once and exchanges
+   the code with PKCE.
+3. Call `POST /v1/mcp/oauth/work_tools/activate` as the same Yagami subject to
+   discover and open that subject's downstream MCP session.
+4. Call `DELETE /v1/mcp/oauth/work_tools` to close the session and delete the
+   encrypted delegated credential.
+
+Access-token refresh is serialized per server/project/subject. A missing,
+expired, revoked, or differently bound credential fails with a stable
+`mcp_oauth_*` error and never falls back to another user's session.
 
 ## Privacy transforms and output DLP
 

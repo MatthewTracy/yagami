@@ -15,7 +15,9 @@ _SERVICE = "yagami"
 
 
 def _backend_available() -> bool:
-    if os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"}:
+    if os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"} or os.getenv(
+        "YAGAMI_DEMO_MODE", ""
+    ).casefold() in {"1", "true", "yes", "on"}:
         return False
     try:
         import keyring
@@ -35,8 +37,9 @@ def get(name: str) -> str:
             value = keyring.get_password(_SERVICE, name)
             if value:
                 return value
-        except Exception as exc:  # pragma: no cover - depends on platform
-            log.warning("keyring lookup for %s failed (%s); falling back to env", name, exc)
+        except Exception:  # pragma: no cover - depends on platform
+            # Keyring exceptions and lookup names can contain secret material.
+            log.warning("keyring lookup failed; falling back to environment")
     return os.environ.get(name, "")
 
 

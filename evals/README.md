@@ -91,3 +91,23 @@ The named cloud backend must be configured because benign controls verify that
 Yagami does not force all public workloads local. Exit code `2` means at least
 one containment or false-positive regression. Add organization-specific cases
 to `fixtures/containment.jsonl`; do not commit real identifiers or secrets.
+
+Generate the versioned public report only after a complete passing run:
+
+```powershell
+python -m evals.generate_report `
+  --input .tmp/containment.json `
+  --release v0.7.0 `
+  --commit (git rev-parse HEAD) `
+  --model "phi4-mini classifier; configured generation backends" `
+  --detectors "built-in v1; Presidio disabled" `
+  --hardware "Windows 11; Ryzen 9; 64 GB RAM" `
+  --configuration "config/policy.yaml; default detector thresholds" `
+  --json benchmarks/v0.7.0/containment.json `
+  --markdown benchmarks/v0.7.0/containment.md
+```
+
+The aggregate report includes the fixture hash, recall, benign false-positive
+rate, prompt-injection detection, and policy-preview p50/p95 latency. Do not
+reuse results after changing the fixtures, model, detectors, policy, or
+hardware description.

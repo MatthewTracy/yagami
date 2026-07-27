@@ -50,16 +50,21 @@ async def stats(days: int = Query(default=14, ge=1, le=365)) -> dict:
             async for row in cur
         ]
 
+    day_expression = (
+        "TO_CHAR(TO_TIMESTAMP(created_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD')"
+        if db.dialect == "postgresql"
+        else "DATE(created_at / 1000, 'unixepoch')"
+    )
     async with db.execute(
-        """
-        SELECT DATE(created_at / 1000, 'unixepoch') AS day,
+        f"""
+        SELECT {day_expression} AS day,
                SUM(COALESCE(cost_usd, 0))          AS cost_usd,
                COUNT(*)                            AS turns
         FROM decisions
         WHERE created_at >= ?
         GROUP BY day
         ORDER BY day ASC
-        """,
+        """,  # noqa: S608 - expression is selected from fixed dialect constants
         (cutoff_ms,),
     ) as cur:
         by_day = [
@@ -67,15 +72,20 @@ async def stats(days: int = Query(default=14, ge=1, le=365)) -> dict:
             async for row in cur
         ]
 
+    source_expression = (
+        "(classification::jsonb ->> 'source')"
+        if db.dialect == "postgresql"
+        else "json_extract(classification, '$.source')"
+    )
     async with db.execute(
-        """
-        SELECT json_extract(classification, '$.source') AS source,
+        f"""
+        SELECT {source_expression} AS source,
                COUNT(*) AS turns
         FROM decisions
         WHERE created_at >= ?
         GROUP BY source
         ORDER BY turns DESC
-        """,
+        """,  # noqa: S608 - expression is selected from fixed dialect constants
         (cutoff_ms,),
     ) as cur:
         by_source = [{"source": row[0] or "(unknown)", "turns": row[1]} async for row in cur]

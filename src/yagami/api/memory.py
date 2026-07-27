@@ -13,12 +13,15 @@ PHI quarantine handles that).
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..memory import store as memory_store
 from ..storage.db import get_db
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
+log = logging.getLogger("yagami.api.memory")
 
 
 @router.get("")
@@ -67,19 +70,39 @@ async def search(
     if not cleaned:
         return {"observations": [], "count": 0}
     try:
-        async with db.execute(
-            """SELECT o.id, o.session_id, o.role, o.text, o.sensitivity,
-                      o.created_at, o.embedding_status
-               FROM observations_fts f
-               JOIN observations o ON o.id = f.rowid
-               WHERE f.text MATCH ?
-               ORDER BY rank
-               LIMIT ?""",
-            (cleaned, limit),
-        ) as cur:
-            rows = list(await cur.fetchall())
+        if db.dialect == "postgresql":
+            async with db.execute(
+                """SELECT o.id, o.session_id, o.role, o.text, o.sensitivity,
+                          o.created_at, o.embedding_status
+                   FROM observations o
+                   WHERE to_tsvector('simple', o.text)
+                     @@ plainto_tsquery('simple', ?)
+                   ORDER BY ts_rank_cd(
+                     to_tsvector('simple', o.text),
+                     plainto_tsquery('simple', ?)
+                   ) DESC
+                   LIMIT ?""",
+                (cleaned, cleaned, limit),
+            ) as cur:
+                rows = list(await cur.fetchall())
+        else:
+            async with db.execute(
+                """SELECT o.id, o.session_id, o.role, o.text, o.sensitivity,
+                          o.created_at, o.embedding_status
+                   FROM observations_fts f
+                   JOIN observations o ON o.id = f.rowid
+                   WHERE f.text MATCH ?
+                   ORDER BY rank
+                   LIMIT ?""",
+                (cleaned, limit),
+            ) as cur:
+                rows = list(await cur.fetchall())
     except Exception as exc:  # noqa: BLE001 - FTS MATCH parser is picky
-        raise HTTPException(400, f"search failed: {exc}")
+        log.info("memory search rejected by storage backend: %s", type(exc).__name__)
+        raise HTTPException(
+            400,
+            {"code": "memory_search_invalid", "message": "search query could not be evaluated"},
+        ) from exc
     return {
         "observations": [
             {

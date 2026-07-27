@@ -40,14 +40,16 @@ async def _insert(
     text: str,
     sens: Sensitivity = Sensitivity.NONE,
     embedding: list[float] | None = None,
+    project_id: str = "local",
 ) -> int:
     db = get_db()
     now = int(time.time() * 1000)
     cur = await db.execute(
         """INSERT INTO observations
              (session_id, role, text, sensitivity, source_app,
-              ttl_until, created_at, chunk_index, parent_id, embedding_status)
-           VALUES (?, ?, ?, ?, 'chat', ?, ?, 0, NULL, ?)""",
+              ttl_until, created_at, chunk_index, parent_id, embedding_status,
+              project_id)
+           VALUES (?, ?, ?, ?, 'chat', ?, ?, 0, NULL, ?, ?)""",
         (
             session_id,
             role,
@@ -56,6 +58,7 @@ async def _insert(
             now + 90 * 24 * 3600 * 1000,
             now,
             "ready" if embedding is not None else "pending",
+            project_id,
         ),
     )
     obs_id = int(cur.lastrowid)
@@ -116,6 +119,21 @@ async def test_exclude_session_drops_same_session(memdb):
     sids = {h.session_id for h in hits}
     assert "s1" not in sids
     assert "s2" in sids
+
+
+@pytest.mark.asyncio
+async def test_retrieval_is_project_scoped(memdb):
+    emb = _FakeEmbedder()
+    vec = await emb.embed("shared query")
+    await _insert("s1", "user", "alpha private memory", embedding=vec, project_id="alpha")
+    await _insert("s2", "user", "beta private memory", embedding=vec, project_id="beta")
+
+    hits = await Retriever(emb).fetch(
+        "shared query", k=10, exclude_session="other", project_id="alpha"
+    )
+    assert hits
+    assert {hit.project_id for hit in hits} == {"alpha"}
+    assert all("beta" not in hit.text for hit in hits)
 
 
 @pytest.mark.asyncio

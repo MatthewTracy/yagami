@@ -52,12 +52,14 @@ class SessionStore:
             title = message.content.strip()[:80] or ("Image attachment" if message.images else None)
         db = get_db()
         cur = await db.execute(
-            "INSERT INTO messages(session_id, role, content, created_at) VALUES(?, ?, ?, ?)",
+            "INSERT INTO messages(session_id, role, content, created_at)"
+            " VALUES(?, ?, ?, ?) RETURNING id",
             (session_id, message.role, message.content, ts),
         )
-        message_id = cur.lastrowid
-        if message_id is None:
+        inserted = await cur.fetchone()
+        if inserted is None:
             raise RuntimeError("message insert did not return a row id")
+        message_id = int(inserted["id"])
         for image in message.images or []:
             await db.execute(
                 "INSERT INTO message_attachments(message_id, media_type, data, created_at)"
@@ -69,7 +71,7 @@ class SessionStore:
             (ts, title, session_id),
         )
         await db.commit()
-        return int(message_id)
+        return message_id
 
     async def history(self, session_id: str) -> list[Message]:
         db = get_db()

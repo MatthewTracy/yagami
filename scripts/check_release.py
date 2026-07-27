@@ -9,6 +9,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from prepare_release import validate_lockstep
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +38,9 @@ def main() -> int:
         raise ValueError(
             f"version mismatch: pyproject.toml={project_version}, package={package_version}"
         )
+    lockstep_errors = validate_lockstep(project_version)
+    if lockstep_errors:
+        raise ValueError("lockstep release metadata is inconsistent: " + "; ".join(lockstep_errors))
 
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     locked_project = next(

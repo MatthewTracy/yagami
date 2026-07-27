@@ -156,7 +156,8 @@ async def test_one_tool_call_then_final_text():
     assert types == ["tool_call", "text", "done"]
     assert chunks[0]["meta"]["name"] == "test.echo"
     assert chunks[0]["meta"]["ok"] is True
-    assert chunks[0]["meta"]["result"] == "echoed: hi"
+    assert chunks[0]["meta"]["result_bytes"] == len("echoed: hi")
+    assert "result" not in chunks[0]["meta"]
     assert chunks[1]["content"] == "done: echoed: hi"
     # Two SDK calls - initial + post-tool-result.
     assert len(client.calls) == 2
@@ -256,7 +257,7 @@ async def test_unknown_skill_returns_error_to_model():
     # tool_call surfaces ok=False; loop continues.
     tool_chunk = next(c for c in chunks if c["type"] == "tool_call")
     assert tool_chunk["meta"]["ok"] is False
-    assert "unknown" in tool_chunk["meta"]["error"]
+    assert tool_chunk["meta"]["error_code"] == "unknown_tool"
     assert chunks[-1]["type"] == "done"
 
 
@@ -292,7 +293,7 @@ async def test_sensitivity_ceiling_enforced():
     ]
     tool_chunk = next(c for c in chunks if c["type"] == "tool_call")
     assert tool_chunk["meta"]["ok"] is False
-    assert "refused" in tool_chunk["meta"]["error"]
+    assert tool_chunk["meta"]["error_code"] == "tool_data_ceiling_exceeded"
 
 
 @pytest.mark.asyncio
@@ -325,7 +326,7 @@ async def test_skill_exception_does_not_crash_loop():
     ]
     tool_chunk = next(c for c in chunks if c["type"] == "tool_call")
     assert tool_chunk["meta"]["ok"] is False
-    assert "unexpected" in tool_chunk["meta"]["error"]
+    assert tool_chunk["meta"]["error_code"] == "tool_execution_failed"
     assert chunks[-1]["type"] == "done"
 
 

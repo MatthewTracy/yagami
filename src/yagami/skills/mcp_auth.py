@@ -1,14 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import ipaddress
+import socket
 import time
 from urllib.parse import urlsplit
 
 import httpx
 
+from ..backends.base import TrustZone
 
-def validate_remote_url(url: str, *, field: str) -> str:
+
+def _address_allowed(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    *,
+    trust_zone: TrustZone,
+    allow_private_addresses: bool,
+) -> bool:
+    if address.is_unspecified or address.is_multicast or address.is_reserved:
+        return False
+    if trust_zone == TrustZone.DEVICE:
+        return address.is_loopback
+    if trust_zone == TrustZone.PRIVATE_NETWORK:
+        return address.is_loopback or address.is_private
+    if allow_private_addresses:
+        return True
+    return bool(address.is_global)
+
+
+def _host_allowed(host: str, allowed_hosts: list[str]) -> bool:
+    return not allowed_hosts or any(fnmatch.fnmatchcase(host, pattern) for pattern in allowed_hosts)
+
+
+def validate_remote_url(
+    url: str,
+    *,
+    field: str,
+    trust_zone: TrustZone | None = None,
+    allowed_hosts: list[str] | None = None,
+    allow_private_addresses: bool = False,
+) -> str:
     try:
         parsed = urlsplit(url)
         port = parsed.port
@@ -19,20 +51,111 @@ def validate_remote_url(url: str, *, field: str) -> str:
         or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None
+        or parsed.query
         or parsed.fragment
     ):
-        raise ValueError(f"{field} must be an absolute HTTP(S) URL without credentials")
-    if parsed.scheme == "http":
-        host = parsed.hostname.casefold()
-        is_loopback = host == "localhost"
+        raise ValueError(
+            f"{field} must be an absolute HTTP(S) URL without credentials, query, or fragment"
+        )
+    host = parsed.hostname.rstrip(".").casefold()
+    if trust_zone is None:
         try:
-            is_loopback = is_loopback or ipaddress.ip_address(host).is_loopback
+            loopback_literal = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback_literal = False
+        trust_zone = (
+            TrustZone.DEVICE if host == "localhost" or loopback_literal else TrustZone.EXTERNAL
+        )
+    if not _host_allowed(host, allowed_hosts or []):
+        raise ValueError(f"{field} host is not in allowed_hosts")
+    if trust_zone in {TrustZone.APPROVED_CLOUD, TrustZone.EXTERNAL} and parsed.scheme != "https":
+        raise ValueError(f"{field} must use HTTPS outside a private trust zone")
+    if parsed.scheme == "http":
+        is_private = host in {"localhost", "host.docker.internal", "gateway.docker.internal"}
+        try:
+            address = ipaddress.ip_address(host)
+            is_private = is_private or _address_allowed(
+                address,
+                trust_zone=trust_zone,
+                allow_private_addresses=allow_private_addresses,
+            )
         except ValueError:
             pass
-        if not is_loopback:
-            raise ValueError(f"{field} must use HTTPS unless it targets loopback")
-    del port
+        if not is_private:
+            raise ValueError(f"{field} must use HTTPS unless it targets an allowed private host")
+    if port == 0:
+        raise ValueError(f"{field} requires a valid nonzero port")
+    try:
+        literal_address = ipaddress.ip_address(host)
+    except ValueError:
+        literal_address = None
+    if literal_address is not None and not _address_allowed(
+        literal_address,
+        trust_zone=trust_zone,
+        allow_private_addresses=allow_private_addresses,
+    ):
+        raise ValueError(f"{field} resolves to an address outside its trust zone")
     return url
+
+
+async def validate_remote_destination(
+    url: str,
+    *,
+    field: str,
+    trust_zone: TrustZone | None = None,
+    allowed_hosts: list[str] | None = None,
+    allow_private_addresses: bool = False,
+) -> str:
+    """Resolve every destination before use and reject unsafe address classes.
+
+    This check runs before each connection and HTTP request. Redirects remain
+    disabled, preventing a validated endpoint from redirecting the client to a
+    different network boundary.
+    """
+
+    validated = validate_remote_url(
+        url,
+        field=field,
+        trust_zone=trust_zone,
+        allowed_hosts=allowed_hosts,
+        allow_private_addresses=allow_private_addresses,
+    )
+    parsed = urlsplit(validated)
+    host = parsed.hostname
+    if host is None:  # pragma: no cover - guarded by validate_remote_url
+        raise ValueError(f"{field} must include a host")
+    if trust_zone is None:
+        try:
+            loopback_literal = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback_literal = False
+        trust_zone = (
+            TrustZone.DEVICE if host == "localhost" or loopback_literal else TrustZone.EXTERNAL
+        )
+    try:
+        literal = ipaddress.ip_address(host)
+        addresses = {literal}
+    except ValueError:
+        loop = asyncio.get_running_loop()
+        try:
+            records = await loop.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        except socket.gaierror as exc:
+            raise ValueError(f"{field} host could not be resolved") from exc
+        addresses = {ipaddress.ip_address(record[4][0]) for record in records}
+    if not addresses or any(
+        not _address_allowed(
+            address,
+            trust_zone=trust_zone,
+            allow_private_addresses=allow_private_addresses,
+        )
+        for address in addresses
+    ):
+        raise ValueError(f"{field} resolved outside its configured trust zone")
+    return validated
 
 
 class OAuthClientCredentialsAuth(httpx.Auth):
@@ -51,7 +174,9 @@ class OAuthClientCredentialsAuth(httpx.Auth):
         token_endpoint_auth_method: str = "client_secret_basic",  # noqa: S107 - OAuth method
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self.token_url = validate_remote_url(token_url, field="oauth_token_url")
+        self.token_url = validate_remote_url(
+            token_url, field="oauth_token_url", trust_zone=TrustZone.EXTERNAL
+        )
         self.client_id = client_id
         self.client_secret = client_secret
         self.scopes = scopes
