@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
+from .admin_audit import AdminAuditMiddleware
 from .api import config as config_api
 from .api import costs as costs_api
 from .api import decisions as decisions_api
@@ -40,9 +41,10 @@ from .paths import configure_default_state, project_root, ui_dist
 from .privacy import cleanup_expired_sessions, cleanup_policy_retention
 from .responses import cleanup_expired_responses
 from . import secrets
-from .config import effective_routing, get_config, get_settings
+from .config import Settings, effective_routing, get_config, get_settings
+from .coordination import build_coordinator
 from .gateway import GatewayService
-from .key_management import resolve_secret
+from .key_management import resolve_secret, resolve_secret_reference_map
 from .governance import ApprovalNotifier, ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
 from .governance.presidio import PresidioInspector
 from .policy import PolicyEngine
@@ -113,6 +115,28 @@ def _is_allowed_websocket_origin(
     return normalized in normalized_trusted
 
 
+def _admin_origins(settings: Settings) -> list[str]:
+    local = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    if not settings.remote_admin_enabled:
+        return local
+    if not settings.oidc_issuer:
+        raise ValueError("remote administration requires YAGAMI_OIDC_ISSUER")
+    configured = [
+        value.strip() for value in settings.admin_allowed_origins.split(",") if value.strip()
+    ]
+    if not configured:
+        raise ValueError(
+            "remote administration requires at least one YAGAMI_ADMIN_ALLOWED_ORIGINS entry"
+        )
+    for origin in configured:
+        normalized = _normalize_web_origin(origin)
+        if normalized is None:
+            raise ValueError(f"invalid remote administration origin {origin!r}")
+        if normalized[0] != "https" and normalized[1] not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("remote administration origins must use HTTPS unless loopback")
+    return [*local, *configured]
+
+
 async def _close_resource(name: str, resource: object) -> None:
     close = getattr(resource, "close", None)
     if not callable(close):
@@ -137,6 +161,7 @@ def build_app() -> FastAPI:
     load_dotenv()
     cfg = get_config()
     settings = get_settings()  # also picks up YAGAMI_* env overrides for non-secret config
+    admin_origins = _admin_origins(settings)
     if settings.demo_mode:
         cfg.routing.default_backend = "echo"
         cfg.routing.block_cloud = True
@@ -201,7 +226,15 @@ def build_app() -> FastAPI:
     if not projects_path.is_absolute():
         projects_path = project_root() / projects_path
     projects = ProjectRegistry(projects_path)
-    governor = ProjectGovernor(projects)
+    coordinator = build_coordinator(
+        settings.coordination_url,
+        prefix=settings.coordination_prefix,
+    )
+    governor = ProjectGovernor(
+        projects,
+        coordinator,
+        slot_ttl_seconds=settings.coordination_slot_ttl_seconds,
+    )
     authenticator = Authenticator(settings)
     metrics = GatewayMetrics()
     audit_key = resolve_secret(
@@ -247,6 +280,12 @@ def build_app() -> FastAPI:
             settings.transform_key,
             settings.transform_key_ref,
             label="YAGAMI_TRANSFORM_KEY_REF",
+        ),
+        key_id=settings.transform_key_id,
+        key_epoch=settings.transform_key_epoch,
+        previous_keys=resolve_secret_reference_map(
+            settings.transform_previous_key_refs,
+            label="YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS",
         ),
         ttl_seconds=settings.transform_vault_ttl_seconds,
     )
@@ -387,6 +426,7 @@ def build_app() -> FastAPI:
                 resources.append(("embedder", embedder))
             _app.state.runtime.embedder = None
             await asyncio.gather(*(_close_resource(name, resource) for name, resource in resources))
+            await coordinator.close()
             await close_db()
 
     app = FastAPI(
@@ -412,23 +452,25 @@ def build_app() -> FastAPI:
         tool_schemas=tool_schemas,
         projects=projects,
         governor=governor,
+        coordinator=coordinator,
         audit=audit,
         gateway=gateway,
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=admin_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    app.add_middleware(AdminAuditMiddleware)
 
     app.include_router(openai_compat_api.router)
     if mcp_endpoint is not None:
         app.router.routes.append(
             Route("/mcp", endpoint=mcp_endpoint, methods=None, include_in_schema=False)
         )
-    if not settings.headless:
+    if not settings.headless or settings.remote_admin_enabled:
         admin_dependencies = [Depends(require_admin)]
         app.include_router(decisions_api.router, dependencies=admin_dependencies)
         app.include_router(sessions_api.router, dependencies=admin_dependencies)
@@ -457,10 +499,10 @@ def build_app() -> FastAPI:
 
             return Response(content=metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
-    if not settings.headless:
+    if not settings.headless or settings.remote_admin_enabled:
 
         @app.get("/api/health")
-        async def health() -> dict:
+        async def health(_principal: Principal = Depends(require_admin)) -> dict:
             return {
                 "ok": True,
                 "backends": [
@@ -470,7 +512,7 @@ def build_app() -> FastAPI:
             }
 
         @app.get("/api/models")
-        async def models() -> dict:
+        async def models(_principal: Principal = Depends(require_admin)) -> dict:
             current_routing = effective_routing(get_config())
             return {
                 "backends": [

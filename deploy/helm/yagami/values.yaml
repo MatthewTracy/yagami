@@ -37,6 +37,32 @@ service:
   type: ClusterIP
   port: 8000
 
+coordination:
+  # Store authenticated Redis URLs in a Secret. This coordinates rate and
+  # concurrency limits but does not make the bundled SQLite store multi-writer.
+  existingSecret: ""
+  secretKey: YAGAMI_COORDINATION_URL
+  prefix: yagami
+  slotTtlSeconds: 300
+
+remoteAdmin:
+  enabled: false
+  allowedOrigins: []
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksUrl: ""
+
+observability:
+  metricsEnabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+    bearerTokenSecret:
+      name: ""
+      key: token
+
 ingress:
   enabled: false
   className: ""

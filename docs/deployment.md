@@ -28,11 +28,80 @@ after setting the ingress namespace selector appropriate to your cluster.
 
 The bundled SQLite database is suited to a single writable replica. Keep
 `replicaCount: 1` unless all stateful features are externalized; horizontal
-autoscaling is opt-in for that reason.
+autoscaling is opt-in for that reason. The chart rejects an unsafe multi-replica
+configuration instead of allowing several pods to contend for one SQLite file.
+
+## Distributed coordination
+
+Set `YAGAMI_COORDINATION_URL` to a TLS-protected Redis URL to coordinate project
+rate limits and leased concurrency slots across processes. Slots expire after
+`YAGAMI_COORDINATION_SLOT_TTL_SECONDS`, so a crashed worker cannot permanently
+consume capacity. In Kubernetes, keep the URL in a Secret and configure:
+
+```yaml
+coordination:
+  existingSecret: yagami-coordination
+  secretKey: YAGAMI_COORDINATION_URL
+```
+
+Redis coordination does not turn SQLite into a multi-writer database. It is a
+production foundation for the PostgreSQL deployment profile, and it can already
+coordinate multiple gateway workers that share no mutable SQLite state.
+
+## Remote administration
+
+Remote administrative APIs remain disabled in headless mode unless
+`YAGAMI_REMOTE_ADMIN_ENABLED=true`. Enabling them requires a configured OIDC
+issuer and an explicit HTTPS CORS allowlist:
+
+```yaml
+remoteAdmin:
+  enabled: true
+  allowedOrigins: ["https://admin.example.com"]
+  oidc:
+    issuer: "https://identity.example.com/"
+    audience: "yagami-admin"
+    jwksUrl: "https://identity.example.com/.well-known/jwks.json"
+```
+
+The JWT subject, roles, project claim, and scopes still determine authorization.
+State-changing `/api` operations also produce content-free administrative audit
+events. Request bodies, query values, and resource identifiers are not copied
+into those events.
+
+## Envelope encryption and rotation
+
+Tokenized sensitive values use a random AES-256 data-encryption key per record.
+Yagami wraps each data key with the configured wrapping-key epoch and stores only
+the wrapped key beside the ciphertext. The `KeyWrappingProvider` interface is
+the integration boundary for KMS, Vault Transit, and HSM adapters; the bundled
+provider uses a mounted, referenced AES-256 wrapping key.
+
+For a rotation, generate a new key, assign a new stable ID, increment the epoch,
+and keep old keys in the decrypt-only reference map until every old token has
+expired:
+
+```dotenv
+YAGAMI_TRANSFORM_KEY_REF=file:/run/secrets/yagami-transform-q3
+YAGAMI_TRANSFORM_KEY_ID=vault-key-2026-q3
+YAGAMI_TRANSFORM_KEY_EPOCH=3
+YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS={"vault-key-2026-q2":"file:/run/secrets/yagami-transform-q2"}
+```
+
+Never reuse an ID for different key material. Removing an old reference makes
+records from that epoch intentionally unrecoverable.
+
+## Observability
 
 Install the `observability` extra and set the standard OpenTelemetry exporter
 environment variables to export traces and metrics. Yagami emits
 `gen_ai.operation.name`, provider/model, response timing, finish reason, and
 token usage attributes plus the standard GenAI client duration and token usage
-metrics. Prompt, response, tool-argument, and document content are deliberately
-never attached to telemetry.
+metrics. Prompts, responses, tool arguments, documents, identities, project and
+request IDs, URLs, tool names, policy contents, rule IDs, and stable customer
+identifiers are deliberately never attached to telemetry.
+
+The chart can create a Prometheus `ServiceMonitor`. Because `/metrics` is
+authenticated, point `bearerTokenSecret` at a gateway credential with only the
+`metrics:read` scope. Example collector, alert, dashboard, and SLO assets live
+under `deploy/observability`.

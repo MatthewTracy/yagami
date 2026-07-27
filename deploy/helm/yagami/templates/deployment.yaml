@@ -1,3 +1,6 @@
+{{- if or (gt (int .Values.replicaCount) 1) (and .Values.autoscaling.enabled (gt (int .Values.autoscaling.minReplicas) 1)) }}
+{{- fail "Yagami's bundled SQLite store supports exactly one writable replica; PostgreSQL support is required before scaling replicas" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,6 +60,29 @@ spec:
               value: /app/config/projects.yaml
             - name: YAGAMI_DB_PATH
               value: /data/yagami.db
+            - name: YAGAMI_COORDINATION_PREFIX
+              value: {{ .Values.coordination.prefix | quote }}
+            - name: YAGAMI_COORDINATION_SLOT_TTL_SECONDS
+              value: {{ .Values.coordination.slotTtlSeconds | quote }}
+            - name: YAGAMI_REMOTE_ADMIN_ENABLED
+              value: {{ .Values.remoteAdmin.enabled | quote }}
+            - name: YAGAMI_ADMIN_ALLOWED_ORIGINS
+              value: {{ join "," .Values.remoteAdmin.allowedOrigins | quote }}
+            - name: YAGAMI_OIDC_ISSUER
+              value: {{ .Values.remoteAdmin.oidc.issuer | quote }}
+            - name: YAGAMI_OIDC_AUDIENCE
+              value: {{ .Values.remoteAdmin.oidc.audience | quote }}
+            - name: YAGAMI_OIDC_JWKS_URL
+              value: {{ .Values.remoteAdmin.oidc.jwksUrl | quote }}
+            - name: YAGAMI_METRICS_ENABLED
+              value: {{ .Values.observability.metricsEnabled | quote }}
+            {{- if .Values.coordination.existingSecret }}
+            - name: YAGAMI_COORDINATION_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.coordination.existingSecret | quote }}
+                  key: {{ .Values.coordination.secretKey | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

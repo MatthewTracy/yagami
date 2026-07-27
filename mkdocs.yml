@@ -35,6 +35,7 @@ nav:
   - Integrations: integrations.md
   - Knowledge base: knowledge-base.md
   - Deployment: deployment.md
+  - Reliability and SLOs: slo.md
   - Development: development.md
   - Architecture: architecture.md
   - Compatibility: compatibility.md

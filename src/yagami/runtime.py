@@ -6,6 +6,7 @@ from .auth import Authenticator
 from .backends.base import Backend
 from .chat.session import SessionStore
 from .config import Settings, YagamiConfig
+from .coordination import Coordinator
 from .gateway import GatewayService
 from .governance import ApprovalStore, PrivacyTransformer, ToolSchemaRegistry
 from .memory.embedder import EmbedderProtocol
@@ -31,6 +32,7 @@ class AppRuntime:
     tool_schemas: ToolSchemaRegistry
     projects: ProjectRegistry
     governor: ProjectGovernor
+    coordinator: Coordinator
     audit: AuditLedger
     gateway: GatewayService
     embedder: EmbedderProtocol | None = None

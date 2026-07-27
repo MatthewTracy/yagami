@@ -458,6 +458,18 @@ class Settings(BaseSettings):
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
     )
     db_path: str = Field(default="yagami.db", validation_alias=AliasChoices("YAGAMI_DB_PATH"))
+    coordination_url: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_COORDINATION_URL")
+    )
+    coordination_prefix: str = Field(
+        default="yagami", validation_alias=AliasChoices("YAGAMI_COORDINATION_PREFIX")
+    )
+    coordination_slot_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        validation_alias=AliasChoices("YAGAMI_COORDINATION_SLOT_TTL_SECONDS"),
+    )
     policy_path: str = Field(
         default="config/policy.yaml", validation_alias=AliasChoices("YAGAMI_POLICY_PATH")
     )
@@ -489,6 +501,12 @@ class Settings(BaseSettings):
     oidc_scopes_claim: str = Field(
         default="scope", validation_alias=AliasChoices("YAGAMI_OIDC_SCOPES_CLAIM")
     )
+    remote_admin_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("YAGAMI_REMOTE_ADMIN_ENABLED")
+    )
+    admin_allowed_origins: str = Field(
+        default="", validation_alias=AliasChoices("YAGAMI_ADMIN_ALLOWED_ORIGINS")
+    )
     headless: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_HEADLESS"))
     demo_mode: bool = Field(default=False, validation_alias=AliasChoices("YAGAMI_DEMO_MODE"))
     mcp_server_enabled: bool = Field(
@@ -512,6 +530,21 @@ class Settings(BaseSettings):
     transform_key: str = Field(default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY"))
     transform_key_ref: str = Field(
         default="", validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_REF")
+    )
+    transform_key_id: str = Field(
+        default="local-1",
+        min_length=1,
+        max_length=128,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_ID"),
+    )
+    transform_key_epoch: int = Field(
+        default=1,
+        ge=1,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_KEY_EPOCH"),
+    )
+    transform_previous_key_refs: dict[str, str] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("YAGAMI_TRANSFORM_PREVIOUS_KEY_REFS"),
     )
     transform_vault_ttl_seconds: int = Field(
         default=3600,

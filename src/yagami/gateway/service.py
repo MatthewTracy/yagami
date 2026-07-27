@@ -502,7 +502,8 @@ class GatewayService:
             profile=profile,
         )
         for rule_id in prepared.policy.matched_rules:
-            self.metrics.policy_matches.labels(rule_id).inc()
+            _ = rule_id
+            self.metrics.policy_matches.inc()
         if prepared.policy.denied and prepared.policy.mode == PolicyMode.ENFORCE:
             sensitivity = prepared.policy.effective_sensitivity.value
             self.metrics.policy_denials.labels(sensitivity).inc()

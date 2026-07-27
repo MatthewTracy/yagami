@@ -66,13 +66,19 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
-    "ruff>=0.7",
-    "mypy>=1.15",
+    "ruff>=0.7,<0.16",
+    "mypy>=1.15,<2",
     "types-PyYAML>=6.0",
 ]
 observability = [
     "opentelemetry-sdk>=1.28",
     "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
+production = [
+    "alembic>=1.16",
+    "asyncpg>=0.30",
+    "redis>=5.2",
+    "sqlalchemy[asyncio]>=2.0.41",
 ]
 
 [project.scripts]
