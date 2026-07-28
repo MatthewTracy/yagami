@@ -5,6 +5,11 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_run:
+    workflows:
+      - Create immutable release tag
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -19,6 +24,13 @@ env:
 jobs:
   ci:
     name: Full release CI
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        startsWith(github.event.workflow_run.head_branch, 'release/')
+      )
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
@@ -28,12 +40,24 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Require trusted release source
+        env:
+          RELEASE_WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RELEASE_WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          RELEASE_WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -42,19 +66,44 @@ jobs:
             test "${GITHUB_REF_TYPE}" = "tag"
             test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
             test "$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{}")" = "$(git rev-parse origin/main)"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            test "${RELEASE_WORKFLOW_CONCLUSION}" = "success"
+            test "${RELEASE_WORKFLOW_EVENT}" = "pull_request"
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_WORKFLOW_RUN_ID}/jobs?filter=latest" \
+              | jq --exit-status \
+                '.jobs | any(.name == "tag" and .conclusion == "success")' \
+                >/dev/null
+            VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
+            TAG="v${VERSION}"
+            test "${RELEASE_WORKFLOW_BRANCH}" = "release/${VERSION}"
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            test "$(git cat-file -t "refs/tags/${TAG}")" = "tag"
+            test "$(git rev-parse "refs/tags/${TAG}^{}")" = "$(git rev-parse origin/main)"
+            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           else
             test "${GITHUB_REF}" = "refs/heads/main"
             test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           fi
       - name: Validate version and changelog
+        id: release
         shell: bash
         run: |
           set -euo pipefail
+          VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
+          TAG="v${VERSION}"
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-            python scripts/check_release.py --tag "${GITHUB_REF_NAME}"
+            test "${GITHUB_REF_NAME}" = "${TAG}"
+            python scripts/check_release.py --tag "${TAG}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            python scripts/check_release.py --tag "${TAG}"
           else
             python scripts/check_release.py
           fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
   build-python:
     name: Build and attest Python package
@@ -251,10 +300,10 @@ jobs:
 
   publish-container:
     name: Publish and attest container
-    needs: [test-container, publish-pypi, build-integrations]
+    needs: [validate, test-container, publish-pypi, build-integrations]
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       needs.test-container.result == 'success' &&
       needs.build-integrations.result == 'success' &&
       (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
@@ -286,7 +335,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},value=${{ needs.validate.outputs.tag }}
             type=sha,format=long
       - id: build
         name: Publish multi-architecture image
@@ -310,8 +359,10 @@ jobs:
 
   publish-pypi:
     name: Publish Python package to PyPI
-    if: github.event_name == 'push' && vars.PYPI_PUBLISH_ENABLED == 'true'
-    needs: [build-python, build-integrations, test-container]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
+      vars.PYPI_PUBLISH_ENABLED == 'true'
+    needs: [validate, build-python, build-integrations, test-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -332,8 +383,10 @@ jobs:
 
   publish-adapter-pypi:
     name: Publish Python adapters to PyPI
-    if: github.event_name == 'push' && vars.ADAPTER_PYPI_PUBLISH_ENABLED == 'true'
-    needs: [build-python, build-integrations, test-container]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
+      vars.ADAPTER_PYPI_PUBLISH_ENABLED == 'true'
+    needs: [validate, build-python, build-integrations, test-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -357,10 +410,10 @@ jobs:
     name: Publish AI SDK provider to npm
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       vars.NPM_PUBLISH_ENABLED == 'true' &&
       (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
-    needs: [build-python, build-integrations, test-container, publish-pypi]
+    needs: [validate, build-python, build-integrations, test-container, publish-pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -379,10 +432,12 @@ jobs:
           name: integration-distributions
           path: integration-dist
       - name: Publish immutable npm package with provenance
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           if npm view "@yagami/ai-sdk-provider@${VERSION}" version >/dev/null 2>&1; then
             echo "@yagami/ai-sdk-provider@${VERSION} already exists; skipping."
           else
@@ -393,9 +448,9 @@ jobs:
     name: Publish Helm chart to GHCR
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped')
-    needs: [build-python, build-integrations, test-container, publish-pypi]
+    needs: [validate, build-python, build-integrations, test-container, publish-pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -412,10 +467,11 @@ jobs:
       - name: Login and publish immutable Helm OCI package
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           echo "${GH_TOKEN}" | helm registry login ghcr.io \
             --username "${GITHUB_ACTOR}" --password-stdin
           if helm show chart oci://ghcr.io/matthewtracy/charts/yagami \
@@ -428,8 +484,10 @@ jobs:
 
   publish-mcp:
     name: Publish MCP Registry metadata
-    if: github.event_name == 'push' && vars.MCP_REGISTRY_PUBLISH_ENABLED == 'true'
-    needs: [publish-pypi, publish-container]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
+      vars.MCP_REGISTRY_PUBLISH_ENABLED == 'true'
+    needs: [validate, publish-pypi, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -453,10 +511,12 @@ jobs:
             | sha256sum --check -
           tar xzf publisher.tgz mcp-publisher
       - name: Publish immutable metadata with GitHub OIDC
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           NAME="io.github.matthewtracy/yagami"
           if curl --fail --silent --show-error \
             "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \
@@ -472,6 +532,7 @@ jobs:
   smoke-public-artifacts:
     name: Verify public release artifacts
     needs:
+      - validate
       - publish-pypi
       - publish-adapter-pypi
       - publish-npm
@@ -480,7 +541,7 @@ jobs:
       - publish-mcp
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped') &&
       (needs.publish-adapter-pypi.result == 'success' || needs.publish-adapter-pypi.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
@@ -496,10 +557,12 @@ jobs:
           python-version: "3.12"
       - name: Install core from public PyPI
         if: needs.publish-pypi.result == 'success'
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           for attempt in $(seq 1 8); do
             if python -m pip install --no-cache-dir "yagami==${VERSION}"; then
               yagami --help >/dev/null
@@ -510,10 +573,12 @@ jobs:
           exit 1
       - name: Install adapters from public PyPI
         if: needs.publish-adapter-pypi.result == 'success'
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           for package in \
             langchain-yagami \
             llama-index-llms-yagami \
@@ -536,10 +601,12 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Install provider from public npm
         if: needs.publish-npm.result == 'success'
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           mkdir npm-smoke
           cd npm-smoke
           npm init --yes
@@ -552,25 +619,31 @@ jobs:
           done
           exit 1
       - name: Pull public multi-architecture container
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           docker pull "${IMAGE_NAME}:${VERSION}"
           docker run --rm --entrypoint yagami "${IMAGE_NAME}:${VERSION}" --help >/dev/null
       - name: Pull public Helm OCI chart
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           helm pull oci://ghcr.io/matthewtracy/charts/yagami --version "${VERSION}"
           helm show chart "yagami-${VERSION}.tgz" >/dev/null
       - name: Verify official MCP Registry visibility
         if: needs.publish-mcp.result == 'success'
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           NAME="io.github.matthewtracy/yagami"
           for attempt in $(seq 1 8); do
             if curl --fail --silent --show-error \
@@ -587,7 +660,7 @@ jobs:
   promote-container:
     name: Promote verified container to latest
     needs: [smoke-public-artifacts, publish-container]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -611,6 +684,7 @@ jobs:
   github-release:
     name: Publish GitHub release
     needs:
+      - validate
       - build-python
       - build-integrations
       - publish-container
@@ -623,7 +697,7 @@ jobs:
       - promote-container
     if: >-
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
       needs.build-python.result == 'success' &&
       needs.build-integrations.result == 'success' &&
       needs.publish-container.result == 'success' &&
@@ -658,10 +732,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CONTAINER_DIGEST: ${{ needs.publish-container.outputs.digest }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_VERSION}"
           printf '%s@%s\n' "${IMAGE_NAME}" "${CONTAINER_DIGEST}" > release-metadata/container-digest.txt
           cp release/compatibility.json release-metadata/compatibility.json
           cp server.json release-metadata/server.json
@@ -672,16 +748,16 @@ jobs:
           find release-assets -type f -print0 \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" release-assets/* SHA256SUMS \
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" release-assets/* SHA256SUMS \
               --repo "${GITHUB_REPOSITORY}" --clobber
-            gh release edit "${GITHUB_REF_NAME}" \
+            gh release edit "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --notes-file release-notes.md \
               --title "Yagami ${VERSION}" \
               --latest
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${RELEASE_TAG}" \
               release-assets/* SHA256SUMS \
               --repo "${GITHUB_REPOSITORY}" \
               --notes-file release-notes.md \
