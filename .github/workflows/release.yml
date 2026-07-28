@@ -524,7 +524,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_VERSION}"
-          NAME="io.github.matthewtracy/yagami"
+          NAME="io.github.MatthewTracy/yagami"
           if curl --fail --silent --show-error \
             "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \
             | jq --exit-status --arg name "${NAME}" --arg version "${VERSION}" \
@@ -651,7 +651,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_VERSION}"
-          NAME="io.github.matthewtracy/yagami"
+          NAME="io.github.MatthewTracy/yagami"
           for attempt in $(seq 1 8); do
             if curl --fail --silent --show-error \
               "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \

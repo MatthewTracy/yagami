@@ -8,6 +8,13 @@ shipped.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-07-28
+
+### Changed
+- Correct the case-sensitive MCP Registry namespace so GitHub OIDC can publish Yagami under the verified MatthewTracy owner identity.
+- Add protected, idempotent release finalization with provenance checks, portable checksums, MCP publication, and exact container promotion.
+- Refresh supported Python, UI, container, and GitHub Actions dependencies while retaining the compatible MCP 1.x boundary.
+
 ## [0.7.2] - 2026-07-28
 
 ### Changed
