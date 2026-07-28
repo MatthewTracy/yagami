@@ -2376,7 +2376,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "keyring", specifier = ">=25.4" },
-    { name = "mcp", specifier = ">=1.28" },
+    { name = "mcp", specifier = ">=1.28,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.15,<2" },
     { name = "openai", specifier = ">=2.0" },
     { name = "opentelemetry-api", specifier = ">=1.28" },
