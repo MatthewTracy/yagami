@@ -38,6 +38,7 @@ jobs:
       actions: read
       attestations: read
       contents: write
+      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -198,6 +199,40 @@ jobs:
               \( -name '*.whl' -o -name '*.tar.gz' -o -name '*.tgz' \) \
               -print0
           )
+      - name: Publish MCP Registry metadata
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          NAME="io.github.matthewtracy/yagami"
+          python scripts/validate_registry.py
+          test "$(
+            python -c \
+              'import json; print(json.load(open("server.json"))["version"])'
+          )" = "${VERSION}"
+
+          if curl --fail --silent --show-error \
+            "https://registry.modelcontextprotocol.io/v0.1/servers?search=${NAME}" \
+            | jq --exit-status --arg name "${NAME}" --arg version "${VERSION}" \
+              '.. | objects | select(.name? == $name and .version? == $version)' \
+              >/dev/null; then
+            echo "${NAME} ${VERSION} already exists; skipping."
+            exit 0
+          fi
+
+          BASE="https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9"
+          curl --fail --show-error --silent --location \
+            --output checksums.txt "${BASE}/registry_1.7.9_checksums.txt"
+          curl --fail --show-error --silent --location \
+            --output publisher.tgz "${BASE}/mcp-publisher_linux_amd64.tar.gz"
+          grep ' mcp-publisher_linux_amd64.tar.gz$' checksums.txt \
+            | sed 's#mcp-publisher_linux_amd64.tar.gz#publisher.tgz#' \
+            | sha256sum --check -
+          tar xzf publisher.tgz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
       - name: Promote verified container
         env:
           CONTAINER_DIGEST: ${{ inputs.container_digest }}
