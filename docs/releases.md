@@ -13,8 +13,12 @@ fixed HIGH or CRITICAL vulnerabilities. The public outputs are:
 
 - A wheel and source distribution on PyPI and the GitHub release.
 - A versioned Helm chart archive on the GitHub release.
+- A Helm OCI chart at `oci://ghcr.io/matthewtracy/charts/yagami`.
 - Linux `amd64` and `arm64` images at
   `ghcr.io/matthewtracy/yagami:<version>` and an immutable `sha-<commit>` tag.
+- Optional lockstep LangChain and LlamaIndex packages on PyPI, the Vercel AI
+  SDK provider on npm, and metadata in the official MCP Registry when their
+  publisher switches are enabled.
 - SHA-256 checksums, an SPDX Python-environment SBOM, a Python license
   inventory, and the exact container digest on the GitHub release.
 - GitHub/Sigstore build-provenance attestations for both Python distributions
@@ -36,14 +40,14 @@ sha256sum --check SHA256SUMS
 Verify a wheel or source archive against this repository's GitHub attestation:
 
 ```bash
-gh attestation verify yagami-0.6.0-py3-none-any.whl \
+gh attestation verify yagami-0.7.2-py3-none-any.whl \
   --repo MatthewTracy/yagami
 ```
 
 Verify the downloaded Helm chart the same way:
 
 ```bash
-gh attestation verify yagami-0.6.0.tgz \
+gh attestation verify yagami-0.7.2.tgz \
   --repo MatthewTracy/yagami
 ```
 
@@ -70,6 +74,18 @@ for project `yagami` with owner `MatthewTracy`, repository `yagami`, workflow
 `release.yml`, and environment `pypi`. After it is registered, set the GitHub
 repository variable `PYPI_PUBLISH_ENABLED=true`. Never add a PyPI API token or
 password to GitHub secrets.
+
+The optional ecosystem publishers are also credentialless:
+
+- Create the same PyPI Trusted Publisher for `langchain-yagami`,
+  `llama-index-llms-yagami`, and `llama-index-embeddings-yagami`, then set
+  `ADAPTER_PYPI_PUBLISH_ENABLED=true`.
+- Reserve the `@yagami` npm scope and configure npm trusted publishing for
+  package `@yagami/ai-sdk-provider` from `release.yml` and environment
+  `release`, then set `NPM_PUBLISH_ENABLED=true`.
+- Set `MCP_REGISTRY_PUBLISH_ENABLED=true` for GitHub OIDC publication of
+  `io.github.matthewtracy/yagami`; the MCP Registry does not require a stored
+  token.
 
 Before enabling automated tag creation, generate a dedicated Ed25519 signing
 key, add its public key to the maintainer's GitHub account as an SSH **signing**
@@ -101,8 +117,15 @@ recovery copy and rotate both the account key and repository secret together.
 
    ```bash
    git fetch --tags origin
-   git verify-tag v0.6.2
+   git verify-tag v0.7.2
    ```
+
+If a registry outage or partial rerun leaves the immutable artifacts published
+but skips `latest` promotion or the GitHub Release, run `Finalize existing
+release` with the signed tag, original Release workflow run ID, and published
+container digest. The protected workflow verifies the tag, source run,
+successful publication and smoke jobs, package and container attestations, and
+MCP metadata before it repairs only the missing mutable release state.
 
 Published PyPI filenames and versions cannot be replaced. If a release has a
 serious defect, yank it on PyPI, document the reason in the GitHub release,
