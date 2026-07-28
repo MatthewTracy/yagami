@@ -1,0 +1,264 @@
+name: Finalize existing release
+
+run-name: Finalize ${{ inputs.tag }} from release run ${{ inputs.release_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed release tag (for example, v0.7.2)
+        required: true
+        type: string
+      release_run_id:
+        description: Release workflow run containing the verified artifacts
+        required: true
+        type: string
+      container_digest:
+        description: Published container index digest (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finalize-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/matthewtracy/yagami
+
+jobs:
+  finalize:
+    name: Verify and finalize existing release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate signed tag and source release run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          CONTAINER_DIGEST: ${{ inputs.container_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${RELEASE_RUN_ID}" =~ ^[0-9]+$ ]]
+          [[ "${CONTAINER_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          git fetch --no-tags origin main
+          git fetch --force origin \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" = "tag"
+
+          TARGET="$(git rev-parse "refs/tags/${RELEASE_TAG}^{}")"
+          test "$(git rev-parse HEAD)" = "${TARGET}"
+          git merge-base --is-ancestor "${TARGET}" origin/main
+
+          VERSION="$(python -c 'import json; print(json.load(open("release/compatibility.json"))["release"])')"
+          test "${RELEASE_TAG}" = "v${VERSION}"
+          python scripts/check_release.py --tag "${RELEASE_TAG}"
+
+          TAG_OBJECT_SHA="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+              --jq '.object.sha'
+          )"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_OBJECT_SHA}" \
+            > signed-tag.json
+          jq --exit-status \
+            --arg target "${TARGET}" \
+            '
+              .object.type == "commit" and
+              .object.sha == $target and
+              .verification.verified == true
+            ' \
+            signed-tag.json \
+            >/dev/null
+
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}" \
+            > release-run.json
+          jq --exit-status \
+            --arg target "${TARGET}" \
+            '
+              .name == "Release" and
+              .path == ".github/workflows/release.yml" and
+              .head_sha == $target and
+              .status == "completed" and
+              (
+                .conclusion == "success" or
+                .conclusion == "failure"
+              )
+            ' \
+            release-run.json \
+            >/dev/null
+
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}/jobs?filter=latest&per_page=100" \
+            > release-jobs.json
+          jq --exit-status \
+            '
+              .jobs as $jobs |
+              [
+                "Validate release source",
+                "Build and attest Python package",
+                "Build and attest ecosystem packages",
+                "Test and scan container",
+                "Publish and attest container",
+                "Publish Helm chart to GHCR",
+                "Verify public release artifacts"
+              ] |
+              all(
+                .[];
+                . as $required |
+                any(
+                  $jobs[];
+                  .name == $required and .conclusion == "success"
+                )
+              )
+            ' \
+            release-jobs.json \
+            >/dev/null
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify published container provenance
+        env:
+          CONTAINER_DIGEST: ${{ inputs.container_digest }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(git rev-parse "refs/tags/${RELEASE_TAG}^{}")"
+          gh attestation verify \
+            "oci://${IMAGE_NAME}@${CONTAINER_DIGEST}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --source-digest "${TARGET}" \
+            --signer-workflow \
+              "github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --bundle-from-oci
+          test "$(
+            docker buildx imagetools inspect \
+              "${IMAGE_NAME}@${CONTAINER_DIGEST}" \
+              --format '{{ .Manifest.Digest }}'
+          )" = "${CONTAINER_DIGEST}"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-distributions
+          path: dist
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-metadata
+          path: release-metadata
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: integration-distributions
+          path: integration-dist
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify downloaded package provenance
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(git rev-parse "refs/tags/${RELEASE_TAG}^{}")"
+          while IFS= read -r -d '' artifact; do
+            gh attestation verify \
+              "${artifact}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --source-digest "${TARGET}" \
+              --signer-workflow \
+                "github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml"
+          done < <(
+            find dist integration-dist release-metadata -type f \
+              \( -name '*.whl' -o -name '*.tar.gz' -o -name '*.tgz' \) \
+              -print0
+          )
+      - name: Promote verified container
+        env:
+          CONTAINER_DIGEST: ${{ inputs.container_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}@${CONTAINER_DIGEST}"
+          test "$(
+            docker buildx imagetools inspect \
+              "${IMAGE_NAME}:latest" \
+              --format '{{ .Manifest.Digest }}'
+          )" = "${CONTAINER_DIGEST}"
+      - name: Publish or repair GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_DIGEST: ${{ inputs.container_digest }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          printf '%s@%s\n' \
+            "${IMAGE_NAME}" \
+            "${CONTAINER_DIGEST}" \
+            > release-metadata/container-digest.txt
+          cp release/compatibility.json release-metadata/compatibility.json
+          cp server.json release-metadata/server.json
+          python scripts/release_notes.py --version "${VERSION}" > release-notes.md
+          mkdir release-assets
+          find dist integration-dist release-metadata -type f \
+            -exec cp {} release-assets/ \;
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum
+          ) > SHA256SUMS
+          if gh release view \
+            "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            >/dev/null 2>&1; then
+            gh release upload \
+              "${RELEASE_TAG}" \
+              release-assets/* \
+              SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit \
+              "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file release-notes.md \
+              --title "Yagami ${VERSION}" \
+              --latest
+          else
+            gh release create \
+              "${RELEASE_TAG}" \
+              release-assets/* \
+              SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file release-notes.md \
+              --verify-tag \
+              --latest \
+              --title "Yagami ${VERSION}"
+          fi
