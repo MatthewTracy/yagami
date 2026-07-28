@@ -1,25 +1,25 @@
 {
   "$schema": "./compatibility.schema.json",
-  "release": "0.7.1",
+  "release": "0.7.2",
   "policySchema": "1.0.0",
   "evidenceSchema": "1.0.0",
   "mcpRegistrySchema": "2025-12-11",
   "packages": {
     "pypi": {
-      "yagami": "0.7.1",
-      "langchain-yagami": "0.7.1",
-      "llama-index-llms-yagami": "0.7.1",
-      "llama-index-embeddings-yagami": "0.7.1"
+      "yagami": "0.7.2",
+      "langchain-yagami": "0.7.2",
+      "llama-index-llms-yagami": "0.7.2",
+      "llama-index-embeddings-yagami": "0.7.2"
     },
     "npm": {
-      "@yagami/ai-sdk-provider": "0.7.1"
+      "@yagami/ai-sdk-provider": "0.7.2"
     },
     "oci": {
-      "ghcr.io/matthewtracy/yagami": "0.7.1",
-      "ghcr.io/matthewtracy/charts/yagami": "0.7.1"
+      "ghcr.io/matthewtracy/yagami": "0.7.2",
+      "ghcr.io/matthewtracy/charts/yagami": "0.7.2"
     },
     "mcp": {
-      "io.github.matthewtracy/yagami": "0.7.1"
+      "io.github.matthewtracy/yagami": "0.7.2"
     }
   },
   "python": [
