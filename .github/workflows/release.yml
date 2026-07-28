@@ -752,9 +752,12 @@ jobs:
           mkdir release-assets
           find dist integration-dist release-metadata -type f \
             -exec cp {} release-assets/ \;
-          find release-assets -type f -print0 \
-            | sort -z \
-            | xargs -0 sha256sum > SHA256SUMS
+          (
+            cd release-assets
+            find . -maxdepth 1 -type f -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum
+          ) > SHA256SUMS
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" release-assets/* SHA256SUMS \
               --repo "${GITHUB_REPOSITORY}" --clobber
