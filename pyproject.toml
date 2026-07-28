@@ -68,7 +68,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "ruff>=0.7,<0.16",
-    "mypy>=1.15,<2",
+    "mypy>=1.15,<3",
     "types-PyYAML>=6.0",
 ]
 observability = [
