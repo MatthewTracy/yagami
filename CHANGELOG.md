@@ -8,6 +8,13 @@ shipped.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-28
+
+### Changed
+- Publish the complete 0.7 Trust Plane, MCP and agent firewall, production storage, ecosystem integrations, benchmarks, and signed release feature set through the verified public channels.
+- Automatically hand successful signed-tag workflows to protected publication without broad personal access tokens.
+- Constrain the MCP Python SDK to the compatible 1.x line while the dedicated upstream 2.x migration is completed.
+
 ## [0.7.0] - 2026-07-28
 
 ### Changed

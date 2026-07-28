@@ -1,6 +1,6 @@
 {
   "name": "@yagami/ai-sdk-provider",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Vercel AI SDK provider for the Yagami AI context firewall.",
   "type": "module",
   "license": "MIT",
