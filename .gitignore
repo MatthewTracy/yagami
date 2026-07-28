@@ -20,6 +20,7 @@ ui/dist/
 ui/.vite/
 ui/coverage/
 ui/playwright-report/
+.playwright-browsers/
 ui/test-results/
 
 models/
