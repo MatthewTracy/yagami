@@ -3,7 +3,7 @@
 Yagami keeps its server, official adapters, container, Helm chart, and MCP
 metadata on lockstep versions until 1.0. The machine-readable source of truth
 is [`release/compatibility.json`](https://github.com/MatthewTracy/yagami/blob/main/release/compatibility.json).
-The current lockstep release is `0.6.2`.
+The current lockstep release is `0.7.0`.
 
 ## Supported runtimes
 
