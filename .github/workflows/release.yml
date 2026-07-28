@@ -667,7 +667,11 @@ jobs:
   promote-container:
     name: Promote verified container to latest
     needs: [smoke-public-artifacts, publish-container]
-    if: github.event_name == 'push' || github.event_name == 'workflow_run'
+    if: >-
+      always() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_run') &&
+      needs.smoke-public-artifacts.result == 'success' &&
+      needs.publish-container.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
