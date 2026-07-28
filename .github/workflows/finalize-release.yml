@@ -206,7 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          NAME="io.github.matthewtracy/yagami"
+          NAME="io.github.MatthewTracy/yagami"
           python scripts/validate_registry.py
           test "$(
             python -c \

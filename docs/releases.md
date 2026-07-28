@@ -84,7 +84,7 @@ The optional ecosystem publishers are also credentialless:
   package `@yagami/ai-sdk-provider` from `release.yml` and environment
   `release`, then set `NPM_PUBLISH_ENABLED=true`.
 - Set `MCP_REGISTRY_PUBLISH_ENABLED=true` for GitHub OIDC publication of
-  `io.github.matthewtracy/yagami`; the MCP Registry does not require a stored
+  `io.github.MatthewTracy/yagami`; the MCP Registry does not require a stored
   token.
 
 Before enabling automated tag creation, generate a dedicated Ed25519 signing

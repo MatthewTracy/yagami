@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.matthewtracy/yagami",
+  "name": "io.github.MatthewTracy/yagami",
   "title": "Yagami AI Context Firewall",
   "description": "Govern model, retrieval, memory, and tool access for AI applications and agents.",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "websiteUrl": "https://matthewtracy.github.io/yagami/",
   "repository": {
     "url": "https://github.com/MatthewTracy/yagami",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "yagami",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "runtimeHint": "uvx",
       "packageArguments": [
         {
