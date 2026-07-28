@@ -8,6 +8,15 @@ shipped.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-28
+
+### Changed
+- Introduce canonical trust zones, independent data labels, capability-aware routing, pluggable detectors, governed memory, signed policy bundles, retention enforcement, and content-free evidence.
+- Add a provider-neutral MCP and agent firewall with namespaced capabilities, schema drift controls, identity-bound approvals, OAuth 2.1 PKCE, SSRF and egress protections, and resilient execution.
+- Add asynchronous SQLite and PostgreSQL storage, Redis and PostgreSQL coordination, durable audit delivery, backup and restore, OIDC and RBAC administration, multi-replica Helm deployment, and observability guidance.
+- Add package-ready LangChain, LlamaIndex, and Vercel AI SDK integrations plus security demos, versioned benchmarks, a no-data product tour, and design-partner materials.
+- Add protected SSH-signed releases with SBOMs, checksums, provenance attestations, multi-architecture containers, Helm OCI publishing, and public-registry smoke tests.
+
 ## [0.6.2] - 2026-07-26
 
 ### Security

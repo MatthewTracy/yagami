@@ -1,6 +1,6 @@
 [project]
 name = "llama-index-embeddings-yagami"
-version = "0.6.2"
+version = "0.7.0"
 description = "Governed LlamaIndex embeddings through the Yagami AI context firewall."
 readme = "README.md"
 requires-python = ">=3.11"
