@@ -40,13 +40,21 @@ def test_chunk_empty_returns_empty():
 
 
 def test_chunk_long_splits_below_cap():
-    # 20000 chars >> target (3200) → splits, but ≤ MAX_CHUNKS chunks.
+    # 20000 chars >> target (800) → splits, but ≤ MAX_CHUNKS chunks.
     long = ("This is a sentence. " * 1000).strip()
     out = chunk(long)
     assert 1 < len(out) <= MAX_CHUNKS
     # Every chunk respects the target plus the overlap fudge.
     for c in out:
         assert len(c) <= TARGET_TOKENS * 4 + 500
+
+
+def test_typical_long_reply_stays_within_default_embedder_context():
+    reply = ("This is useful medical context for a careful follow-up response. " * 40).strip()
+    out = chunk(reply)
+    assert len(out) > 1
+    max_safe_chars = (TARGET_TOKENS + 25) * 4
+    assert all(len(part) <= max_safe_chars for part in out)
 
 
 def test_chunk_respects_max_cap():

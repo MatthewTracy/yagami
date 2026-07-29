@@ -11,6 +11,7 @@ venv/
 .pytest-tmp-*/
 site/
 .pip-cache/
+.cache/
 dist/
 build/
 *.egg-info/

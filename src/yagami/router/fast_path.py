@@ -43,6 +43,38 @@ _CLINICAL_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Colloquial personal-health language is easy for a short-prompt fast path to
+# mistake for ordinary chat. Keep this deliberately high precision: generic
+# medical questions still fall through to the classifier via
+# `_MEDICAL_TOPIC_MARKERS`, while first-person health disclosures are treated
+# as sensitive even if the classifier is unavailable.
+_PERSONAL_HEALTH_PATTERN = re.compile(
+    r"(?:"
+    r"\b(?:i|i'm|i've|i\s+have|my|me)\b.{0,80}\b(?:"
+    r"medical|health|condition|flu|influenza|covid|fever|sick|ill|pain|"
+    r"injur(?:y|ed)|symptoms?|diagnos(?:is|ed)|doctor|hospital|clinic|"
+    r"medication|prescription|treatment|therapy|surgery"
+    r")\b|"
+    r"\b(?:my|the|a)\s+(?:doctor|physician|clinician)\b|"
+    r"\b(?:visited|saw|called|spoke\s+with)\s+(?:my|the|a)\s+"
+    r"(?:doctor|physician|clinician)\b|"
+    r"\b(?:patient|pt)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Medical topics that are not necessarily personal data. They must not take
+# the "provably safe" bypass, because the classifier needs to distinguish
+# general health education from a person's clinical information.
+_MEDICAL_TOPIC_MARKERS = re.compile(
+    r"\b(?:"
+    r"medical|health|condition|flu|influenza|covid|fever|sick|illness|"
+    r"doctor|physician|hospital|symptoms?|diagnos(?:is|e|ed)|medication|"
+    r"prescription|treatment|therapy|vaccine|disease"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Lab-value shape: 2-4 uppercase letters followed by a number (BP 158, Na 128, BNP 612).
 _LAB_VALUE_PATTERN = re.compile(r"\b[A-Z]{2,4}\s*[:=]?\s*\d+(?:\.\d+)?\b")
 
@@ -120,8 +152,14 @@ def _has_secret(text: str) -> bool:
     return any(p.search(text) for p in _SECRET_PATTERNS)
 
 
+def _has_personal_health(text: str) -> bool:
+    return bool(_PERSONAL_HEALTH_PATTERN.search(text))
+
+
 def _has_phi(text: str) -> bool:
     if any(p.search(text) for p in _PHI_PATTERNS):
+        return True
+    if _has_personal_health(text):
         return True
     if _CLINICAL_KEYWORDS.search(text):
         return True
@@ -181,6 +219,8 @@ def can_bypass(text: str) -> Classification | None:
     if len(text) >= _MAX_BYPASS_CHARS:
         return None
     if _has_phi(text):
+        return None
+    if _MEDICAL_TOPIC_MARKERS.search(text):
         return None
     if _has_code(text):
         return None

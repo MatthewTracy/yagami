@@ -54,6 +54,14 @@ class _FakeWebSocket:
         return await asyncio.wait_for(poll(), timeout=timeout)
 
 
+class _DisconnectOnDoneWebSocket(_FakeWebSocket):
+    async def send_text(self, payload: str) -> None:
+        message = json.loads(payload)
+        self.sent.append(message)
+        if message.get("type") == "done":
+            await self.incoming.put(_DISCONNECT)
+
+
 class _SlowBackend:
     name = "ollama"
     is_local = True
@@ -143,6 +151,25 @@ def _gateway(backend) -> _Gateway:
     return _Gateway(_policy(backend))
 
 
+class _PostDoneGateway(_Gateway):
+    def __init__(self, policy: RoutingPolicy) -> None:
+        super().__init__(policy)
+        self.after_done = asyncio.Event()
+        self.release = asyncio.Event()
+        self.completed = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def stream(self, prepared):
+        yield {"type": "done", "content": "", "meta": {}}
+        self.after_done.set()
+        try:
+            await self.release.wait()
+            self.completed.set()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+
 @pytest.mark.asyncio
 async def test_cancel_interrupts_live_generation(fresh_db):
     ws = _FakeWebSocket()
@@ -185,3 +212,22 @@ async def test_text_only_forced_backend_refuses_image_instead_of_dropping_it(fre
 
     await ws.incoming.put(_DISCONNECT)
     await asyncio.wait_for(endpoint, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_done_does_not_cancel_stream_finalization(fresh_db):
+    ws = _DisconnectOnDoneWebSocket()
+    backend = _RecordingBackend()
+    gateway = _PostDoneGateway(_policy(backend))
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), gateway))
+    await ws.wait_for(lambda m: m.get("type") == "session")
+
+    await ws.incoming.put({"content": "finish cleanly"})
+    await ws.wait_for(lambda m: m.get("type") == "done")
+    await asyncio.wait_for(gateway.after_done.wait(), timeout=2)
+    await asyncio.sleep(0)
+
+    assert not gateway.cancelled.is_set()
+    gateway.release.set()
+    await asyncio.wait_for(endpoint, timeout=2)
+    assert gateway.completed.is_set()

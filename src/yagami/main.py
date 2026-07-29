@@ -524,6 +524,14 @@ def build_app() -> FastAPI:
         async def health(_principal: Principal = Depends(require_admin)) -> dict:
             return {
                 "ok": True,
+                "mode": "echo-demo" if settings.demo_mode else "standard",
+                "demo_mode": settings.demo_mode,
+                "default_backend": policy.config.default_backend,
+                "message": (
+                    "Echo demonstration mode is active; no AI model is generating responses."
+                    if settings.demo_mode
+                    else "Standard model-backed mode is active."
+                ),
                 "backends": [
                     {"name": b.name, "is_local": b.is_local, "healthy": await b.health()}
                     for b in backends.values()

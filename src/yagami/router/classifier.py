@@ -29,7 +29,9 @@ Field meanings:
 - intent.creative => write a story, poem, song, fictional dialogue, essay.
 - intent.simple_qa => everything else (factual lookups, summarization, rewrites, chat, casual Q&A).
 
-- sensitivity.phi_medical => any clinical content (patient names, MRN, DOB, labs, meds, diagnoses, vitals, treatment plans).
+- sensitivity.phi_medical => personal or patient-specific clinical content (for example "I/my",
+  a patient record, MRN, DOB, labs, medications, diagnoses, vitals, or treatment plans for a
+  person). Generic medical knowledge with no personal/patient context is sensitivity.none.
 - sensitivity.phi => personal health/identity info without clinical depth (SSN alone, home address, phone with personal context).
 - sensitivity.secret => API keys (sk-..., ghp_..., AKIA..., JWTs), passwords, credentials.
 - sensitivity.none => none of the above.
@@ -62,6 +64,12 @@ Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
 
 User: Diagnosis: stage II NSCLC. Plan a 6-cycle carbo/paclitaxel regimen.
 Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
+
+User: I have the flu and visited the doctor on June 27th.
+Output: {"intent":"simple_qa","sensitivity":"phi_medical","complexity":"low"}
+
+User: What are common flu symptoms?
+Output: {"intent":"simple_qa","sensitivity":"none","complexity":"low"}
 
 User: My SSN is 123-45-6789, what should I do about identity theft?
 Output: {"intent":"simple_qa","sensitivity":"phi","complexity":"low"}

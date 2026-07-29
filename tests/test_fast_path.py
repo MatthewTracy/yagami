@@ -190,3 +190,18 @@ def test_long_prompt_never_bypasses():
 
 def test_empty_prompt_never_bypasses():
     assert can_bypass("") is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Can you review my medical condition",
+        "I have the flu and visited the doctor on June 27th",
+    ],
+)
+def test_colloquial_personal_health_never_bypasses(prompt: str):
+    assert can_bypass(prompt) is None
+
+
+def test_generic_medical_question_reaches_semantic_classifier():
+    assert can_bypass("What are common flu symptoms?") is None

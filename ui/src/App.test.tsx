@@ -36,6 +36,9 @@ describe("App", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        if (url === "/api/health") {
+          return json({ ok: true, mode: "standard", demo_mode: false, default_backend: "ollama" });
+        }
         if (url.startsWith("/api/sessions")) return json({ sessions: [] });
         if (url.startsWith("/api/costs")) {
           return json({
@@ -93,5 +96,25 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Stats dashboard" }));
     expect(await screen.findByText("Stats", { selector: "h3" })).toBeVisible();
+  });
+
+  it("makes echo demonstration mode unmistakable", async () => {
+    const defaultFetch = vi.mocked(fetch).getMockImplementation();
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/health") {
+        return json({
+          ok: true,
+          mode: "echo-demo",
+          demo_mode: true,
+          default_backend: "echo",
+        });
+      }
+      return defaultFetch!(input);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Echo demonstration:", { exact: true })).toBeVisible();
+    expect(screen.getByText(/no AI model is running/i)).toBeVisible();
   });
 });
