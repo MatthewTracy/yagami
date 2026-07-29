@@ -8,6 +8,16 @@ shipped.
 
 ## [Unreleased]
 
+### Security
+- Classify colloquial personal-health disclosures as medical data and preserve the established sensitivity across text follow-ups using content-free decision evidence.
+- Use a safe consumer-health prompt by default; clinician assumptions now require an explicit trusted clinical purpose.
+- Delete session-scoped memory vectors and reversible privacy tokens when a conversation is deleted.
+
+### Fixed
+- Keep default Ollama embedding chunks below the configured `all-minilm` context without reducing the prior per-message retention ceiling.
+- Distinguish echo demonstration mode from real model-backed serving in the health API and web interface.
+- Hide abandoned empty chat sessions and allow completed streams to finalize cleanly when a client disconnects immediately after the `done` event.
+
 ## [0.7.3] - 2026-07-28
 
 ### Changed

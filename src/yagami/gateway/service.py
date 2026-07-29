@@ -47,9 +47,10 @@ from ..policy import (
 )
 from ..projects import ProjectGovernor, ProjectLimitError
 from ..router import tool_loop
-from ..router.fast_path import _has_phi, _has_secret
+from ..router.fast_path import _has_personal_health, _has_phi, _has_secret
 from ..router.policy import RoutingDecision, RoutingPolicy, stickier
 from ..router.schema import DataLabel, Sensitivity
+from ..storage.db import get_db
 from ..telemetry.audit import AuditLedger
 from ..telemetry.costs import estimate_cost, rough_token_count, spend_today_usd
 from ..telemetry.decisions import (
@@ -143,17 +144,54 @@ class GatewayResult:
     tool_calls: list[dict]
 
 
-def _history_has_sensitive_context(messages: list[Message]) -> bool:
+def _history_sensitivity_from_messages(messages: list[Message]) -> Sensitivity:
     if len(messages) < 2:
-        return False
+        return Sensitivity.NONE
     last_user_index = max(
         (index for index, message in enumerate(messages) if message.role == "user"),
         default=len(messages),
     )
-    return any(
-        _has_phi(message.content) or _has_secret(message.content)
-        for message in messages[:last_user_index]
-    )
+    sensitivity = Sensitivity.NONE
+    for message in messages[:last_user_index]:
+        if _has_secret(message.content):
+            sensitivity = stickier(sensitivity, Sensitivity.SECRET)
+        elif _has_personal_health(message.content):
+            sensitivity = stickier(sensitivity, Sensitivity.PHI_MEDICAL)
+        elif _has_phi(message.content):
+            sensitivity = stickier(sensitivity, Sensitivity.PHI)
+    return sensitivity
+
+
+def _history_has_sensitive_context(messages: list[Message]) -> bool:
+    """Compatibility wrapper for callers/tests that only need a boolean."""
+    return _history_sensitivity_from_messages(messages) != Sensitivity.NONE
+
+
+async def _persisted_session_sensitivity(*, session_id: str | None, project_id: str) -> Sensitivity:
+    """Read the content-free decision ledger to preserve a session's sensitivity.
+
+    Interactive chat stores decisions under the public chat session ID. Stateless
+    gateway clients use a project-scoped digest, so check both representations.
+    """
+    if not session_id:
+        return Sensitivity.NONE
+    gateway_digest = hashlib.sha256(f"{project_id}:{session_id}".encode("utf-8")).hexdigest()[:32]
+    storage_ids = (session_id, "gw_" + gateway_digest)
+    db = get_db()
+    async with db.execute(
+        "SELECT classification FROM decisions WHERE session_id IN (?, ?)",
+        storage_ids,
+    ) as cursor:
+        rows = await cursor.fetchall()
+    sensitivity = Sensitivity.NONE
+    for row in rows:
+        try:
+            payload = json.loads(row["classification"])
+            value = Sensitivity(payload.get("sensitivity", "none"))
+        except (AttributeError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        sensitivity = stickier(sensitivity, value)
+    return sensitivity
 
 
 def _audit_context(context: PolicyContext) -> dict:
@@ -252,12 +290,25 @@ class GatewayService:
             spend_blocked = await self.governor.spend_blocked(context.project_id)
 
         started_at = time.perf_counter()
+        reset_context = context.metadata.get("reset_context") is True
+        history_sensitivity = Sensitivity.NONE
+        if not reset_context:
+            history_sensitivity = _history_sensitivity_from_messages(messages)
+            history_sensitivity = stickier(
+                history_sensitivity,
+                await _persisted_session_sensitivity(
+                    session_id=context.session_id,
+                    project_id=context.project_id,
+                ),
+            )
         try:
             routing_decision = await self.routing_policy.decide(
                 messages,
                 force_backend=force_backend,
                 spend_blocked=spend_blocked,
-                history_has_phi=_history_has_sensitive_context(messages),
+                history_has_phi=history_sensitivity != Sensitivity.NONE,
+                history_sensitivity=history_sensitivity,
+                purpose=context.purpose,
             )
         except Exception as exc:
             from ..router.policy import OverrideRefused

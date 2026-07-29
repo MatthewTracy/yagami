@@ -22,7 +22,11 @@ from pydantic import BaseModel, ValidationError
 
 from ..config import YagamiConfig, effective_routing, get_config, write_config
 from ..router.policy import RoutingPolicy
-from ..router.prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
+from ..router.prompts import (
+    PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT,
+    PHI_MEDICAL_SYSTEM_PROMPT,
+    PHI_SYSTEM_PROMPT,
+)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -45,6 +49,7 @@ def _config_payload() -> dict:
         "prompts": {
             "phi_default": PHI_SYSTEM_PROMPT,
             "phi_medical_default": PHI_MEDICAL_SYSTEM_PROMPT,
+            "phi_medical_clinician": PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT,
         },
         "notes": {
             "phi_must_be_local": (

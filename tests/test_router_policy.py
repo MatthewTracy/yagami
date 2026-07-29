@@ -22,13 +22,40 @@ async def test_secret_forces_local(make_policy, classified_user_msg):
 
 
 @pytest.mark.asyncio
-async def test_phi_medical_attaches_clinical_system_prompt(make_policy, classified_user_msg):
+async def test_phi_medical_attaches_consumer_health_prompt(make_policy, classified_user_msg):
     from yagami.router.prompts import PHI_MEDICAL_SYSTEM_PROMPT
 
     policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL))
     decision = await policy.decide(classified_user_msg("patient note ..."))
     assert decision.backend.is_local is True
     assert decision.system_prompt == PHI_MEDICAL_SYSTEM_PROMPT
+    assert "Do not assume the user is a clinician" in decision.system_prompt
+    assert "Never infer that a diagnosis was confirmed" in decision.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_explicit_clinician_purpose_uses_clinician_prompt(make_policy, classified_user_msg):
+    from yagami.router.prompts import PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT
+
+    policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL))
+    decision = await policy.decide(
+        classified_user_msg("patient note ..."),
+        purpose="clinical-documentation",
+    )
+    assert decision.system_prompt == PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_medical_sensitivity_is_sticky_for_text_follow_up(make_policy, user_msg):
+    policy = make_policy(None)
+    decision = await policy.decide(
+        user_msg("What should I do next?"),
+        history_sensitivity=Sensitivity.PHI_MEDICAL,
+    )
+    assert decision.classification["sensitivity"] == "phi_medical"
+    assert decision.classification["data_labels"] == ["phi"]
+    assert "history-phi" in decision.classification["source"]
+    assert decision.backend.is_local
 
 
 @pytest.mark.asyncio

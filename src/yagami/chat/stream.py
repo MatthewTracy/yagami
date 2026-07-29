@@ -59,6 +59,7 @@ async def chat_endpoint(
     receiver: asyncio.Task | None = None
     inbox: asyncio.Queue = asyncio.Queue(maxsize=_MAX_INBOX_MESSAGES)
     connection_closed = asyncio.Event()
+    generation_done_sent = asyncio.Event()
 
     async def receive_loop():
         try:
@@ -80,7 +81,11 @@ async def chat_endpoint(
         finally:
             connection_closed.set()
             for task in (decide_task, gen_task):
-                if task is not None and not task.done():
+                if (
+                    task is not None
+                    and not task.done()
+                    and (task is not gen_task or not generation_done_sent.is_set())
+                ):
                     task.cancel()
             await inbox.put(None)
 
@@ -214,6 +219,7 @@ async def chat_endpoint(
                 project_id="local",
                 purpose="interactive-chat",
                 session_id=session_id,
+                metadata={"reset_context": True} if reset_context else {},
             )
             request_options = GatewayRequestOptions()
             model = force_backend or "yagami-auto"
@@ -355,13 +361,20 @@ async def chat_endpoint(
                             )
                         break
 
-            gen_task = asyncio.create_task(_stream_gateway(ws, gateway, prepared))
+            generation_done_sent.clear()
+            gen_task = asyncio.create_task(
+                _stream_gateway(ws, gateway, prepared, generation_done_sent)
+            )
             try:
                 assistant_text = await gen_task
             except asyncio.CancelledError:
                 assistant_text = ""
-                await _send(ws, {"type": "error", "content": "cancelled", "meta": {}})
-                await _send(ws, {"type": "done", "content": "", "meta": {"cancelled": True}})
+                if not connection_closed.is_set():
+                    await _send(ws, {"type": "error", "content": "cancelled", "meta": {}})
+                    await _send(
+                        ws,
+                        {"type": "done", "content": "", "meta": {"cancelled": True}},
+                    )
             finally:
                 gen_task = None
 
@@ -382,6 +395,8 @@ async def chat_endpoint(
                 retention_days=prepared.policy.retention_days,
                 policy_hash=prepared.policy.policy_hash,
             )
+    except WebSocketDisconnect:
+        pass
     except Exception:
         log.exception("stream error")
         try:
@@ -403,12 +418,19 @@ async def chat_endpoint(
             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
-async def _stream_gateway(ws: WebSocket, gateway: GatewayService, prepared) -> str:
+async def _stream_gateway(
+    ws: WebSocket,
+    gateway: GatewayService,
+    prepared,
+    generation_done_sent: asyncio.Event | None = None,
+) -> str:
     pieces: list[str] = []
     async for chunk in gateway.stream(prepared):
         if chunk["type"] == "text":
             pieces.append(chunk["content"])
         await _send(ws, chunk)
+        if chunk["type"] == "done" and generation_done_sent is not None:
+            generation_done_sent.set()
     return "".join(pieces)
 
 

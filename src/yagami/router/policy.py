@@ -5,9 +5,13 @@ from typing import Awaitable, Callable, Protocol
 
 from ..backends.base import Backend, Capability, Message
 from ..config import RoutingConfig
-from .fast_path import can_bypass
+from .fast_path import _has_personal_health, _has_phi, _has_secret, can_bypass
 from .overrides import OverrideResult, parse as parse_override
-from .prompts import PHI_MEDICAL_SYSTEM_PROMPT, PHI_SYSTEM_PROMPT
+from .prompts import (
+    PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT,
+    PHI_MEDICAL_SYSTEM_PROMPT,
+    PHI_SYSTEM_PROMPT,
+)
 from .schema import Classification, Complexity, DataLabel, Intent, Sensitivity
 
 Classifier = Callable[[str], Awaitable[Classification]]
@@ -48,12 +52,27 @@ def _is_cloud_text(backend: Backend) -> bool:
     return not backend.is_local and Capability.TEXT in backend.capabilities
 
 
-def _privacy_system_prompt(sensitivity: Sensitivity | None) -> str | None:
+_CLINICIAN_PURPOSES = frozenset({"clinical-care", "clinical-documentation", "clinician-workflow"})
+
+
+def _privacy_system_prompt(sensitivity: Sensitivity | None, purpose: str = "general") -> str | None:
     if sensitivity == Sensitivity.PHI_MEDICAL:
+        if purpose.strip().lower() in _CLINICIAN_PURPOSES:
+            return PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT
         return PHI_MEDICAL_SYSTEM_PROMPT
     if sensitivity == Sensitivity.PHI:
         return PHI_SYSTEM_PROMPT
     return None
+
+
+def _deterministic_sensitivity(text: str) -> Sensitivity:
+    if _has_secret(text):
+        return Sensitivity.SECRET
+    if _has_personal_health(text):
+        return Sensitivity.PHI_MEDICAL
+    if _has_phi(text):
+        return Sensitivity.PHI
+    return Sensitivity.NONE
 
 
 @dataclass
@@ -123,16 +142,19 @@ class RoutingPolicy:
         force_backend: str | None = None,
         spend_blocked: bool = False,
         history_has_phi: bool = False,
+        history_sensitivity: Sensitivity | None = None,
+        purpose: str = "general",
     ) -> RoutingDecision:
         """Route the current turn.
 
-        `history_has_phi` is the caller's read of whether any earlier message in
-        the conversation contains PHI/secret content. The current turn is
-        classified independently - no sticky floor - but cloud TEXT backends
-        (all of them, not just anthropic - see _is_cloud_text) are refused
-        when history_has_phi, because the whole history is sent in those
-        requests. Image gen (stability) ignores history and is always safe
-        to route to.
+        `history_sensitivity` is a sticky floor for text requests in the same
+        conversation. This prevents a follow-up such as "what should I do?"
+        from losing the medical/private classification established by an
+        earlier turn. Image generation remains classified on the current
+        prompt because image backends do not receive chat history.
+
+        `history_has_phi` remains as a compatibility input and cloud-context
+        gate. Callers should prefer the richer `history_sensitivity`.
 
         `spend_blocked` gates EVERY cloud backend by is_local, regardless of
         name - it's set by the caller when the daily cap is exceeded or the
@@ -144,6 +166,10 @@ class RoutingPolicy:
             if self._sensitivity_inspector is not None
             else Sensitivity.NONE
         )
+        history_sensitivity = stickier(
+            history_sensitivity,
+            Sensitivity.PHI if history_has_phi else Sensitivity.NONE,
+        )
         if self._sensitivity_inspector is not None:
             last_user_index = max(
                 (index for index, message in enumerate(history) if message.role == "user"),
@@ -151,9 +177,11 @@ class RoutingPolicy:
             )
             prior_text = "\n".join(message.content for message in history[:last_user_index])
             if prior_text:
-                history_has_phi = history_has_phi or (
-                    await self._sensitivity_inspector.inspect(prior_text) != Sensitivity.NONE
+                history_sensitivity = stickier(
+                    history_sensitivity,
+                    await self._sensitivity_inspector.inspect(prior_text),
                 )
+        history_has_phi = history_sensitivity != Sensitivity.NONE
 
         # 1. Slash-command override at the start of the message.
         override = parse_override(last_text, self._backends.keys())
@@ -172,7 +200,9 @@ class RoutingPolicy:
                 override,
                 last_text,
                 history_has_phi=history_has_phi,
+                history_sensitivity=history_sensitivity,
                 classified_sensitivity=classified_sensitivity,
+                purpose=purpose,
             )
 
         # 2. Programmatic force_backend (WS field).
@@ -189,21 +219,32 @@ class RoutingPolicy:
                 force_backend,
                 last_text,
                 history_has_phi=history_has_phi,
+                history_sensitivity=history_sensitivity,
                 classified_sensitivity=classified_sensitivity,
+                purpose=purpose,
             )
 
         # 3. Rule-based fast-path bypass for high-confidence cases.
         bypass = can_bypass(last_text)
         if bypass is not None:
             bypass.sensitivity = stickier(bypass.sensitivity, external_sensitivity)
-            return self._apply_rules(
-                bypass,
+            source = (
                 "rules-fast-path+external"
                 if external_sensitivity != Sensitivity.NONE
-                else "rules-fast-path",
+                else "rules-fast-path"
+            )
+            if bypass.intent != Intent.IMAGE:
+                effective = stickier(bypass.sensitivity, history_sensitivity)
+                if effective != bypass.sensitivity:
+                    source += "+history-phi"
+                bypass.sensitivity = effective
+            return self._apply_rules(
+                bypass,
+                source,
                 last_text,
                 spend_blocked=spend_blocked,
                 history_has_phi=history_has_phi,
+                purpose=purpose,
             )
 
         # 4. LLM classifier.
@@ -217,9 +258,17 @@ class RoutingPolicy:
             except Exception:
                 classification = self._fallback_classify(last_text)
                 if self._config.fail_closed_on_classifier_error:
+                    classification.sensitivity = stickier(
+                        classification.sensitivity, external_sensitivity
+                    )
+                    if classification.intent != Intent.IMAGE:
+                        classification.sensitivity = stickier(
+                            classification.sensitivity, history_sensitivity
+                        )
+                    _normalize_data_labels(classification)
                     cls_dict = classification.model_dump(mode="json")
                     cls_dict["source"] = "fallback-after-error-local"
-                    backend = self._preferred_local()
+                    backend = self._preferred_local(_classification_requirements(classification))
                     return RoutingDecision(
                         backend=backend,
                         reason=(
@@ -227,12 +276,23 @@ class RoutingPolicy:
                             f"({backend.name})"
                         ),
                         classification=cls_dict,
+                        system_prompt=_privacy_system_prompt(classification.sensitivity, purpose),
+                        model_override=self._config.local_model_overrides.get(
+                            classification.sensitivity.value
+                        ),
+                        use_tools=classification.needs_tools,
+                        required_capabilities=_classification_requirements(classification),
                     )
                 source = "fallback-after-error"
 
         classification.sensitivity = stickier(classification.sensitivity, external_sensitivity)
         if external_sensitivity != Sensitivity.NONE:
             source += "+external"
+        if classification.intent != Intent.IMAGE:
+            effective = stickier(classification.sensitivity, history_sensitivity)
+            if effective != classification.sensitivity:
+                source += "+history-phi"
+            classification.sensitivity = effective
 
         return self._apply_rules(
             classification,
@@ -240,6 +300,7 @@ class RoutingPolicy:
             last_text,
             spend_blocked=spend_blocked,
             history_has_phi=history_has_phi,
+            purpose=purpose,
         )
 
     def _apply_override(
@@ -248,30 +309,34 @@ class RoutingPolicy:
         original_text: str,
         *,
         history_has_phi: bool = False,
+        history_sensitivity: Sensitivity | None = None,
         classified_sensitivity: Sensitivity | None = None,
+        purpose: str = "general",
     ) -> RoutingDecision:
-        from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
-
-        sensitive: Sensitivity | None = classified_sensitivity
-        if _has_phi(override.stripped_text):
-            sensitive = Sensitivity.PHI
-        elif _has_secret(override.stripped_text):
-            sensitive = Sensitivity.SECRET
-
-        sensitive_value = (
-            sensitive.value if sensitive is not None and sensitive is not Sensitivity.NONE else None
-        )
-        if sensitive_value is not None and self._config.phi_must_be_local:
-            target = self._backends.get(override.forced_backend or "")
-            if target is not None and not target.is_local:
-                raise OverrideRefused(
-                    f"override ignored: sensitivity={sensitive_value} requires local backend, "
-                    f"requested {override.forced_backend!r} is cloud"
-                )
-
         backend = self._backends.get(override.forced_backend or "")
         if backend is None:
             raise OverrideRefused(f"override backend {override.forced_backend!r} not available")
+        current_sensitivity = stickier(
+            classified_sensitivity,
+            _deterministic_sensitivity(override.stripped_text),
+        )
+        sensitive = (
+            stickier(current_sensitivity, history_sensitivity)
+            if Capability.TEXT in backend.capabilities
+            else current_sensitivity
+        )
+        inherited = sensitive != current_sensitivity
+        sensitive_value = sensitive.value if sensitive is not Sensitivity.NONE else None
+        if sensitive_value is not None and self._config.phi_must_be_local and not backend.is_local:
+            if inherited:
+                raise OverrideRefused(
+                    f"override refused: chat history contains PHI or other sensitive data; "
+                    f"cloud text backend {backend.name!r} would include it in context"
+                )
+            raise OverrideRefused(
+                f"override ignored: sensitivity={sensitive_value} requires local backend, "
+                f"requested {override.forced_backend!r} is cloud"
+            )
 
         # Cloud TEXT backends see history. If history has PHI, refuse explicitly
         # - the user's current prompt may be safe but we'd ship Jenny's note to
@@ -297,8 +362,8 @@ class RoutingPolicy:
         )
         _normalize_data_labels(cls)
         cls_dict = cls.model_dump(mode="json")
-        cls_dict["source"] = "slash-override"
-        sysprompt = _privacy_system_prompt(sensitive)
+        cls_dict["source"] = "slash-override+history-phi" if inherited else "slash-override"
+        sysprompt = _privacy_system_prompt(sensitive, purpose)
         return RoutingDecision(
             backend=backend,
             reason=f"slash override → {backend.name}",
@@ -317,23 +382,29 @@ class RoutingPolicy:
         last_text: str,
         *,
         history_has_phi: bool = False,
+        history_sensitivity: Sensitivity | None = None,
         classified_sensitivity: Sensitivity | None = None,
+        purpose: str = "general",
     ) -> RoutingDecision:
-        from .fast_path import _has_phi, _has_secret  # local import to avoid cycle
-
-        sensitive: Sensitivity | None = classified_sensitivity
-        if _has_phi(last_text):
-            sensitive = Sensitivity.PHI
-        elif _has_secret(last_text):
-            sensitive = Sensitivity.SECRET
-
         backend = self._backends.get(name)
         if backend is None:
             raise OverrideRefused(f"force_backend {name!r} not registered")
-        sensitive_value = (
-            sensitive.value if sensitive is not None and sensitive is not Sensitivity.NONE else None
+        current_sensitivity = stickier(
+            classified_sensitivity, _deterministic_sensitivity(last_text)
         )
+        sensitive = (
+            stickier(current_sensitivity, history_sensitivity)
+            if Capability.TEXT in backend.capabilities
+            else current_sensitivity
+        )
+        inherited = sensitive != current_sensitivity
+        sensitive_value = sensitive.value if sensitive is not Sensitivity.NONE else None
         if sensitive_value is not None and self._config.phi_must_be_local and not backend.is_local:
+            if inherited:
+                raise OverrideRefused(
+                    f"force_backend {name!r} refused: chat history contains PHI or other "
+                    "sensitive data; cloud text backend would include it in context"
+                )
             raise OverrideRefused(
                 f"force_backend {name!r} is cloud but content is "
                 f"{sensitive_value}-sensitive; refused"
@@ -346,8 +417,8 @@ class RoutingPolicy:
         cls = Classification(sensitivity=sensitive or Sensitivity.NONE)
         _normalize_data_labels(cls)
         cls_dict = cls.model_dump(mode="json")
-        cls_dict["source"] = "force_backend"
-        sysprompt = _privacy_system_prompt(sensitive)
+        cls_dict["source"] = "force_backend+history-phi" if inherited else "force_backend"
+        sysprompt = _privacy_system_prompt(sensitive, purpose)
         return RoutingDecision(
             backend=backend,
             reason=f"force_backend → {backend.name}",
@@ -402,6 +473,7 @@ class RoutingPolicy:
         *,
         spend_blocked: bool = False,
         history_has_phi: bool = False,
+        purpose: str = "general",
     ) -> RoutingDecision:
         _normalize_data_labels(classification)
         cls_dict = classification.model_dump(mode="json")
@@ -415,10 +487,14 @@ class RoutingPolicy:
         required = _classification_requirements(classification)
         if sensitive and self._config.phi_must_be_local:
             backend = self._preferred_local(required)
-            sysprompt = _privacy_system_prompt(classification.sensitivity)
+            sysprompt = _privacy_system_prompt(classification.sensitivity, purpose)
+            history_note = "; history-phi sticky floor" if "history-phi" in source else ""
             return RoutingDecision(
                 backend=backend,
-                reason=f"sensitivity={classification.sensitivity.value}; forced local ({backend.name})",
+                reason=(
+                    f"sensitivity={classification.sensitivity.value}; forced local "
+                    f"({backend.name}){history_note}"
+                ),
                 classification=cls_dict,
                 system_prompt=sysprompt,
                 model_override=self._config.local_model_overrides.get(
@@ -545,7 +621,9 @@ class RoutingPolicy:
             else Complexity.LOW
         )
         classification = Classification(
-            intent=intent, sensitivity=Sensitivity.NONE, complexity=complexity
+            intent=intent,
+            sensitivity=_deterministic_sensitivity(text),
+            complexity=complexity,
         )
         _normalize_data_labels(classification)
         return classification

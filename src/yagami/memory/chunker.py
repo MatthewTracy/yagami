@@ -1,10 +1,10 @@
 """Sentence-aware chunking for long observations.
 
 Strategy:
-- Target ~800 tokens per chunk with 100-token overlap.
-- Cap at 8 chunks per message - anything longer probably belongs in a doc
-  store, not the chat memory. The cap stops one runaway turn from
-  monopolizing the embedding worker.
+- Target ~200 tokens per chunk with 25-token overlap. This stays below the
+  256-token context configured by Yagami's default all-minilm Ollama model.
+- Cap at 32 chunks per message, preserving the previous roughly 6,400-token
+  per-message ceiling while keeping every individual embedding request safe.
 - Use 4 chars/token from `telemetry.costs.rough_token_count` as the size
   proxy - same heuristic the cost meter uses, so the budgets line up.
 - Break on paragraph (\\n\\n) then on sentence (`. ` / `? ` / `! `) when
@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import re
 
-TARGET_TOKENS = 800
-OVERLAP_TOKENS = 100
-MAX_CHUNKS = 8
+TARGET_TOKENS = 200
+OVERLAP_TOKENS = 25
+MAX_CHUNKS = 32
 CHARS_PER_TOKEN = 4
 
 _TARGET_CHARS = TARGET_TOKENS * CHARS_PER_TOKEN
@@ -36,8 +36,8 @@ def _split_sentences(text: str) -> list[str]:
 def chunk(text: str, *, max_chunks: int = MAX_CHUNKS) -> list[str]:
     """Return a list of 1..max_chunks chunks. Empty input → [].
 
-    `max_chunks` defaults to the chat-turn cap (8). Bulk document indexing
-    (memory/documents.py) passes a much larger value - the 8-chunk cap
+    `max_chunks` defaults to the chat-turn cap (32). Bulk document indexing
+    (memory/documents.py) passes a much larger value - the chat cap
     exists to stop one runaway chat turn from monopolizing the embedding
     worker, not because chunking itself has a hard limit.
     """

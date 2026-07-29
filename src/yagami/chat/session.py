@@ -4,7 +4,7 @@ import base64
 from uuid import uuid4
 
 from ..backends.base import Message
-from ..storage.db import get_db, now_ms
+from ..storage.db import exclusive_db, get_db, now_ms
 
 
 class SessionStore:
@@ -120,7 +120,9 @@ class SessionStore:
         db = get_db()
         async with db.execute(
             "SELECT id, created_at, updated_at, title FROM sessions"
-            " WHERE channel='chat' ORDER BY updated_at DESC LIMIT ?",
+            " WHERE channel='chat'"
+            " AND EXISTS (SELECT 1 FROM messages WHERE messages.session_id=sessions.id)"
+            " ORDER BY updated_at DESC LIMIT ?",
             (limit,),
         ) as cur:
             return [dict(row) async for row in cur]
@@ -136,8 +138,23 @@ class SessionStore:
         return cur.rowcount > 0
 
     async def delete(self, session_id: str) -> bool:
-        db = get_db()
-        # FK ON DELETE CASCADE on messages and decisions takes care of children.
-        cur = await db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
-        await db.commit()
-        return cur.rowcount > 0
+        # Observations intentionally have no session FK, and privacy vault rows
+        # link to decision request IDs. Remove those content-bearing records
+        # before the session cascade deletes their lookup keys.
+        async with exclusive_db() as db:
+            await db.execute(
+                "DELETE FROM privacy_tokens WHERE request_id IN ("
+                " SELECT request_id FROM decisions"
+                " WHERE session_id=? AND request_id IS NOT NULL"
+                ")",
+                (session_id,),
+            )
+            await db.execute(
+                "DELETE FROM observations_vec WHERE rowid IN ("
+                " SELECT id FROM observations WHERE session_id=?"
+                ")",
+                (session_id,),
+            )
+            await db.execute("DELETE FROM observations WHERE session_id=?", (session_id,))
+            cur = await db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+            return cur.rowcount > 0

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Chat } from "./components/Chat";
 import { CostMeter } from "./components/CostMeter";
 import { DebugPanel } from "./components/DebugPanel";
@@ -9,12 +9,18 @@ import { SettingsModal } from "./components/SettingsModal";
 import { ShortcutSheet } from "./components/ShortcutSheet";
 import { StatsDashboard } from "./components/StatsDashboard";
 import { ToastHost } from "./components/Toast";
+import { fetchJson } from "./lib/http";
 
 type Routing = {
   backend: string;
   isLocal: boolean;
   reason: string;
   classification: Record<string, unknown>;
+};
+
+type Health = {
+  demo_mode?: boolean;
+  default_backend?: string;
 };
 
 export default function App() {
@@ -25,6 +31,21 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchJson<Health>("/api/health")
+      .then((payload) => {
+        if (active) setHealth(payload);
+      })
+      .catch(() => {
+        if (active) setHealth(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function newChat() {
     setLoadSessionId(null);
@@ -46,7 +67,7 @@ export default function App() {
       <div className="border-r border-zinc-800 flex flex-col min-h-0 overflow-hidden">
         <header className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2 shrink-0">
           <span className="font-semibold tracking-tight">Yagami</span>
-            <span className="text-xs text-zinc-400">local-first AI orchestrator</span>
+          <span className="text-xs text-zinc-400">AI context firewall</span>
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={() => setMemoryOpen(true)}
@@ -74,6 +95,16 @@ export default function App() {
             </button>
           </div>
         </header>
+        {health?.demo_mode && (
+          <div
+            role="status"
+            className="border-b border-amber-700/60 bg-amber-950/60 px-4 py-2 text-sm text-amber-100"
+          >
+            <span className="font-semibold">Echo demonstration:</span> no AI model is running.
+            Start <code className="rounded bg-black/30 px-1">yagami serve</code> for real local
+            model responses.
+          </div>
+        )}
         <Chat
           loadSessionId={loadSessionId}
           onRouting={setRouting}

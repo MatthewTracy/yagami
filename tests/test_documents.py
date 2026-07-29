@@ -34,10 +34,10 @@ async def docdb(tmp_path: Path):
 # ---- chunker: unbounded document chunking ----
 
 
-def test_chunk_default_still_caps_at_eight():
+def test_chunk_default_preserves_previous_total_token_ceiling():
     long_text = ("Sentence number %d in a very long chat turn. " % 1) * 2000
     out = chunk(long_text)
-    assert len(out) <= 8
+    assert len(out) <= 32
 
 
 def test_chunk_max_chunks_override_allows_more():
