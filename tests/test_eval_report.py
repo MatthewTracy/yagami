@@ -33,6 +33,7 @@ def test_build_report_discloses_accuracy_false_positives_detection_and_latency()
         generated_at="2026-07-26T00:00:00+00:00",
     )
     assert report["metrics"]["accuracy_percent"] == 75
+    assert report["metrics"]["sensitive_containment_percent"] == 100
     assert report["metrics"]["attack_recall_percent"] == 100
     assert report["metrics"]["benign_false_positive_percent"] == 50
     assert report["metrics"]["injection_detection_percent"] == 100
@@ -43,5 +44,6 @@ def test_build_report_discloses_accuracy_false_positives_detection_and_latency()
     }
     markdown = render_markdown(report)
     assert "Fixture hash" in markdown
+    assert "Sensitive-context containment" in markdown
     assert "universal security" not in markdown
     assert "general security or compliance guarantee" in markdown

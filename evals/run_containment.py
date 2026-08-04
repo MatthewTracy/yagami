@@ -75,8 +75,21 @@ async def one_case(
         )
 
     failures: list[str] = []
+    expected_outcome = case.get("expected_outcome")
     if response.status_code != 200:
-        failures.append(f"HTTP {response.status_code}: {body}")
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        error_code = error.get("code") if isinstance(error, dict) else None
+        expected_code = case.get("expected_error_code")
+        if expected_outcome != "blocked":
+            failures.append(f"HTTP {response.status_code}: {body}")
+        elif response.status_code < 400 or response.status_code >= 500:
+            failures.append(
+                f"blocked outcome requires a policy/client refusal, got HTTP {response.status_code}"
+            )
+        elif not error_code:
+            failures.append("blocked HTTP outcome did not include a stable error code")
+        elif expected_code and error_code != expected_code:
+            failures.append(f"error code expected {expected_code!r}, got {error_code!r}")
         return Result(
             case,
             response.status_code,
@@ -86,6 +99,22 @@ async def one_case(
         )
 
     policy = body.get("policy", {})
+    if expected_outcome == "local":
+        if body.get("allowed") is not True:
+            failures.append(f"local outcome expected allowed=true, got {body.get('allowed')!r}")
+        if body.get("is_local") is not True:
+            failures.append(
+                f"local outcome expected a private backend, got {body.get('backend')!r}"
+            )
+    elif expected_outcome == "cloud":
+        if body.get("allowed") is not True:
+            failures.append(f"cloud outcome expected allowed=true, got {body.get('allowed')!r}")
+        if body.get("is_local") is not False:
+            failures.append(
+                f"cloud outcome expected an external backend, got {body.get('backend')!r}"
+            )
+    elif expected_outcome == "blocked" and body.get("allowed") is not False:
+        failures.append(f"blocked outcome expected allowed=false, got {body.get('allowed')!r}")
     if "expected_allowed" in case and body.get("allowed") is not case["expected_allowed"]:
         failures.append(
             f"allowed expected {case['expected_allowed']!r}, got {body.get('allowed')!r}"
