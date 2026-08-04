@@ -54,7 +54,7 @@ def discover_builders() -> dict[str, BackendBuilder]:
         try:
             mod = importlib.import_module(f"yagami.backends.{mod_name}")
         except ImportError as exc:
-            log.warning("backend %s failed to import (%s); skipping", mod_name, exc)
+            log.debug("optional backend %s is unavailable (%s); skipping", mod_name, exc)
             continue
         builder = getattr(mod, "build", None)
         if not callable(builder):

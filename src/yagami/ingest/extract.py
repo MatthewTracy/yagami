@@ -25,7 +25,10 @@ class ExtractedDoc:
 
 
 def _extract_pdf(blob: bytes) -> str:
-    from pypdf import PdfReader
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise RuntimeError("PDF ingestion requires `pip install 'yagami[ingest]'`") from exc
 
     reader = PdfReader(io.BytesIO(blob))
     parts: list[str] = []

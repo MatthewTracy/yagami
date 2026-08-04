@@ -21,7 +21,7 @@ def build(cfg: YagamiConfig, _secrets_get) -> "OllamaBackend":
 
 class OllamaBackend(Backend):
     name = "ollama"
-    capabilities = {Capability.TEXT, Capability.CODE}
+    capabilities = {Capability.TEXT, Capability.CODE, Capability.TOOLS}
     is_local = True
     trust_zone = TrustZone.DEVICE
     pricing = Pricing()  # local - free
@@ -47,6 +47,16 @@ class OllamaBackend(Backend):
             "keep_alive": self._config.keep_alive,
             "options": {"temperature": options.temperature, "num_predict": options.max_tokens},
         }
+        if options.tools:
+            body["tools"] = options.tools
+        if options.tool_choice is not None and options.tool_choice != "auto":
+            yield {
+                "type": "error",
+                "content": "Ollama's native API does not support forced tool_choice",
+                "meta": {"model": model, "code": "tool_choice_not_supported"},
+            }
+            yield {"type": "done", "content": "", "meta": {"model": model}}
+            return
         try:
             async with self._client.stream("POST", "/api/chat", json=body) as resp:
                 resp.raise_for_status()
@@ -54,8 +64,18 @@ class OllamaBackend(Backend):
                     if not line.strip():
                         continue
                     data = json.loads(line)
-                    if "message" in data and (content := data["message"].get("content")):
-                        yield {"type": "text", "content": content, "meta": {"model": model}}
+                    message = data.get("message")
+                    if isinstance(message, dict):
+                        if content := message.get("content"):
+                            yield {
+                                "type": "text",
+                                "content": str(content),
+                                "meta": {"model": model},
+                            }
+                        for index, call in enumerate(message.get("tool_calls") or []):
+                            chunk = _tool_call_chunk(call, fallback_index=index, model=model)
+                            if chunk is not None:
+                                yield chunk
                     if data.get("done"):
                         yield {"type": "done", "content": "", "meta": {"model": model}}
                         return
@@ -69,6 +89,32 @@ class OllamaBackend(Backend):
             return r.status_code == 200
         except httpx.HTTPError:
             return False
+
+    async def has_model(self, model: str | None = None) -> bool:
+        """Return whether the configured model is installed in Ollama.
+
+        Demo startup uses this bounded probe to choose a real local model only
+        when the next request can actually run. An unreachable service or an
+        invalid response is a normal unavailable result, never a boot failure.
+        """
+        try:
+            response = await self._client.get("/api/tags", timeout=2.0)
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        models = payload.get("models", []) if isinstance(payload, dict) else []
+        wanted = _model_key(model or self._config.model)
+        if not isinstance(models, list):
+            return False
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            for key in ("name", "model"):
+                value = item.get(key)
+                if isinstance(value, str) and _model_key(value) == wanted:
+                    return True
+        return False
 
     def configure_warmup(
         self,
@@ -168,14 +214,90 @@ class OllamaBackend(Backend):
 
 
 def _build_wire_messages(messages: list[Message], system_prompt: str | None) -> list[dict]:
-    if system_prompt is None:
-        return [{"role": m.role, "content": m.content} for m in messages]
-    out: list[dict] = [{"role": "system", "content": system_prompt}]
+    out: list[dict] = []
+    if system_prompt is not None:
+        out.append({"role": "system", "content": system_prompt})
+    call_names: dict[str, str] = {}
     for m in messages:
-        if m.role == "system":
+        if m.role == "system" and system_prompt is not None:
             continue
-        out.append({"role": m.role, "content": m.content})
+        wire: dict[str, Any] = {"role": m.role, "content": m.content}
+        if m.role == "assistant" and m.tool_calls:
+            native_calls: list[dict[str, Any]] = []
+            for index, raw in enumerate(m.tool_calls):
+                function = raw.get("function") if isinstance(raw, dict) else None
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "")
+                if not name:
+                    continue
+                arguments = function.get("arguments", {})
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {}
+                if not isinstance(arguments, dict):
+                    arguments = {}
+                native_calls.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "index": index,
+                            "name": name,
+                            "arguments": arguments,
+                        },
+                    }
+                )
+                call_id = raw.get("id")
+                if isinstance(call_id, str) and call_id:
+                    call_names[call_id] = name
+            if native_calls:
+                wire["tool_calls"] = native_calls
+        elif m.role == "tool":
+            tool_name = call_names.get(m.tool_call_id or "") or m.name
+            if tool_name:
+                wire["tool_name"] = tool_name
+        out.append(wire)
     return out
+
+
+def _tool_call_chunk(raw: object, *, fallback_index: int, model: str) -> BackendChunk | None:
+    if not isinstance(raw, dict):
+        return None
+    function = raw.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = function.get("arguments", {})
+    if isinstance(arguments, dict):
+        encoded_arguments = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+    elif isinstance(arguments, str):
+        encoded_arguments = arguments
+    else:
+        encoded_arguments = "{}"
+    raw_index = function.get("index", raw.get("index", fallback_index))
+    if not isinstance(raw_index, (int, str)):
+        index = fallback_index
+    else:
+        try:
+            index = int(raw_index)
+        except ValueError:
+            index = fallback_index
+    return {
+        "type": "tool_call",
+        "content": "",
+        "meta": {
+            "kind": "caller_function",
+            "index": index,
+            "id": raw.get("id"),
+            "name": name,
+            "arguments": encoded_arguments,
+            "model": model,
+        },
+    }
 
 
 def _model_key(model: str) -> str:

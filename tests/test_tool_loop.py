@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
+import httpx
 import pytest
 
 from yagami.backends.anthropic import ClaudeBackend
-from yagami.backends.base import BackendOptions, Message
-from yagami.config import AnthropicConfig
+from yagami.backends.base import BackendOptions, Message, TrustZone
+from yagami.backends.ollama import OllamaBackend
+from yagami.config import AnthropicConfig, OllamaConfig
 from yagami.router import tool_loop
 from yagami.router.schema import Sensitivity
 from yagami.skills.base import SkillContext, SkillResult
@@ -25,6 +28,7 @@ class EchoSkill:
         "required": ["text"],
     }
     requires_network = False
+    trust_zone = TrustZone.DEVICE
     sensitivity_ceiling = Sensitivity.PHI_MEDICAL
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
@@ -103,6 +107,59 @@ def _make_backend(client) -> ClaudeBackend:
 
 
 # ---- Tests ----
+
+
+@pytest.mark.asyncio
+async def test_phi_session_executes_approved_tool_through_local_ollama_only():
+    bodies: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if len(bodies) == 1:
+            return httpx.Response(
+                200,
+                text=(
+                    '{"message":{"tool_calls":[{"type":"function","function":'
+                    '{"index":0,"name":"test__echo","arguments":'
+                    '{"text":"Patient BP 120/80"}}}]}}\n{"done":true}\n'
+                ),
+            )
+        return httpx.Response(
+            200, text='{"message":{"content":"handled locally"}}\n{"done":true}\n'
+        )
+
+    backend = OllamaBackend(OllamaConfig(model="tool-model"))
+    await backend._client.aclose()
+    backend._client = httpx.AsyncClient(
+        base_url="http://ollama.test", transport=httpx.MockTransport(handler)
+    )
+
+    chunks = [
+        chunk
+        async for chunk in tool_loop.run(
+            backend,
+            [Message(role="user", content="Review this private patient measurement")],
+            BackendOptions(),
+            session_id="phi-session",
+            session_sensitivity=Sensitivity.PHI_MEDICAL,
+            skills={"test.echo": EchoSkill()},
+            approval_required={"test.echo"},
+            approved_tools={"test.echo"},
+        )
+    ]
+
+    evidence = next(chunk for chunk in chunks if chunk["type"] == "tool_call")
+    assert evidence["meta"]["name"] == "test.echo"
+    assert evidence["meta"]["ok"] is True
+    assert any(chunk["content"] == "handled locally" for chunk in chunks)
+    assert len(bodies) == 2
+    assert bodies[1]["messages"][-1] == {
+        "role": "tool",
+        "content": "echoed: Patient BP 120/80",
+        "tool_name": "test__echo",
+    }
+    await backend.close()
 
 
 @pytest.mark.asyncio

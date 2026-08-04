@@ -4,9 +4,15 @@ version = "0.7.3"
 description = "Open-source AI context firewall for governed model, retrieval, memory, and tool access."
 keywords = [
     "ai-gateway",
+    "llm-gateway",
     "context-firewall",
     "ai-security",
+    "ai-guardrails",
+    "pii-redaction",
+    "prompt-injection",
     "data-governance",
+    "self-hosted-ai",
+    "phi",
     "llm",
     "privacy",
     "policy",
@@ -14,7 +20,7 @@ keywords = [
     "mcp",
     "local-ai",
 ]
-readme = "README.md"
+readme = "PYPI.md"
 authors = [{ name = "Matthew Tracy" }]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -35,13 +41,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "httpx>=0.27",
-    "anthropic>=0.39",
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
-    "keyring>=25.4",
-    "pypdf>=5.0",
     "python-multipart>=0.0.20",
-    "openai>=2.0",
     "sqlite-vec>=0.1.6",
     "mcp>=1.28,<2",
     "jsonschema>=4.23",
@@ -63,6 +65,22 @@ Security = "https://github.com/MatthewTracy/yagami/security/policy"
 Roadmap = "https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md"
 
 [project.optional-dependencies]
+providers = [
+    "anthropic>=0.39",
+    "openai>=2.0",
+]
+ingest = [
+    "pypdf>=5.0",
+]
+desktop = [
+    "keyring>=25.4",
+]
+all = [
+    "anthropic>=0.39",
+    "openai>=2.0",
+    "pypdf>=5.0",
+    "keyring>=25.4",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -70,6 +88,10 @@ dev = [
     "ruff>=0.7,<0.17",
     "mypy>=1.15,<3",
     "types-PyYAML>=6.0",
+    "anthropic>=0.39",
+    "openai>=2.0",
+    "pypdf>=5.0",
+    "keyring>=25.4",
 ]
 observability = [
     "opentelemetry-sdk>=1.28",
@@ -104,6 +126,7 @@ include = [
     "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
+    "/PYPI.md",
     "/hatch_build.py",
     "/pyproject.toml",
     "/src",

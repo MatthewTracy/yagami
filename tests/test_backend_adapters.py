@@ -242,6 +242,31 @@ class _Llama:
         ]
 
 
+class _ToolCallingLlama:
+    def create_chat_completion(self, **kwargs):
+        self.kwargs = kwargs
+        return [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_local",
+                                    "function": {
+                                        "name": "calculate",
+                                        "arguments": '{"expression":"37 * 19"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+
+
 @pytest.mark.asyncio
 async def test_llama_cpp_adapter_streams_and_reports_load_failure(tmp_path):
     model = tmp_path / "model.gguf"
@@ -267,12 +292,44 @@ async def test_llama_cpp_adapter_streams_and_reports_load_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_llama_cpp_tools_are_explicitly_opted_in_for_compatible_chat_formats(tmp_path):
+    model = tmp_path / "model.gguf"
+    model.write_bytes(b"fake")
+    backend = LlamaCppBackend(
+        LlamaCppConfig(model_path=str(model), chat_format="functionary-v2", supports_tools=True)
+    )
+    llm = _ToolCallingLlama()
+    backend._llm = llm
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "Calculate",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    chunks = await _collect(
+        backend,
+        [Message(role="user", content="Compute 37 * 19")],
+        BackendOptions(tools=[tool], tool_choice="auto"),
+    )
+
+    assert Capability.TOOLS in backend.capabilities
+    assert llm.kwargs["tools"] == [tool]
+    assert llm.kwargs["tool_choice"] == "auto"
+    assert chunks[0]["type"] == "tool_call"
+    assert chunks[0]["meta"]["name"] == "calculate"
+    assert chunks[0]["meta"]["arguments"] == '{"expression":"37 * 19"}'
+
+
+@pytest.mark.asyncio
 async def test_ollama_adapter_stream_health_and_error_paths():
     chat_bodies: list[dict] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": []})
+            return httpx.Response(200, json={"models": [{"name": "test-model:latest"}]})
         if request.url.path == "/api/ps":
             return httpx.Response(200, json={"models": [{"name": "test-model:latest"}]})
         chat_bodies.append(json.loads(request.content))
@@ -295,6 +352,8 @@ async def test_ollama_adapter_stream_health_and_error_paths():
     assert chunks[0]["meta"]["model"] == "test-model"
     assert chat_bodies[0]["keep_alive"] == "5m"
     assert await backend.is_model_loaded("test-model")
+    assert await backend.has_model("test-model")
+    assert not await backend.has_model("not-installed")
     assert await backend.health()
     await backend.close()
 
@@ -307,9 +366,88 @@ async def test_ollama_adapter_stream_health_and_error_paths():
         base_url="http://ollama.test", transport=httpx.MockTransport(failing)
     )
     assert not await offline.health()
+    assert not await offline.has_model()
     errors = await _collect(offline, [Message(role="user", content="hello")])
     assert [chunk["type"] for chunk in errors] == ["error", "done"]
     await offline.close()
+
+
+@pytest.mark.asyncio
+async def test_ollama_adapter_translates_streaming_tool_calls_and_results():
+    bodies: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text=(
+                '{"message":{"content":"","tool_calls":['
+                '{"type":"function","function":{"index":0,"name":"calc",'
+                '"arguments":{"expression":"2+2"}}},'
+                '{"type":"function","function":{"index":1,"name":"weather",'
+                '"arguments":{"city":"Boston"}}}]}}\n'
+                '{"done":true}\n'
+            ),
+        )
+
+    backend = OllamaBackend(OllamaConfig(model="tool-model"))
+    await backend._client.aclose()
+    backend._client = httpx.AsyncClient(
+        base_url="http://ollama.test", transport=httpx.MockTransport(handler)
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "calc",
+                "description": "Calculate an expression",
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+    messages = [
+        Message(role="user", content="calculate"),
+        Message(
+            role="assistant",
+            tool_calls=[
+                {
+                    "id": "call-previous",
+                    "type": "function",
+                    "function": {"name": "calc", "arguments": '{"expression":"1+1"}'},
+                }
+            ],
+        ),
+        Message(role="tool", tool_call_id="call-previous", name="canonical.calc", content="2"),
+    ]
+
+    chunks = await _collect(backend, messages, BackendOptions(tools=tools, tool_choice="auto"))
+
+    assert Capability.TOOLS in backend.capabilities
+    assert [chunk["type"] for chunk in chunks] == ["tool_call", "tool_call", "done"]
+    assert chunks[0]["meta"]["name"] == "calc"
+    assert chunks[0]["meta"]["arguments"] == '{"expression":"2+2"}'
+    assert chunks[1]["meta"]["index"] == 1
+    assert bodies[0]["tools"] == tools
+    assert bodies[0]["messages"][1]["tool_calls"][0]["function"]["arguments"] == {
+        "expression": "1+1"
+    }
+    assert bodies[0]["messages"][2] == {"role": "tool", "content": "2", "tool_name": "calc"}
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_ollama_adapter_refuses_unsupported_forced_tool_choice():
+    backend = OllamaBackend(OllamaConfig())
+    chunks = await _collect(
+        backend,
+        [Message(role="user", content="calculate")],
+        BackendOptions(
+            tools=[{"type": "function", "function": {"name": "calc"}}], tool_choice="required"
+        ),
+    )
+    assert [chunk["type"] for chunk in chunks] == ["error", "done"]
+    assert chunks[0]["meta"]["code"] == "tool_choice_not_supported"
+    await backend.close()
 
 
 @pytest.mark.asyncio

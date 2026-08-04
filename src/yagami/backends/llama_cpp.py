@@ -15,7 +15,7 @@ Configure in yagami.toml:
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from pathlib import Path
 
@@ -41,6 +41,9 @@ class LlamaCppBackend(Backend):
     def __init__(self, config: LlamaCppConfig) -> None:
         self._config = config
         self._llm = None  # lazy
+        self.capabilities = {Capability.TEXT, Capability.CODE}
+        if config.supports_tools:
+            self.capabilities.add(Capability.TOOLS)
 
     def _load(self):
         if self._llm is not None:
@@ -53,12 +56,15 @@ class LlamaCppBackend(Backend):
                 "Install via: pip install llama-cpp-python "
                 "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124"
             ) from exc
-        self._llm = Llama(
+        kwargs: dict[str, Any] = dict(
             model_path=self._config.model_path,
             n_ctx=self._config.n_ctx,
             n_gpu_layers=self._config.n_gpu_layers,
             verbose=False,
         )
+        if self._config.chat_format:
+            kwargs["chat_format"] = self._config.chat_format
+        self._llm = Llama(**kwargs)
         return self._llm
 
     async def generate(
@@ -75,25 +81,54 @@ class LlamaCppBackend(Backend):
         system_parts = [m.content for m in messages if m.role == "system"]
         if options.system_prompt:
             system_parts = [options.system_prompt]
-        msgs = []
+        msgs: list[dict[str, Any]] = []
         if system_parts:
             msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
-        for m in messages:
-            if m.role in ("user", "assistant"):
-                msgs.append({"role": m.role, "content": m.content})
+        for message in messages:
+            if message.role == "system":
+                continue
+            item: dict[str, Any] = {"role": message.role, "content": message.content or None}
+            if message.role == "assistant" and message.tool_calls:
+                item["tool_calls"] = message.tool_calls
+            if message.role == "tool" and message.tool_call_id:
+                item["tool_call_id"] = message.tool_call_id
+            if message.role == "tool" and message.name:
+                item["name"] = message.name
+            msgs.append(item)
 
         try:
-            stream = llm.create_chat_completion(
+            kwargs = dict(
                 messages=msgs,
                 max_tokens=options.max_tokens,
                 temperature=options.temperature,
                 stream=True,
             )
+            if options.tools:
+                kwargs["tools"] = options.tools
+                if options.tool_choice is not None:
+                    kwargs["tool_choice"] = options.tool_choice
+            stream = llm.create_chat_completion(**kwargs)
             for chunk in stream:
                 delta = chunk["choices"][0].get("delta", {})
                 txt = delta.get("content", "")
                 if txt:
                     yield {"type": "text", "content": txt, "meta": {}}
+                for index, tool_call in enumerate(delta.get("tool_calls") or []):
+                    function = tool_call.get("function") if isinstance(tool_call, dict) else None
+                    if not isinstance(function, dict):
+                        continue
+                    yield {
+                        "type": "tool_call",
+                        "content": "",
+                        "meta": {
+                            "kind": "caller_function",
+                            "index": tool_call.get("index", index),
+                            "id": tool_call.get("id"),
+                            "name": function.get("name"),
+                            "arguments": function.get("arguments"),
+                            "model": self._config.model_path,
+                        },
+                    }
             yield {"type": "done", "content": "", "meta": {}}
         except Exception as exc:  # noqa: BLE001 - surface ANY llama-cpp error
             yield {"type": "error", "content": f"llama_cpp error: {exc}", "meta": {}}

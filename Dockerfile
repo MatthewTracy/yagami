@@ -39,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YAGAMI_CONFIG_PATH=/app/config/yagami.toml \
     YAGAMI_POLICY_PATH=/app/config/policy.yaml \
     YAGAMI_DB_PATH=/data/yagami.db \
+    YAGAMI_CONTAINER=true \
     YAGAMI_HEADLESS=true \
     YAGAMI_REQUIRE_AUTH=true
 

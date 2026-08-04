@@ -37,5 +37,13 @@ It sends synthetic test strings only.
 python examples/flagship/security_demo.py
 ```
 
+After starting a normal Yagami server with Ollama (not echo-only demo mode),
+prove that a PHI-labeled request executes the governed calculator locally and
+returns content-free tool evidence:
+
+```bash
+python examples/flagship/local_sensitive_tool.py
+```
+
 Framework dependencies are intentionally not part of Yagami core. Install only
 the framework used by an example.
