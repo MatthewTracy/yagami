@@ -48,9 +48,9 @@ type Props = {
 };
 
 const PENDING_HINT: Record<string, string> = {
-  ollama: "thinking locally",
-  anthropic: "asking Claude",
-  stability: "generating image (this can take 5–15s)",
+  ollama: "Preparing local generation",
+  anthropic: "Contacting Claude",
+  stability: "Generating image (this can take 5–15s)",
   echo: "echoing",
 };
 
@@ -265,6 +265,25 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       onSession(m.session_id);
       return;
     }
+    if (m.type === "status") {
+      setBubbles((b) => {
+        const last = b[b.length - 1];
+        if (last?.role === "assistant" && last.pending && !last.text) {
+          return [...b.slice(0, -1), { ...last, pendingHint: m.content }];
+        }
+        return [
+          ...b,
+          {
+            role: "assistant",
+            text: "",
+            pending: true,
+            pendingHint: m.content,
+            backend: m.meta.backend,
+          },
+        ];
+      });
+      return;
+    }
     if (m.type === "routing") {
       onRouting({
         backend: m.backend,
@@ -272,17 +291,21 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
         reason: m.reason,
         classification: m.classification,
       });
-      setBubbles((b) => [
-        ...b,
-        {
+      setBubbles((b) => {
+        const last = b[b.length - 1];
+        const routed = {
           role: "assistant",
           text: "",
           pending: true,
-          pendingHint: PENDING_HINT[m.backend] ?? `calling ${m.backend}`,
+          pendingHint: PENDING_HINT[m.backend] ?? `Calling ${m.backend}`,
           backend: m.backend,
           decisionId: m.decision_id,
-        },
-      ]);
+        } as const;
+        if (last?.role === "assistant" && last.pending && !last.text) {
+          return [...b.slice(0, -1), { ...last, ...routed }];
+        }
+        return [...b, routed];
+      });
       return;
     }
     if (m.type === "text") {

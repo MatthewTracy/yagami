@@ -224,6 +224,14 @@ async def chat_endpoint(
             request_options = GatewayRequestOptions()
             model = force_backend or "yagami-auto"
             decision_history = _messages_for_backend(history_cache, reset_context=reset_context)
+            await _send(
+                ws,
+                {
+                    "type": "status",
+                    "content": "Checking privacy, policy, and routing",
+                    "meta": {"phase": "classifying"},
+                },
+            )
             decide_task = asyncio.create_task(
                 gateway.prepare(
                     messages=decision_history,
@@ -349,6 +357,16 @@ async def chat_endpoint(
                 await _refuse_turn(ws, "request denied by Yagami policy")
                 continue
 
+            phase, message = await _generation_status(prepared)
+            await _send(
+                ws,
+                {
+                    "type": "status",
+                    "content": message,
+                    "meta": {"phase": phase, "backend": prepared.decision.backend.name},
+                },
+            )
+
             if prepared.decision.backend.name == "stability":
                 for index in range(len(prepared.messages) - 1, -1, -1):
                     last = prepared.messages[index]
@@ -432,6 +450,24 @@ async def _stream_gateway(
         if chunk["type"] == "done" and generation_done_sent is not None:
             generation_done_sent.set()
     return "".join(pieces)
+
+
+async def _generation_status(prepared) -> tuple[str, str]:
+    """Describe real provider readiness without inspecting request content."""
+    backend = prepared.decision.backend
+    if backend.name == "ollama":
+        checker = getattr(backend, "is_model_loaded", None)
+        if callable(checker):
+            try:
+                loaded = await checker(prepared.decision.model_override)
+            except Exception:  # noqa: BLE001 - status must never fail a request
+                loaded = False
+            if not loaded:
+                return "loading_model", "Loading the selected local model"
+        return "generating", "Generating locally"
+    if backend.is_local:
+        return "generating", f"Generating locally with {backend.name}"
+    return "generating", f"Waiting for {backend.name}"
 
 
 async def _send(ws: WebSocket, msg: Mapping[str, Any]) -> None:

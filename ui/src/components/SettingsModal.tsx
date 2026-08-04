@@ -18,6 +18,7 @@ type Cfg = {
       model: string;
       classifier_model: string;
       trust_zone: "device" | "private_network";
+      performance_profile: "memory_saver" | "balanced" | "performance";
     };
     foundry_local: { enabled: boolean; base_url: string; model: string; max_tokens: number };
     anthropic: { model: string; max_tokens: number };
@@ -252,6 +253,29 @@ export function SettingsModal({ open, onClose }: Props) {
               <p className="text-[10px] text-zinc-400">
                 Private-network mode explicitly trusts that service with classifier input,
                 generation prompts, and embeddings.
+              </p>
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-400 w-44 shrink-0">Local performance</span>
+                <select
+                  value={c.ollama.performance_profile}
+                  onChange={(e) =>
+                    update("ollama", {
+                      performance_profile: e.target.value as
+                        | "memory_saver"
+                        | "balanced"
+                        | "performance",
+                    })
+                  }
+                  className="flex-1 rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-zinc-200"
+                >
+                  <option value="memory_saver">Memory saver (30-second idle)</option>
+                  <option value="balanced">Balanced (5-minute idle)</option>
+                  <option value="performance">Performance (preload, 30-minute idle)</option>
+                </select>
+              </label>
+              <p className="text-[10px] text-zinc-400">
+                Performance mode reduces first-token delays but reserves memory for configured
+                local models. Restart Yagami after changing this setting.
               </p>
               <Field
                 label="Generation model"

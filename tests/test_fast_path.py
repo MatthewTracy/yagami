@@ -69,8 +69,14 @@ IMPERATIVE_FIXTURES = [
 
 
 @pytest.mark.parametrize("prompt", PHI_FIXTURES)
-def test_phi_never_bypasses(prompt: str):
-    assert can_bypass(prompt) is None, f"PHI prompt slipped past bypass: {prompt[:60]}"
+def test_phi_never_uses_a_non_sensitive_bypass(prompt: str):
+    classification = can_bypass(prompt)
+    if classification is not None:
+        assert classification.sensitivity in {
+            Sensitivity.PHI,
+            Sensitivity.PHI_MEDICAL,
+            Sensitivity.SECRET,
+        }, f"PHI prompt used a non-sensitive bypass: {prompt[:60]}"
 
 
 @pytest.mark.parametrize("prompt", SECRET_FIXTURES)
@@ -199,8 +205,26 @@ def test_empty_prompt_never_bypasses():
         "I have the flu and visited the doctor on June 27th",
     ],
 )
-def test_colloquial_personal_health_never_bypasses(prompt: str):
-    assert can_bypass(prompt) is None
+def test_colloquial_personal_health_takes_sensitive_fast_path(prompt: str):
+    classification = can_bypass(prompt)
+    assert classification is not None
+    assert classification.intent == Intent.SIMPLE_QA
+    assert classification.sensitivity == Sensitivity.PHI_MEDICAL
+
+
+def test_real_personal_health_message_skips_semantic_classifier():
+    classification = can_bypass(
+        "I just went to get seen for my flu can you review my info from them"
+    )
+    assert classification is not None
+    assert classification.sensitivity == Sensitivity.PHI_MEDICAL
+
+
+def test_personal_health_takes_precedence_over_cloud_image_fast_path():
+    classification = can_bypass("Create an image about my recent hospital treatment")
+    assert classification is not None
+    assert classification.intent == Intent.SIMPLE_QA
+    assert classification.sensitivity == Sensitivity.PHI_MEDICAL
 
 
 def test_generic_medical_question_reaches_semantic_classifier():

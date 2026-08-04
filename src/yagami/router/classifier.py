@@ -136,6 +136,7 @@ class OllamaJSONClassifier:
             "model": self._config.classifier_model,
             "format": "json",
             "stream": False,
+            "keep_alive": self._config.keep_alive,
             "options": {"temperature": 0.0},
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},

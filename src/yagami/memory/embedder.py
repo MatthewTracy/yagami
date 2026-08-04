@@ -34,9 +34,16 @@ class EmbedderProtocol(Protocol):
 
 
 class Embedder:
-    def __init__(self, url: str = "http://localhost:11434", model: str = "all-minilm") -> None:
+    def __init__(
+        self,
+        url: str = "http://localhost:11434",
+        model: str = "all-minilm",
+        *,
+        keep_alive: str = "5m",
+    ) -> None:
         self._url = url
         self._model = model
+        self._keep_alive = keep_alive
         self._client = httpx.AsyncClient(base_url=url, timeout=httpx.Timeout(60.0))
 
     @property
@@ -51,7 +58,11 @@ class Embedder:
         try:
             r = await self._client.post(
                 "/api/embeddings",
-                json={"model": self._model, "prompt": text},
+                json={
+                    "model": self._model,
+                    "prompt": text,
+                    "keep_alive": self._keep_alive,
+                },
             )
             r.raise_for_status()
             vec = r.json().get("embedding")
@@ -116,6 +127,7 @@ def build_embedder(cfg: YagamiConfig, secrets_get) -> EmbedderProtocol | None:
         return Embedder(
             url=memory.embedding_url or cfg.ollama.url,
             model=memory.embedding_model,
+            keep_alive=cfg.ollama.keep_alive,
         )
     key = secrets_get(memory.embedding_api_key_env) if memory.embedding_api_key_env else ""
     return OpenAICompatibleEmbedder(
