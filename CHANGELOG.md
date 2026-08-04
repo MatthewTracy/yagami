@@ -12,6 +12,7 @@ shipped.
 - Classify colloquial personal-health disclosures as medical data and preserve the established sensitivity across text follow-ups using content-free decision evidence.
 - Route high-confidence first-person health disclosures directly to local medical handling, including when an image-generation phrase is also present, without exposing them to a semantic classifier or cloud image backend.
 - Refresh transitive PostCSS, nanoid, and undici packages to versions without the current published npm advisories.
+- Update the reproducible Python and container locks to cryptography 50.0.0, which resolves CVE-2026-69247.
 - Use a safe consumer-health prompt by default; clinician assumptions now require an explicit trusted clinical purpose.
 - Delete session-scoped memory vectors and reversible privacy tokens when a conversation is deleted.
 
