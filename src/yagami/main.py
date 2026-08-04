@@ -7,6 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from collections.abc import Iterable
+from typing import Any
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
@@ -28,6 +29,7 @@ from .api import privacy as privacy_api
 from .api import sessions as sessions_api
 from .api import stats as stats_api
 from .api import tool_schemas as tool_schemas_api
+from .backends.ollama import OllamaBackend
 from .backends.registry import build_all
 from .auth import Authenticator, Principal, require_admin, require_scope
 from .chat.session import SessionStore
@@ -177,6 +179,28 @@ def build_app() -> FastAPI:
     # See backends/registry.py - adding a new backend is one new file, no
     # main.py edit.
     backends = build_all(cfg, secrets.get)
+    ollama_backend = backends.get("ollama")
+    if isinstance(ollama_backend, OllamaBackend):
+        text_models = [
+            cfg.ollama.model,
+            *cfg.routing.local_model_overrides.values(),
+            *cfg.routing.lora_variants.values(),
+        ]
+        classifier_url = cfg.classifier.url or cfg.ollama.url
+        if cfg.classifier.provider == "ollama" and classifier_url.rstrip("/") == (
+            cfg.ollama.url.rstrip("/")
+        ):
+            text_models.append(cfg.classifier.model or cfg.ollama.classifier_model)
+        embedding_models = []
+        embedding_url = cfg.memory.embedding_url or cfg.ollama.url
+        if cfg.memory.embedding_provider == "ollama" and embedding_url.rstrip("/") == (
+            cfg.ollama.url.rstrip("/")
+        ):
+            embedding_models.append(cfg.memory.embedding_model)
+        ollama_backend.configure_warmup(
+            text_models=text_models,
+            embedding_models=embedding_models,
+        )
     expected = {"ollama", "echo", "anthropic", "stability", "openai", "llama_cpp"}
     if cfg.foundry_local.enabled:
         expected.add("foundry_local")
@@ -321,15 +345,26 @@ def build_app() -> FastAPI:
     embedder: EmbedderProtocol | None = None
     mcp_manager: McpManager | None = None
     retention_task: asyncio.Task | None = None
+    ollama_warmup_task: asyncio.Task | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        nonlocal embedding_worker, embedder, mcp_manager, retention_task
+        nonlocal embedding_worker, embedder, mcp_manager, retention_task, ollama_warmup_task
         mcp_lifespan_task: asyncio.Task | None = None
         mcp_lifespan_stop = asyncio.Event()
         await open_db(db_path, database_url=settings.database_url)
         audit.start()
         try:
+            if (
+                isinstance(ollama_backend, OllamaBackend)
+                and cfg.ollama.preload_models
+                and not settings.demo_mode
+            ):
+                # Warm in the background: the health/UI surface remains usable
+                # while Ollama loads models, and a failed preload never blocks boot.
+                ollama_warmup_task = asyncio.create_task(
+                    ollama_backend.preload_configured_models()
+                )
             expired_tokens = await transformer.cleanup_expired()
             if expired_tokens:
                 log.info("privacy transform vault: removed %d expired token(s)", expired_tokens)
@@ -421,6 +456,11 @@ def build_app() -> FastAPI:
                 retention_task.cancel()
                 await asyncio.gather(retention_task, return_exceptions=True)
                 retention_task = None
+            if ollama_warmup_task is not None:
+                if not ollama_warmup_task.done():
+                    ollama_warmup_task.cancel()
+                await asyncio.gather(ollama_warmup_task, return_exceptions=True)
+                ollama_warmup_task = None
             if mcp_manager is not None:
                 try:
                     await mcp_manager.close_all()
@@ -522,7 +562,7 @@ def build_app() -> FastAPI:
 
         @app.get("/api/health")
         async def health(_principal: Principal = Depends(require_admin)) -> dict:
-            return {
+            payload: dict[str, Any] = {
                 "ok": True,
                 "mode": "echo-demo" if settings.demo_mode else "standard",
                 "demo_mode": settings.demo_mode,
@@ -537,6 +577,9 @@ def build_app() -> FastAPI:
                     for b in backends.values()
                 ],
             }
+            if isinstance(ollama_backend, OllamaBackend):
+                payload["local_performance"] = await ollama_backend.runtime_status()
+            return payload
 
         @app.get("/api/models")
         async def models(_principal: Principal = Depends(require_admin)) -> dict:

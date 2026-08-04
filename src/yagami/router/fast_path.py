@@ -188,11 +188,13 @@ def can_bypass(text: str) -> Classification | None:
     """Return a Classification if rules alone are sufficient. None means
     the LLM classifier needs to run.
 
-    Three confident bypasses:
+    Four confident bypasses:
     1. SECRET - regex hit on a credential pattern. Force local, never leaks.
-    2. IMAGE - high-confidence image-creation verb. Route directly to image
+    2. Personal health - high-confidence first-person disclosure. Mark it
+       PHI-medical and force local without sending it through a second model.
+    3. IMAGE - high-confidence image-creation verb. Route directly to image
        backend without paying the classifier round-trip.
-    3. SIMPLE_QA - short non-special prompt. The common case.
+    4. SIMPLE_QA - short non-special prompt. The common case.
     """
     if not text:
         return None
@@ -203,6 +205,19 @@ def can_bypass(text: str) -> Classification | None:
         return Classification(
             intent=Intent.SIMPLE_QA,
             sensitivity=Sensitivity.SECRET,
+            complexity=Complexity.LOW,
+        )
+
+    # First-person health disclosures are unambiguously sensitive even when
+    # their exact task intent is not. Conservatively force local immediately:
+    # using a second local LLM merely to rediscover the PHI label creates a
+    # large cold-start penalty and no privacy benefit. This precedes image
+    # routing so a prompt containing personal medical information can never be
+    # sent to a cloud image provider by the fast path.
+    if _has_personal_health(text):
+        return Classification(
+            intent=Intent.SIMPLE_QA,
+            sensitivity=Sensitivity.PHI_MEDICAL,
             complexity=Complexity.LOW,
         )
 

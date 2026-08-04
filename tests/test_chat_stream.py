@@ -107,6 +107,11 @@ class _RecordingBackend:
         return True
 
 
+class _ColdRecordingBackend(_RecordingBackend):
+    async def is_model_loaded(self, _model: str | None = None) -> bool:
+        return False
+
+
 def _policy(backend) -> RoutingPolicy:
     return RoutingPolicy(
         config=RoutingConfig(),
@@ -168,6 +173,45 @@ class _PostDoneGateway(_Gateway):
         except asyncio.CancelledError:
             self.cancelled.set()
             raise
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_governance_and_generation_phases(fresh_db):
+    ws = _FakeWebSocket()
+    backend = _RecordingBackend()
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _gateway(backend)))
+    await ws.wait_for(lambda m: m.get("type") == "session")
+
+    await ws.incoming.put({"content": "hello"})
+    await ws.wait_for(lambda m: m.get("type") == "done")
+
+    statuses = [message for message in ws.sent if message.get("type") == "status"]
+    assert [message["meta"]["phase"] for message in statuses] == [
+        "classifying",
+        "generating",
+    ]
+    assert statuses[0]["content"] == "Checking privacy, policy, and routing"
+
+    await ws.incoming.put(_DISCONNECT)
+    await asyncio.wait_for(endpoint, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_when_selected_local_model_is_loading(fresh_db):
+    ws = _FakeWebSocket()
+    backend = _ColdRecordingBackend()
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _gateway(backend)))
+    await ws.wait_for(lambda m: m.get("type") == "session")
+
+    await ws.incoming.put({"content": "hello"})
+    await ws.wait_for(lambda m: m.get("type") == "done")
+
+    statuses = [message for message in ws.sent if message.get("type") == "status"]
+    assert statuses[-1]["meta"]["phase"] == "loading_model"
+    assert statuses[-1]["content"] == "Loading the selected local model"
+
+    await ws.incoming.put(_DISCONNECT)
+    await asyncio.wait_for(endpoint, timeout=2)
 
 
 @pytest.mark.asyncio

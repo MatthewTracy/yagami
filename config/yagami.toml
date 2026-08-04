@@ -7,6 +7,10 @@ model = "llama3.2:3b-instruct-q4_K_M"
 # Dedicated classifier - phi4-mini is purpose-trained for structured (JSON)
 # output and consistently outperforms llama3.2:3b on the routing eval.
 classifier_model = "phi4-mini"
+# memory_saver: release idle models after 30s
+# balanced: preserve the 5-minute default without startup reservations
+# performance: preload configured local models and retain them for 30m
+performance_profile = "balanced"
 
 [anthropic]
 model = "claude-sonnet-4-6"

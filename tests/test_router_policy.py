@@ -34,6 +34,28 @@ async def test_phi_medical_attaches_consumer_health_prompt(make_policy, classifi
 
 
 @pytest.mark.asyncio
+async def test_obvious_personal_health_does_not_call_model_classifier(backends, user_msg):
+    from yagami.config import RoutingConfig
+    from yagami.router.policy import RoutingPolicy
+
+    async def classifier_must_not_run(_text: str):
+        raise AssertionError("semantic classifier should not run for obvious personal health")
+
+    policy = RoutingPolicy(
+        config=RoutingConfig(),
+        backends=backends,
+        classifier=classifier_must_not_run,
+    )
+    decision = await policy.decide(
+        user_msg("I just went to get seen for my flu can you review my info from them")
+    )
+
+    assert decision.backend.is_local
+    assert decision.classification["sensitivity"] == "phi_medical"
+    assert decision.classification["source"] == "rules-fast-path"
+
+
+@pytest.mark.asyncio
 async def test_explicit_clinician_purpose_uses_clinician_prompt(make_policy, classified_user_msg):
     from yagami.router.prompts import PHI_MEDICAL_CLINICIAN_SYSTEM_PROMPT
 

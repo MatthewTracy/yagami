@@ -27,6 +27,36 @@ public or third-party endpoint: prompts are sent there before final routing
 when the classifier runs. Use a cloud or `[upstream]` backend for external
 inference instead.
 
+### Local performance profiles
+
+Yagami controls Ollama's model lifetime explicitly so installations do not
+have to rely on a daemon-specific default:
+
+```toml
+[ollama]
+performance_profile = "balanced"
+```
+
+- `memory_saver` releases idle models after 30 seconds. Use it on shared or
+  memory-constrained systems where latency is secondary.
+- `balanced` is the default. It keeps requested models for five minutes and
+  reserves no model memory when Yagami starts.
+- `performance` preloads the configured generator, classifier, local model
+  overrides, and Ollama embedding model in the background, then retains them
+  for 30 minutes. Use it when the host has enough RAM/VRAM for those models.
+
+The setting is also available under **Settings → Models → Ollama**. Restart
+Yagami after changing it. Containers and ephemeral deployments can set
+`YAGAMI_OLLAMA_PERFORMANCE_PROFILE` to `memory_saver`, `balanced`, or
+`performance` instead. The authenticated `/api/health` response reports the
+effective profile, warmup state, configured model names, and whether each model
+is currently loaded. It never reports prompts or customer content.
+
+High-confidence first-person health disclosures take a conservative
+deterministic route directly to `phi_medical`. They remain local without first
+loading the semantic classifier; ambiguous or general medical questions still
+use the configured classifier.
+
 ## Microsoft Foundry Local (preview)
 
 Yagami can use the OpenAI-compatible web service provided by Microsoft

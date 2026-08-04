@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -267,9 +268,14 @@ async def test_llama_cpp_adapter_streams_and_reports_load_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ollama_adapter_stream_health_and_error_paths():
+    chat_bodies: list[dict] = []
+
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
             return httpx.Response(200, json={"models": []})
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": [{"name": "test-model:latest"}]})
+        chat_bodies.append(json.loads(request.content))
         return httpx.Response(
             200,
             text='{"message":{"content":"local"}}\n\n{"done":true}\n',
@@ -287,6 +293,8 @@ async def test_ollama_adapter_stream_health_and_error_paths():
     )
     assert [chunk["type"] for chunk in chunks] == ["text", "done"]
     assert chunks[0]["meta"]["model"] == "test-model"
+    assert chat_bodies[0]["keep_alive"] == "5m"
+    assert await backend.is_model_loaded("test-model")
     assert await backend.health()
     await backend.close()
 
@@ -302,6 +310,72 @@ async def test_ollama_adapter_stream_health_and_error_paths():
     errors = await _collect(offline, [Message(role="user", content="hello")])
     assert [chunk["type"] for chunk in errors] == ["error", "done"]
     await offline.close()
+
+
+@pytest.mark.asyncio
+async def test_ollama_performance_profile_preloads_and_reports_models():
+    requests: list[tuple[str, dict]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/ps":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "generation:latest"},
+                        {"model": "classifier:latest"},
+                        {"name": "embedding:latest"},
+                    ]
+                },
+            )
+        body = json.loads(request.content)
+        requests.append((request.url.path, body))
+        if request.url.path == "/api/embeddings":
+            return httpx.Response(200, json={"embedding": [0.0] * 384})
+        return httpx.Response(200, json={"done": True, "done_reason": "load"})
+
+    config = OllamaConfig(
+        model="generation",
+        classifier_model="classifier",
+        performance_profile="performance",
+    )
+    backend = OllamaBackend(config)
+    await backend._client.aclose()
+    backend._client = httpx.AsyncClient(
+        base_url="http://ollama.test", transport=httpx.MockTransport(handler)
+    )
+    backend.configure_warmup(
+        text_models=["generation", "classifier", "classifier:latest"],
+        embedding_models=["embedding"],
+    )
+
+    await backend.preload_configured_models()
+    status = await backend.runtime_status()
+
+    assert [(path, body["model"]) for path, body in requests] == [
+        ("/api/chat", "generation"),
+        ("/api/chat", "classifier"),
+        ("/api/embeddings", "embedding"),
+    ]
+    assert all(body["keep_alive"] == "30m" for _, body in requests)
+    assert status["warmup_status"] == "ready"
+    assert status["preload_enabled"] is True
+    assert all(model["loaded"] for model in status["models"])
+    await backend.close()
+
+
+@pytest.mark.parametrize(
+    ("profile", "keep_alive", "preload"),
+    [
+        ("memory_saver", "30s", False),
+        ("balanced", "5m", False),
+        ("performance", "30m", True),
+    ],
+)
+def test_ollama_performance_profile_defaults(profile, keep_alive, preload):
+    config = OllamaConfig(performance_profile=profile)
+    assert config.keep_alive == keep_alive
+    assert config.preload_models is preload
 
 
 @pytest.mark.asyncio

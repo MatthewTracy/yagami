@@ -1,6 +1,14 @@
 export type ServerMsg =
   | { type: "session"; session_id: string }
   | {
+      type: "status";
+      content: string;
+      meta: {
+        phase: "classifying" | "loading_model" | "generating";
+        backend?: string;
+      };
+    }
+  | {
       type: "routing";
       backend: string;
       is_local: boolean;

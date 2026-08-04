@@ -15,6 +15,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .backends.base import TrustZone
 
 
+LocalPerformanceProfile = Literal["memory_saver", "balanced", "performance"]
+
+_OLLAMA_KEEP_ALIVE_BY_PROFILE: dict[str, str] = {
+    "memory_saver": "30s",
+    "balanced": "5m",
+    "performance": "30m",
+}
+
+
 def _validate_service_endpoint(
     url: str,
     *,
@@ -59,6 +68,19 @@ class OllamaConfig(BaseModel):
     model: str = "llama3.2:3b-instruct-q4_K_M"
     classifier_model: str = "llama3.2:3b-instruct-q4_K_M"
     trust_zone: TrustZone = TrustZone.DEVICE
+    # Balanced preserves Ollama's historical five-minute model lifetime and
+    # does not reserve memory at startup. Performance preloads the configured
+    # generation/classifier/embedding models and retains them for 30 minutes;
+    # memory_saver releases idle models after 30 seconds.
+    performance_profile: LocalPerformanceProfile = "balanced"
+
+    @property
+    def keep_alive(self) -> str:
+        return _OLLAMA_KEEP_ALIVE_BY_PROFILE[self.performance_profile]
+
+    @property
+    def preload_models(self) -> bool:
+        return self.performance_profile == "performance"
 
     @model_validator(mode="after")
     def validate_trusted_service(self) -> "OllamaConfig":
@@ -504,6 +526,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("YAGAMI_OLLAMA_TRUST_ZONE"),
     )
+    ollama_performance_profile: LocalPerformanceProfile | None = Field(
+        default=None,
+        validation_alias=AliasChoices("YAGAMI_OLLAMA_PERFORMANCE_PROFILE"),
+    )
     claude_model: str = Field(default="", validation_alias=AliasChoices("YAGAMI_CLAUDE_MODEL"))
     config_path: str = Field(
         default="config/yagami.toml", validation_alias=AliasChoices("YAGAMI_CONFIG_PATH")
@@ -693,13 +719,16 @@ def get_settings() -> Settings:
 def get_config() -> YagamiConfig:
     settings = get_settings()
     path = Path(settings.config_path)
-    if not path.exists():
-        return YagamiConfig()
-    with path.open("rb") as f:
-        data = tomllib.load(f)
-    cfg = YagamiConfig.model_validate(data)
+    if path.exists():
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+        cfg = YagamiConfig.model_validate(data)
+    else:
+        cfg = YagamiConfig()
     if settings.ollama_trust_zone is not None:
         cfg.ollama.trust_zone = settings.ollama_trust_zone
+    if settings.ollama_performance_profile is not None:
+        cfg.ollama.performance_profile = settings.ollama_performance_profile
     if settings.ollama_url:
         cfg.ollama.url = settings.ollama_url
     if settings.ollama_model:

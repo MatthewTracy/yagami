@@ -78,6 +78,26 @@ async def test_put_config_persists_privacy_retention(tmp_config):
 
 
 @pytest.mark.asyncio
+async def test_put_config_persists_validated_ollama_performance_profile(tmp_config):
+    app = build_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.put(
+                "/api/config",
+                json={"ollama": {"performance_profile": "performance"}},
+            )
+            assert r.status_code == 200
+            assert r.json()["config"]["ollama"]["performance_profile"] == "performance"
+
+            invalid = await c.put(
+                "/api/config",
+                json={"ollama": {"performance_profile": "unbounded"}},
+            )
+            assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_put_config_persists_loopback_foundry_local_settings(tmp_config):
     app = build_app()
     async with app.router.lifespan_context(app):
@@ -206,3 +226,17 @@ def test_toml_round_trip_quotes_dynamic_table_and_inline_keys():
 
     assert parsed["profiles"]["work.home"]["daily_spend_cap_usd"] == 2.5
     assert parsed["mcp_servers"]["server one"]["env"]["API.KEY"] == "line one\nline two"
+
+
+def test_ollama_performance_environment_override_applies_without_config_file(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(tmp_path / "missing.toml"))
+    monkeypatch.setenv("YAGAMI_OLLAMA_PERFORMANCE_PROFILE", "performance")
+    config_mod.get_settings.cache_clear()
+    config_mod.get_config.cache_clear()
+    try:
+        assert config_mod.get_config().ollama.performance_profile == "performance"
+    finally:
+        config_mod.get_settings.cache_clear()
+        config_mod.get_config.cache_clear()
