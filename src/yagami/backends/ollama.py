@@ -152,17 +152,14 @@ class OllamaBackend(Backend):
 
     async def runtime_status(self) -> dict[str, Any]:
         loaded = await self.loaded_models()
-        configured = _dedupe_models(
-            (*self._warmup_text_models, *self._warmup_embedding_models)
-        )
+        configured = _dedupe_models((*self._warmup_text_models, *self._warmup_embedding_models))
         return {
             "profile": self._config.performance_profile,
             "keep_alive": self._config.keep_alive,
             "preload_enabled": self._config.preload_models,
             "warmup_status": self._warmup_status,
             "models": [
-                {"name": model, "loaded": _model_key(model) in loaded}
-                for model in configured
+                {"name": model, "loaded": _model_key(model) in loaded} for model in configured
             ],
         }
 

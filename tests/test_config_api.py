@@ -228,9 +228,7 @@ def test_toml_round_trip_quotes_dynamic_table_and_inline_keys():
     assert parsed["mcp_servers"]["server one"]["env"]["API.KEY"] == "line one\nline two"
 
 
-def test_ollama_performance_environment_override_applies_without_config_file(
-    tmp_path, monkeypatch
-):
+def test_ollama_performance_environment_override_applies_without_config_file(tmp_path, monkeypatch):
     monkeypatch.setenv("YAGAMI_CONFIG_PATH", str(tmp_path / "missing.toml"))
     monkeypatch.setenv("YAGAMI_OLLAMA_PERFORMANCE_PROFILE", "performance")
     config_mod.get_settings.cache_clear()

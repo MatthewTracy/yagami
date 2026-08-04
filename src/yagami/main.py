@@ -362,9 +362,7 @@ def build_app() -> FastAPI:
             ):
                 # Warm in the background: the health/UI surface remains usable
                 # while Ollama loads models, and a failed preload never blocks boot.
-                ollama_warmup_task = asyncio.create_task(
-                    ollama_backend.preload_configured_models()
-                )
+                ollama_warmup_task = asyncio.create_task(ollama_backend.preload_configured_models())
             expired_tokens = await transformer.cleanup_expired()
             if expired_tokens:
                 log.info("privacy transform vault: removed %d expired token(s)", expired_tokens)
