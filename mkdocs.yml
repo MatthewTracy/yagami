@@ -4,8 +4,11 @@ site_url: https://matthewtracy.github.io/yagami/
 repo_url: https://github.com/MatthewTracy/yagami
 repo_name: MatthewTracy/yagami
 edit_uri: edit/main/docs/
+exclude_docs: |
+  internal/
 theme:
   name: material
+  custom_dir: docs/overrides
   features:
     - navigation.instant
     - navigation.sections
@@ -26,13 +29,21 @@ markdown_extensions:
   - tables
   - pymdownx.details
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+extra:
+  social_image: assets/og.png
 nav:
   - Start here: index.md
   - Security tour: tour.md
   - Gateway API: gateway.md
   - Policies: policies.md
   - Integrations: integrations.md
+  - Comparison: comparison.md
+  - Configuration: configuration.md
   - Knowledge base: knowledge-base.md
   - Deployment: deployment.md
   - Reliability and SLOs: slo.md

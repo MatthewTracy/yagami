@@ -2,6 +2,24 @@
 
 Yagami separates an application-facing data plane from local administration.
 
+```mermaid
+flowchart LR
+    A["Applications and agents"] --> B["Authentication and project limits"]
+    B --> C["Local classification and context lineage"]
+    C --> D["Versioned policy engine"]
+    D --> E{"Allowed destination or capability"}
+    E --> F["Device and private-network models"]
+    E --> G["Approved cloud and upstream gateways"]
+    E --> H["Retrieval, memory, and governed tools"]
+    F --> I["Output inspection"]
+    G --> I
+    H --> I
+    I --> J["Client response"]
+    D --> K["Content-free policy passport and audit chain"]
+    I --> K
+    K --> L["SQLite for local use or PostgreSQL for production"]
+```
+
 1. A client authenticates to `/v1`; the bearer key establishes its project.
 2. Request context is normalized and caller sensitivity hints can raise, but
    never lower, the effective sensitivity.
@@ -21,6 +39,8 @@ The gateway service is shared by Chat Completions, Responses API, MCP, and the
 browser WebSocket chat. The browser remains a local administration/demo
 surface, while `/v1` is the externally supported application data plane.
 
-SQLite is the single-node store. Hidden gateway decision sessions are separated
-from visible chat sessions through a channel field, so stateless API traffic
-does not pollute the conversation sidebar.
+SQLite is the default single-node store. PostgreSQL is the production store for
+multi-replica deployments, with Redis or PostgreSQL coordination for distributed
+rate limits and concurrency. Hidden gateway decision sessions are separated from
+visible chat sessions through a channel field, so stateless API traffic does not
+pollute the conversation sidebar.
