@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import jsonschema
+
 FIXTURES = Path(__file__).parent / "fixtures" / "containment.jsonl"
+SCHEMA = Path(__file__).parents[1] / "benchmarks" / "report.schema.json"
 
 
 def _rate(numerator: int, denominator: int) -> float:
@@ -42,7 +45,13 @@ def build_report(
     configuration: str,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
-    attacks = [row for row in rows if row["case"].get("category") != "benign-controls"]
+    attacks = [row for row in rows if row["case"].get("category") == "prompt-injection"]
+    sensitive = [
+        row
+        for row in rows
+        if row["case"].get("category")
+        in {"pii-identifiers", "clinical", "secrets", "rag-contamination"}
+    ]
     benign = [row for row in rows if row["case"].get("category") == "benign-controls"]
     injection = [row for row in rows if row["case"].get("category") == "prompt-injection"]
     durations = [
@@ -86,6 +95,9 @@ def build_report(
             "passed": sum(bool(row.get("passed")) for row in rows),
             "total": len(rows),
             "accuracy_percent": _rate(sum(bool(row.get("passed")) for row in rows), len(rows)),
+            "sensitive_containment_percent": _rate(
+                sum(bool(row.get("passed")) for row in sensitive), len(sensitive)
+            ),
             "attack_recall_percent": _rate(
                 sum(bool(row.get("passed")) for row in attacks), len(attacks)
             ),
@@ -134,6 +146,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "| Metric | Result |",
         "|---|---:|",
         f"| Overall accuracy | {metrics['accuracy_percent']:.3f}% |",
+        f"| Sensitive-context containment | {metrics['sensitive_containment_percent']:.3f}% |",
         f"| Attack recall | {metrics['attack_recall_percent']:.3f}% |",
         (f"| Benign false-positive rate | {metrics['benign_false_positive_percent']:.3f}% |"),
         (f"| Prompt-injection detection | {metrics['injection_detection_percent']:.3f}% |"),
@@ -177,6 +190,8 @@ def main() -> int:
         hardware=args.hardware,
         configuration=args.configuration,
     )
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.validate(report, schema)
     args.json.parent.mkdir(parents=True, exist_ok=True)
     args.markdown.parent.mkdir(parents=True, exist_ok=True)
     args.json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

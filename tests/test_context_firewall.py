@@ -87,6 +87,21 @@ def test_lineage_marks_retrieved_context_untrusted_and_quarantines_injection():
     assert "Retrieved document" not in str(graph.summary())
 
 
+def test_lineage_preserves_medical_specificity_for_retrieved_clinical_context():
+    graph = LineageGraph.from_messages(
+        request_id="request-medical",
+        messages=[
+            Message(role="system", content="Retrieved chart: insulin dose 14 units."),
+            Message(role="user", content="Create a synopsis."),
+        ],
+        current_sensitivity=Sensitivity.NONE,
+        caller_hint=None,
+    )
+
+    assert graph.items[0].sensitivity == Sensitivity.PHI_MEDICAL
+    assert graph.effective_sensitivity == Sensitivity.PHI_MEDICAL
+
+
 def _tool(description: str) -> dict:
     return {
         "type": "function",

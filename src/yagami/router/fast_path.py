@@ -14,6 +14,13 @@ from .schema import Classification, Complexity, Intent, Sensitivity
 
 _MAX_BYPASS_CHARS = 200
 
+_TOOL_REQUIRED_PATTERN = re.compile(
+    r"(?:https?://\S+|\b(?:calculate|compute|evaluate|factorial|sqrt|square\s+root)\b|"
+    r"\b\d+(?:\.\d+)?\s*[+*/^]\s*\d+(?:\.\d+)?\b|"
+    r"\b\d+(?:\.\d+)?\s+-\s+\d+(?:\.\d+)?\b)",
+    re.IGNORECASE,
+)
+
 _SECRET_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}\b"),
     re.compile(r"\b(?:ghp|gho|ghu|ghs)_[A-Za-z0-9_]{16,}\b"),
@@ -75,8 +82,15 @@ _MEDICAL_TOPIC_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
-# Lab-value shape: 2-4 uppercase letters followed by a number (BP 158, Na 128, BNP 612).
-_LAB_VALUE_PATTERN = re.compile(r"\b[A-Z]{2,4}\s*[:=]?\s*\d+(?:\.\d+)?\b")
+# Common lab/vital abbreviation followed by a value. A generic all-caps token
+# is deliberately unsafe here: identifiers such as ``SSN 123-...`` otherwise
+# become false medical labels.
+_LAB_VALUE_PATTERN = re.compile(
+    r"\b(?:BP|HR|RR|SPO2|TEMP|A1C|HGB|WBC|RBC|PLT|NA|K|CL|CO2|BUN|"
+    r"CREAT|CR|EGFR|GLU|AST|ALT|ALP|BILI|TSH|INR|BNP|PSA|CRP|LDL|HDL|BMI)"
+    r"\s*[:=]?\s*\d+(?:\.\d+)?\b",
+    re.IGNORECASE,
+)
 
 _CODE_MARKERS = (
     "```",
@@ -156,14 +170,19 @@ def _has_personal_health(text: str) -> bool:
     return bool(_PERSONAL_HEALTH_PATTERN.search(text))
 
 
+def _has_clinical(text: str) -> bool:
+    """Return whether deterministic rules found person-specific clinical context."""
+    return bool(
+        _has_personal_health(text)
+        or _CLINICAL_KEYWORDS.search(text)
+        or _LAB_VALUE_PATTERN.search(text)
+    )
+
+
 def _has_phi(text: str) -> bool:
     if any(p.search(text) for p in _PHI_PATTERNS):
         return True
-    if _has_personal_health(text):
-        return True
-    if _CLINICAL_KEYWORDS.search(text):
-        return True
-    if _LAB_VALUE_PATTERN.search(text):
+    if _has_clinical(text):
         return True
     return False
 
@@ -182,6 +201,11 @@ def _has_image_keyword(text: str) -> bool:
 
 def _is_imperative_request(text: str) -> bool:
     return bool(_IMPERATIVE_PATTERN.search(text))
+
+
+def _obviously_needs_tools(text: str) -> bool:
+    """Recognize the narrow calculation/URL cases supported by built-in tools."""
+    return bool(_TOOL_REQUIRED_PATTERN.search(text))
 
 
 def can_bypass(text: str) -> Classification | None:
@@ -219,6 +243,7 @@ def can_bypass(text: str) -> Classification | None:
             intent=Intent.SIMPLE_QA,
             sensitivity=Sensitivity.PHI_MEDICAL,
             complexity=Complexity.LOW,
+            needs_tools=_obviously_needs_tools(text),
         )
 
     # Explicit image creation - route to image backend without the LLM call.

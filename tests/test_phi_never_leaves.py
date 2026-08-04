@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from yagami.backends.base import Capability
 from yagami.router.schema import Classification, Sensitivity
 
 PHI_FIXTURES = [
@@ -44,3 +45,18 @@ async def test_phi_medical_also_local(make_policy, user_msg):
         policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL))
         decision = await policy.decide(user_msg(prompt))
         assert decision.backend.is_local is True
+
+
+@pytest.mark.asyncio
+async def test_phi_tool_request_remains_local(make_policy, backends, classified_user_msg):
+    backends["ollama"].capabilities.add(Capability.TOOLS)
+    policy = make_policy(Classification(sensitivity=Sensitivity.PHI_MEDICAL, needs_tools=True))
+
+    decision = await policy.decide(
+        classified_user_msg("Calculate the dosage from this private patient record.")
+    )
+
+    assert decision.backend.name == "ollama"
+    assert decision.backend.is_local is True
+    assert decision.use_tools is True
+    assert Capability.TOOLS in decision.required_capabilities

@@ -217,6 +217,8 @@ class LlamaCppConfig(BaseModel):
     model_path: str = ""  # absolute path to a GGUF file; empty = disabled
     n_ctx: int = 8192
     n_gpu_layers: int = -1  # -1 = all on GPU if CUDA build, else CPU
+    chat_format: str = ""
+    supports_tools: bool = False
     name: str = "llama_cpp"
 
     model_config = {"protected_namespaces": ()}

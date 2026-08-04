@@ -159,6 +159,7 @@ class PolicyEvaluation(BaseModel):
     output_inspection: dict[str, Any] | None = None
     context_risk: dict[str, Any] | None = None
     tool_schema_checks: list[dict[str, Any]] = Field(default_factory=list)
+    tool_executions: list[dict[str, Any]] = Field(default_factory=list)
 
     def passport(self) -> dict[str, Any]:
         return self.model_dump(mode="json")

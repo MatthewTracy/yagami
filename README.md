@@ -8,33 +8,37 @@
 [![PyPI](https://img.shields.io/pypi/v/yagami.svg)](https://pypi.org/project/yagami/)
 [![Python](https://img.shields.io/pypi/pyversions/yagami.svg)](https://pypi.org/project/yagami/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/MatthewTracy/yagami/blob/main/LICENSE)
-[![Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
 
 [Documentation](https://matthewtracy.github.io/yagami/) | [Gateway API](https://matthewtracy.github.io/yagami/gateway/) | [Deployment](https://matthewtracy.github.io/yagami/deployment/) | [Security](https://github.com/MatthewTracy/yagami/security/policy) | [Roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
 
-Yagami sits between your software and local models, cloud LLMs, retrieval
-systems, and tools. It classifies context locally, evaluates versioned policy,
-routes only to allowed destinations, inspects outputs, and produces
-content-free evidence for each decision.
-
-Existing OpenAI SDK applications can adopt it by changing one `base_url`.
-Yagami can run as a headless gateway, in a container or Kubernetes, or with its
-included React control surface.
-
 ## Try it in 60 seconds
 
-The demo requires no API key, provider account, Ollama model, or Node.js:
+The no-credential demo uses your configured Ollama model when it is installed;
+otherwise it opens a clearly labeled policy-only fallback. Choose one command:
 
 ```bash
-python -m pip install yagami
-yagami demo
+uvx yagami demo
+# or: python -m pip install yagami && yagami demo
+# or: docker run --rm -p 127.0.0.1:8000:8000 ghcr.io/matthewtracy/yagami:latest yagami demo --host 0.0.0.0 --allow-remote
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Demo mode uses a local
-echo backend, blocks cloud routing, and exercises the UI, policy, lineage,
-storage, and audit path.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), or use
+`docker compose -f compose.demo.yaml up` from a clone. Demo mode blocks cloud
+routing while exercising the UI, policy, lineage, storage, and audit path. For
+local AI answers, install Ollama and run
+`ollama pull llama3.2:3b-instruct-q4_K_M` before starting the demo.
 
-[Watch the two-minute demo](https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2).
+https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2
+
+Yagami is for developers and platform/security teams that need to control
+where agent context goes and which tools it may execute. For example: a coding
+agent can keep repository secrets on-device and require an identity-bound,
+one-time approval before a dangerous tool call.
+
+Yagami sits between software and local models, cloud LLMs, retrieval systems,
+memory, and tools. Existing OpenAI SDK applications can adopt it by changing
+one `base_url`; Yagami then classifies context locally, applies versioned
+policy, and records content-free evidence for each decision.
 
 [Take the no-data security tour](https://matthewtracy.github.io/yagami/tour/) or
 run the [flagship security demos](https://github.com/MatthewTracy/yagami/tree/main/examples/flagship)
@@ -49,6 +53,10 @@ yagami init
 yagami doctor
 yagami serve
 ```
+
+Install `yagami[providers]` when the Yagami process or the example client uses
+Anthropic/OpenAI-compatible SDKs. PDF ingestion and OS key storage are separate
+`ingest` and `desktop` extras; see [configuration](https://matthewtracy.github.io/yagami/configuration/).
 
 Then point an OpenAI client at the gateway:
 
@@ -124,16 +132,30 @@ Presidio, Splunk HEC and generic SIEM webhooks, Slack and Teams approval
 notifications, and upstream gateways such as LiteLLM, Portkey, Kong, or Envoy.
 See the [integration recipes](https://matthewtracy.github.io/yagami/integrations/).
 
+## How it compares
+
+Yagami is not trying to replace every gateway, validator, or security scanner.
+Its focus is deterministic post-classification containment, governed tool
+execution, and content-free decision evidence. See the honest
+[comparison guide](https://matthewtracy.github.io/yagami/comparison/) for when
+LiteLLM, Guardrails AI, NeMo Guardrails, Presidio, LlamaFirewall, or a direct
+provider SDK is the better choice—and how to combine them with Yagami.
+
 ## How enforcement works
 
-```text
-application or agent
-  -> authentication and project limits
-  -> local sensitivity and context-lineage inspection
-  -> versioned policy and optional transformation
-  -> allowed local model, cloud model, retrieval source, or tool
-  -> output DLP
-  -> response plus content-free policy passport and audit evidence
+```mermaid
+flowchart LR
+    A["Application or agent"] --> B["Authentication and project limits"]
+    B --> C["Local classification and context lineage"]
+    C --> D["Versioned policy"]
+    D --> E{"Allowed destination or capability"}
+    E --> F["Local or approved model"]
+    E --> G["Retrieval, memory, or tool"]
+    F --> H["Output inspection"]
+    G --> H
+    H --> I["Response"]
+    D --> J["Content-free policy passport and audit chain"]
+    H --> J
 ```
 
 Policy is the final authority. Slash commands and explicit backend selection
