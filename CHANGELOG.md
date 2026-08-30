@@ -9,6 +9,11 @@ shipped.
 ## [Unreleased]
 
 ### Security
+- Inspect caller-supplied tool schemas during policy preview so malicious tool
+  descriptions cannot bypass context-risk quarantine.
+- Preserve medical sensitivity inherited from prior messages and record
+  governed tool outcomes using content-free names, status, safe error codes,
+  and byte counts rather than arguments or results.
 - Classify colloquial personal-health disclosures as medical data and preserve the established sensitivity across text follow-ups using content-free decision evidence.
 - Route high-confidence first-person health disclosures directly to local medical handling, including when an image-generation phrase is also present, without exposing them to a semantic classifier or cloud image backend.
 - Refresh transitive PostCSS, nanoid, and undici packages to versions without the current published npm advisories.
@@ -16,10 +21,27 @@ shipped.
 - Use a safe consumer-health prompt by default; clinician assumptions now require an explicit trusted clinical purpose.
 - Delete session-scoped memory vectors and reversible privacy tokens when a conversation is deleted.
 
+### Added
+- Add native governed tool calling for Ollama and explicit, chat-format-gated
+  tool support for llama.cpp, including a sensitive local-tool flagship demo.
+- Add a schema-validated containment corpus covering identifiers, clinical
+  history, secrets, retrieved-context contamination, tool policy, prompt
+  injection, and benign cloud controls.
+- Add a zero-configuration loopback-only Compose demo, comparison and
+  configuration guides, an architecture diagram, social preview metadata, and
+  maintainer-ready contributor and launch drafts.
+
+### Changed
+- Make provider SDKs, PDF ingestion, and OS keyring support optional extras;
+  improve `yagami doctor` with optional-capability status and actionable next
+  commands.
+- Prefer an installed Ollama model automatically in `yagami demo`; when none is
+  available, present a clearly labeled policy-only fallback that never echoes
+  user content as though it were an AI answer.
+
 ### Fixed
 - Add memory-saver, balanced, and performance profiles for explicit Ollama model retention and optional background preloading, with content-free readiness health and truthful UI phases for policy checks, model loading, and generation.
 - Keep default Ollama embedding chunks below the configured `all-minilm` context without reducing the prior per-message retention ceiling.
-- Distinguish echo demonstration mode from real model-backed serving in the health API and web interface.
 - Hide abandoned empty chat sessions and allow completed streams to finalize cleanly when a client disconnects immediately after the `done` event.
 
 ## [0.7.3] - 2026-07-28

@@ -1790,7 +1790,7 @@ async def preview_policy(
                 user=body.user,
                 tools=body.tools,
             ),
-            options=GatewayRequestOptions(),
+            options=GatewayRequestOptions(tools=body.tools),
             persist=False,
         )
     except PolicyDeniedError as exc:

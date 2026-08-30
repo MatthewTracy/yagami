@@ -7,16 +7,20 @@ decision.
 
 ## Try it in 60 seconds
 
-The demo needs no API key, provider account, Ollama model, or Node.js runtime.
+The demo needs no API key, provider account, or Node.js runtime. When the
+configured Ollama model is installed it provides real local answers; otherwise
+Yagami opens a clearly labeled policy-only fallback.
 
 ```bash
-python -m pip install yagami
-yagami demo
+uvx yagami demo
+# or: python -m pip install yagami && yagami demo
+# or: docker compose -f compose.demo.yaml up
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Demo mode uses the bundled
-UI and a local echo backend, disables cloud routing, and still exercises policy,
-classification, lineage, storage, and audit decisions.
+UI, disables cloud routing, and exercises policy, classification, lineage,
+storage, and audit decisions. For local AI-generated answers, install Ollama,
+run `ollama pull llama3.2:3b-instruct-q4_K_M`, and restart the demo.
 
 Continue with the [no-data security tour](tour.md) or run the three
 [flagship scenarios](https://github.com/MatthewTracy/yagami/tree/main/examples/flagship)

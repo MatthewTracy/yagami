@@ -12,10 +12,17 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-import keyring
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+keyring: Any
+try:
+    import keyring as _keyring
+
+    keyring = _keyring
+except ImportError:  # Optional on headless/container installations.
+    keyring = None
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MAX_SECRET_BYTES = 64 * 1024
@@ -165,6 +172,8 @@ def resolve_secret_reference(reference: str, *, label: str) -> str:
         service, slash, account = target.partition("/")
         if not slash or not service or not account:
             raise ValueError(f"{label} keyring reference must be keyring:service/account")
+        if keyring is None:
+            raise ValueError(f"{label} keyring reference requires `pip install 'yagami[desktop]'`")
         value = keyring.get_password(service, account) or ""
     else:
         raise ValueError(f"{label} uses unsupported secret provider {scheme!r}")

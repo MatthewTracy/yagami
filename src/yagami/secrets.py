@@ -45,13 +45,19 @@ def get(name: str) -> str:
 
 def set_(name: str, value: str) -> None:
     """Store a secret in the OS keyring. Used by `python -m yagami.set_key`."""
-    import keyring
+    try:
+        import keyring
+    except ImportError as exc:
+        raise RuntimeError("OS key storage requires `pip install 'yagami[desktop]'`") from exc
 
     keyring.set_password(_SERVICE, name, value)
 
 
 def clear(name: str) -> None:
-    import keyring
+    try:
+        import keyring
+    except ImportError as exc:
+        raise RuntimeError("OS key storage requires `pip install 'yagami[desktop]'`") from exc
 
     try:
         keyring.delete_password(_SERVICE, name)

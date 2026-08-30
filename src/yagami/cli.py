@@ -37,6 +37,16 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").casefold() in {"1", "true", "yes", "on"}
+
+
+def _remote_auth_configured() -> bool:
+    api_keys = bool(os.getenv("YAGAMI_API_KEYS"))
+    oidc = bool(os.getenv("YAGAMI_OIDC_ISSUER") and os.getenv("YAGAMI_OIDC_JWKS_URL"))
+    return api_keys or oidc
+
+
 def _build_serve_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="yagami serve", description="Run the Yagami private AI policy gateway."
@@ -53,7 +63,10 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="URL",
-        help="Browser origin allowed to use chat remotely (repeatable; requires --allow-remote)",
+        help=(
+            "Additional browser Origin allowed to open the local chat socket "
+            "(repeatable; not authentication; requires --allow-remote)"
+        ),
     )
     parser.add_argument(
         "--reload",
@@ -76,12 +89,17 @@ def _serve(argv: list[str]) -> int:
                 "non-loopback --host requires --allow-remote; Yagami should normally remain "
                 "on localhost unless headless API authentication is configured"
             )
-        headless = os.getenv("YAGAMI_HEADLESS", "").casefold() in {"1", "true", "yes", "on"}
-        has_api_auth = bool(os.getenv("YAGAMI_API_KEYS"))
-        if not (headless and has_api_auth):
+        headless = _env_enabled("YAGAMI_HEADLESS")
+        container_demo = _env_enabled("YAGAMI_CONTAINER") and _env_enabled("YAGAMI_DEMO_MODE")
+        if not container_demo and not (headless and _remote_auth_configured()):
             parser.error(
-                "remote binding requires YAGAMI_HEADLESS=true and YAGAMI_API_KEYS; "
-                "the interactive administration surface is loopback-only"
+                "remote binding requires YAGAMI_HEADLESS=true plus YAGAMI_API_KEYS or OIDC; "
+                "the only unauthenticated exception is the isolated container demo"
+            )
+        if container_demo:
+            print(
+                "[yagami] container demo is unauthenticated; publish port 8000 to 127.0.0.1 only",
+                flush=True,
             )
     if args.trusted_origin:
         os.environ["YAGAMI_TRUSTED_ORIGINS"] = ",".join(args.trusted_origin)
@@ -89,12 +107,7 @@ def _serve(argv: list[str]) -> int:
     import uvicorn
 
     dist = ui_dist()
-    if dist is None and os.getenv("YAGAMI_HEADLESS", "").casefold() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    if dist is None and not _env_enabled("YAGAMI_HEADLESS"):
         print(
             "[yagami] UI assets are unavailable; the API will still run.\n"
             "[yagami] Source developers can run `cd ui && npm run build`.",
@@ -327,7 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["YAGAMI_HEADLESS"] = "false"
         os.environ["YAGAMI_REQUIRE_AUTH"] = "false"
         os.environ.setdefault("YAGAMI_DB_PATH", str(default_state_dir() / "data" / "demo.db"))
-        print("[yagami] demo mode: local echo model, cloud disabled, no credentials required")
+        print(
+            "[yagami] demo: using the configured Ollama model when installed; "
+            "policy-only fallback otherwise; cloud disabled; no credentials required"
+        )
         return _serve(args[1:])
     if command == "serve":
         args = args[1:]

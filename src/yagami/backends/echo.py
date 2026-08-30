@@ -21,8 +21,12 @@ class EchoBackend(Backend):
     async def generate(
         self, messages: list[Message], *, options: BackendOptions
     ) -> AsyncIterator[BackendChunk]:
-        last_user = next((m for m in reversed(messages) if m.role == "user"), None)
-        text = f"echo: {last_user.content if last_user else ''}"
+        text = (
+            "Policy-only demo: Yagami processed this request locally, but no configured "
+            "Ollama model is available, so this is not an AI-generated answer. Run "
+            "`ollama pull llama3.2:3b-instruct-q4_K_M` and restart Yagami for local "
+            "model-backed responses."
+        )
         for word in text.split():
             await asyncio.sleep(0.02)
             yield {"type": "text", "content": word + " ", "meta": {}}

@@ -20,7 +20,7 @@ RUN python -m pip install --require-hashes --no-cache-dir -r requirements.build.
     python -m pip wheel --require-hashes --wheel-dir /wheels \
       -r requirements.container.lock
 
-COPY pyproject.toml hatch_build.py README.md LICENSE .env.example ./
+COPY pyproject.toml hatch_build.py README.md PYPI.md LICENSE .env.example ./
 COPY config ./config
 COPY --from=ui-builder /ui/dist ./ui/dist
 COPY src ./src
@@ -39,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YAGAMI_CONFIG_PATH=/app/config/yagami.toml \
     YAGAMI_POLICY_PATH=/app/config/policy.yaml \
     YAGAMI_DB_PATH=/data/yagami.db \
+    YAGAMI_CONTAINER=true \
     YAGAMI_HEADLESS=true \
     YAGAMI_REQUIRE_AUTH=true
 

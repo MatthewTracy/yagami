@@ -5,7 +5,6 @@ import logging
 from typing import Protocol
 
 import httpx
-from openai import APIError, AsyncOpenAI
 
 from ..config import ClassifierConfig, OllamaConfig, YagamiConfig
 from .schema import Classification, Complexity, DataLabel, Intent, Sensitivity
@@ -74,8 +73,14 @@ Output: {"intent":"simple_qa","sensitivity":"none","complexity":"low"}
 User: My SSN is 123-45-6789, what should I do about identity theft?
 Output: {"intent":"simple_qa","sensitivity":"phi","complexity":"low"}
 
+User: Call 415-555-0138 about delivery to address 12 Market Street.
+Output: {"intent":"simple_qa","sensitivity":"phi","data_labels":["pii"],"complexity":"low","needs_tools":false,"needs_recall":false}
+
 User: here is my API key <REDACTED_OPENAI_KEY>, please rotate it
 Output: {"intent":"simple_qa","sensitivity":"secret","complexity":"low"}
+
+User: List general best practices for rotating API credentials without using real keys.
+Output: {"intent":"simple_qa","sensitivity":"none","data_labels":[],"complexity":"low","needs_tools":false,"needs_recall":false}
 
 User: Walk me through the trade-offs between optimistic and pessimistic concurrency control in distributed databases, with concrete examples and failure modes for each.
 Output: {"intent":"complex_reasoning","sensitivity":"none","complexity":"high"}
@@ -161,6 +166,12 @@ class OpenAICompatibleClassifier:
     """Strict-JSON classifier for Foundry Local and other compatible endpoints."""
 
     def __init__(self, config: ClassifierConfig, *, api_key: str = "") -> None:
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "OpenAI-compatible classification requires `pip install 'yagami[providers]'`"
+            ) from exc
         self._model = config.model
         self._client = AsyncOpenAI(
             base_url=config.url,
@@ -169,6 +180,8 @@ class OpenAICompatibleClassifier:
         )
 
     async def __call__(self, text: str) -> Classification:
+        from openai import APIError
+
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,

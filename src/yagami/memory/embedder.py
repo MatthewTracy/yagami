@@ -14,7 +14,6 @@ import logging
 from typing import Protocol, runtime_checkable
 
 import httpx
-from openai import APIError, AsyncOpenAI
 
 from ..config import YagamiConfig
 
@@ -86,6 +85,12 @@ class OpenAICompatibleEmbedder:
     """384-dimension embeddings from an OpenAI-compatible endpoint."""
 
     def __init__(self, *, url: str, model: str, api_key: str = "") -> None:
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "OpenAI-compatible embeddings require `pip install 'yagami[providers]'`"
+            ) from exc
         self._model = model
         self._client = AsyncOpenAI(
             base_url=url,
@@ -98,6 +103,8 @@ class OpenAICompatibleEmbedder:
         return self._model
 
     async def embed(self, text: str) -> list[float] | None:
+        from openai import APIError
+
         if not text:
             return None
         try:

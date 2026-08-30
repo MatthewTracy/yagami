@@ -57,6 +57,25 @@ deterministic route directly to `phi_medical`. They remain local without first
 loading the semantic classifier; ambiguous or general medical questions still
 use the configured classifier.
 
+### llama.cpp tool compatibility
+
+`llama-cpp-python` tool calling depends on a GGUF model and chat template that
+actually implement the OpenAI function-call format. Yagami therefore does not
+advertise tool capability for every llama.cpp model. Enable it only after
+verifying the template/model pair:
+
+```toml
+[llama_cpp]
+model_path = "D:/models/your-model.gguf"
+chat_format = "functionary-v2"
+supports_tools = true
+```
+
+With `supports_tools = false` (the default), policy will not select llama.cpp
+for a tool-bearing request. This fail-closed capability declaration prevents a
+text-only template from silently receiving a governed tool request it cannot
+represent.
+
 ## Microsoft Foundry Local (preview)
 
 Yagami can use the OpenAI-compatible web service provided by Microsoft

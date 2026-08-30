@@ -47,7 +47,7 @@ from ..policy import (
 )
 from ..projects import ProjectGovernor, ProjectLimitError
 from ..router import tool_loop
-from ..router.fast_path import _has_personal_health, _has_phi, _has_secret
+from ..router.fast_path import _has_clinical, _has_phi, _has_secret
 from ..router.policy import RoutingDecision, RoutingPolicy, stickier
 from ..router.schema import DataLabel, Sensitivity
 from ..storage.db import get_db
@@ -155,7 +155,7 @@ def _history_sensitivity_from_messages(messages: list[Message]) -> Sensitivity:
     for message in messages[:last_user_index]:
         if _has_secret(message.content):
             sensitivity = stickier(sensitivity, Sensitivity.SECRET)
-        elif _has_personal_health(message.content):
+        elif _has_clinical(message.content):
             sensitivity = stickier(sensitivity, Sensitivity.PHI_MEDICAL)
         elif _has_phi(message.content):
             sensitivity = stickier(sensitivity, Sensitivity.PHI)
@@ -798,6 +798,16 @@ class GatewayService:
                             if not buffer_output:
                                 yield chunk
                             continue
+                        prepared.policy.tool_executions.append(
+                            {
+                                "tool": str(meta.get("name", "unknown")),
+                                "ok": bool(meta.get("ok")),
+                                "error_code": (
+                                    str(meta["error_code"]) if meta.get("error_code") else None
+                                ),
+                                "result_bytes": int(meta.get("result_bytes") or 0),
+                            }
+                        )
                         tool_content = str(meta.get("result") or meta.get("error") or "")
                         prepared.lineage.add(
                             source=LineageSource.TOOL_RESULT,

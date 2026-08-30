@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from yagami.router.fast_path import can_bypass
+from yagami.router.fast_path import _has_clinical, can_bypass
 from yagami.router.schema import Complexity, Intent, Sensitivity
 from tests.test_phi_never_leaves import PHI_FIXTURES
 
@@ -225,6 +225,17 @@ def test_personal_health_takes_precedence_over_cloud_image_fast_path():
     assert classification is not None
     assert classification.intent == Intent.SIMPLE_QA
     assert classification.sensitivity == Sensitivity.PHI_MEDICAL
+
+
+def test_personal_health_calculation_keeps_sensitive_fast_path_and_requests_local_tool():
+    classification = can_bypass("Calculate 25 * 4 for my medication schedule")
+    assert classification is not None
+    assert classification.sensitivity == Sensitivity.PHI_MEDICAL
+    assert classification.needs_tools is True
+
+
+def test_ssn_identifier_is_not_mistaken_for_a_clinical_lab_value():
+    assert not _has_clinical("Verify SSN 123-45-6789 for the account.")
 
 
 def test_generic_medical_question_reaches_semantic_classifier():

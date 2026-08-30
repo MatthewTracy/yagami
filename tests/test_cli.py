@@ -74,10 +74,46 @@ def test_serve_preserves_legacy_flags_and_calls_uvicorn(monkeypatch):
 
 
 def test_remote_serve_requires_headless_authenticated_mode(monkeypatch):
-    monkeypatch.delenv("YAGAMI_HEADLESS", raising=False)
-    monkeypatch.delenv("YAGAMI_API_KEYS", raising=False)
+    for name in (
+        "YAGAMI_HEADLESS",
+        "YAGAMI_API_KEYS",
+        "YAGAMI_OIDC_ISSUER",
+        "YAGAMI_OIDC_JWKS_URL",
+        "YAGAMI_CONTAINER",
+        "YAGAMI_DEMO_MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(SystemExit):
         cli.main(["serve", "--host", "0.0.0.0", "--allow-remote"])
+
+
+def test_remote_serve_accepts_oidc_only_authentication(monkeypatch):
+    calls: list[dict] = []
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", SimpleNamespace(run=lambda *_a, **kw: calls.append(kw))
+    )
+    monkeypatch.setattr(cli, "ui_dist", lambda: None)
+    monkeypatch.setenv("YAGAMI_HEADLESS", "true")
+    monkeypatch.setenv("YAGAMI_OIDC_ISSUER", "https://identity.example")
+    monkeypatch.setenv("YAGAMI_OIDC_JWKS_URL", "https://identity.example/jwks.json")
+    monkeypatch.delenv("YAGAMI_API_KEYS", raising=False)
+
+    assert cli.main(["serve", "--host", "0.0.0.0", "--allow-remote"]) == 0
+    assert calls[0]["host"] == "0.0.0.0"
+
+
+def test_container_demo_can_bind_remotely_with_explicit_marker(monkeypatch, capsys):
+    calls: list[dict] = []
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", SimpleNamespace(run=lambda *_a, **kw: calls.append(kw))
+    )
+    monkeypatch.setattr(cli, "ui_dist", lambda: Path("bundled-ui"))
+    monkeypatch.setenv("YAGAMI_CONTAINER", "true")
+
+    assert cli.main(["demo", "--host", "0.0.0.0", "--allow-remote"]) == 0
+
+    assert calls[0]["host"] == "0.0.0.0"
+    assert "publish port 8000 to 127.0.0.1 only" in capsys.readouterr().out
 
 
 def test_demo_enables_local_no_credential_mode(monkeypatch, capsys):
@@ -93,3 +129,4 @@ def test_demo_enables_local_no_credential_mode(monkeypatch, capsys):
 def test_doctor_line_formats_required_and_optional_results():
     assert doctor._line("python", True, "3.12").startswith("[OK  ] python")
     assert doctor._line("ollama", False).startswith("[FAIL] ollama")
+    assert doctor._line("anthropic", None).startswith("[SKIP] anthropic")

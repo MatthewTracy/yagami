@@ -1,0 +1,19 @@
+services:
+  yagami:
+    image: ghcr.io/matthewtracy/yagami:latest
+    pull_policy: always
+    command: ["yagami", "demo", "--host", "0.0.0.0", "--allow-remote"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - yagami-demo-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  yagami-demo-data:

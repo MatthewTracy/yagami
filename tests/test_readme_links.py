@@ -5,6 +5,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
+PYPI_README = ROOT / "PYPI.md"
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)")
 PORTABLE_PREFIXES = ("#", "https://", "http://", "mailto:")
 REPOSITORY_PATH = ("MatthewTracy", "yagami")
@@ -14,12 +15,13 @@ def _readme_targets() -> list[str]:
     return MARKDOWN_LINK.findall(README.read_text(encoding="utf-8"))
 
 
-def test_packaged_readme_has_no_repository_relative_links() -> None:
-    relative_targets = sorted(
-        {target for target in _readme_targets() if not target.startswith(PORTABLE_PREFIXES)}
-    )
-
-    assert relative_targets == []
+def test_public_landing_pages_have_no_repository_relative_links() -> None:
+    for page in (README, PYPI_README):
+        targets = MARKDOWN_LINK.findall(page.read_text(encoding="utf-8"))
+        relative_targets = sorted(
+            {target for target in targets if not target.startswith(PORTABLE_PREFIXES)}
+        )
+        assert relative_targets == [], f"{page.name} has nonportable links"
 
 
 def test_canonical_github_readme_links_point_to_local_paths() -> None:

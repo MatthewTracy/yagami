@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from ..backends.base import Message
 from .transform import detect_entity_types
 from .context_firewall import TrustLevel, inspect_context, trust_for_message
-from ..router.fast_path import _has_phi, _has_secret
+from ..router.fast_path import _has_clinical, _has_phi, _has_secret
 from ..router.policy import stickier
 from ..router.schema import Sensitivity
 
@@ -45,6 +45,8 @@ def _rules_sensitivity(text: str) -> Sensitivity:
     entity_types = set(detect_entity_types(text))
     if _has_secret(text) or entity_types.intersection({"API_KEY", "AWS_KEY", "JWT"}):
         return Sensitivity.SECRET
+    if _has_clinical(text):
+        return Sensitivity.PHI_MEDICAL
     if _has_phi(text) or entity_types:
         return Sensitivity.PHI
     return Sensitivity.NONE

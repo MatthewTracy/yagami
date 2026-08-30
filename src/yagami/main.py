@@ -355,6 +355,14 @@ def build_app() -> FastAPI:
         await open_db(db_path, database_url=settings.database_url)
         audit.start()
         try:
+            if settings.demo_mode and isinstance(ollama_backend, OllamaBackend):
+                if await ollama_backend.has_model():
+                    policy.config.default_backend = "ollama"
+                    log.info("demo mode selected the installed Ollama model")
+                else:
+                    log.info(
+                        "demo mode is using the policy-only fallback; Ollama model unavailable"
+                    )
             if (
                 isinstance(ollama_backend, OllamaBackend)
                 and cfg.ollama.preload_models
@@ -560,13 +568,25 @@ def build_app() -> FastAPI:
 
         @app.get("/api/health")
         async def health(_principal: Principal = Depends(require_admin)) -> dict:
+            model_backed_demo = settings.demo_mode and policy.config.default_backend == "ollama"
             payload: dict[str, Any] = {
                 "ok": True,
-                "mode": "echo-demo" if settings.demo_mode else "standard",
+                "mode": (
+                    "local-model-demo"
+                    if model_backed_demo
+                    else "policy-only-demo"
+                    if settings.demo_mode
+                    else "standard"
+                ),
                 "demo_mode": settings.demo_mode,
                 "default_backend": policy.config.default_backend,
                 "message": (
-                    "Echo demonstration mode is active; no AI model is generating responses."
+                    "Local Ollama model-backed demo is active; cloud routing is disabled."
+                    if model_backed_demo
+                    else (
+                        "Policy-only demo is active; install the configured Ollama model and restart "
+                        "for AI-generated responses."
+                    )
                     if settings.demo_mode
                     else "Standard model-backed mode is active."
                 ),

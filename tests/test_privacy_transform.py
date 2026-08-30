@@ -127,7 +127,9 @@ def test_lineage_tracks_history_and_current_sensitivity_without_content() -> Non
         caller_hint=Sensitivity.PHI,
     )
     summary = graph.summary()
-    assert summary["effective_sensitivity"] == "phi"
+    # Medical context in history remains medical even when the caller supplies
+    # the broader PHI label and the current turn itself is nonsensitive.
+    assert summary["effective_sensitivity"] == "phi_medical"
     assert len(summary["items"]) == 4
     encoded = str(summary)
     assert "00987654" not in encoded
