@@ -2,7 +2,7 @@
 
 ## Source setup
 
-Python 3.11 or newer is required. For the UI toolchain, use Node.js
+Python 3.11 or newer is required. For JavaScript development, use Node.js
 22.22.2+ in the 22.x line, 24.15.0+ in the 24.x line, or 26+.
 These minimums match jsdom 30, which the UI tests use.
 Ollama is used by the default classifier, local generator, and embedding
