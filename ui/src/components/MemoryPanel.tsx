@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Dialog } from "./Dialog";
 import { emitToast } from "./Toast";
+import { fetchJson } from "../lib/http";
 
 type Observation = {
   id: number;
@@ -42,29 +44,35 @@ export function MemoryPanel({ open, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const requestId = useRef(0);
 
   async function refresh() {
+    const current = ++requestId.current;
     setLoading(true);
+    setSearching(false);
+    setFailed(false);
     try {
-      const [obsR, statsR] = await Promise.all([
-        fetch("/api/memory?limit=100"),
-        fetch("/api/memory/stats"),
+      const [observations, summary] = await Promise.all([
+        fetchJson<{ observations?: Observation[] }>("/api/memory?limit=100"),
+        fetchJson<Stats>("/api/memory/stats"),
       ]);
-      setItems((await obsR.json()).observations || []);
-      setStats(await statsR.json());
+      if (current !== requestId.current) return;
+      setItems(observations.observations || []);
+      setStats(summary);
+    } catch {
+      if (current === requestId.current) setFailed(true);
     } finally {
-      setLoading(false);
+      if (current === requestId.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     if (!open) return;
     refresh();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    return () => {
+      requestId.current += 1;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
   if (!open) return null;
@@ -75,132 +83,147 @@ export function MemoryPanel({ open, onClose }: Props) {
       refresh();
       return;
     }
+    const current = ++requestId.current;
     setSearching(true);
+    setLoading(false);
+    setFailed(false);
     try {
-      const r = await fetch(`/api/memory/search?q=${encodeURIComponent(query)}&limit=50`);
-      if (!r.ok) {
-        emitToast("error", `Search failed: ${await r.text()}`);
-        return;
-      }
-      setItems((await r.json()).observations || []);
+      const result = await fetchJson<{ observations?: Observation[] }>(
+        `/api/memory/search?q=${encodeURIComponent(query.trim())}&limit=50`,
+      );
+      if (current === requestId.current) setItems(result.observations || []);
+    } catch {
+      if (current === requestId.current) setFailed(true);
     } finally {
-      setSearching(false);
+      if (current === requestId.current) setSearching(false);
     }
   }
 
   async function deleteOne(id: number) {
-    const r = await fetch(`/api/memory/${id}`, { method: "DELETE" });
-    if (!r.ok) {
-      emitToast("error", `Delete failed: ${r.status}`);
-      return;
+    try {
+      const r = await fetch(`/api/memory/${id}`, { method: "DELETE" });
+      if (!r.ok) {
+        emitToast("error", `Delete failed: ${r.status}`);
+        return;
+      }
+      setItems((cur) => cur.filter((x) => x.id !== id));
+    } catch {
+      emitToast("error", "Could not delete observation. Please try again.");
     }
-    setItems((cur) => cur.filter((x) => x.id !== id));
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-8"
-      onClick={onClose}
-    >
-      <div
-        className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-3xl w-full mx-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-zinc-100">Cross-session memory</h3>
-          <button
-            onClick={onClose}
-            className="text-zinc-400 hover:text-white text-lg leading-none"
-            aria-label="Close"
-          >
-            ×
+    <Dialog title="Cross-session memory" onClose={onClose}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-zinc-100">
+          Cross-session memory
+        </h3>
+        <button
+          onClick={onClose}
+          className="text-zinc-400 hover:text-white text-lg leading-none"
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      {stats && (
+        <div className="grid grid-cols-3 gap-2 mb-3 text-xs">
+          <Tile label="Total observations" value={String(stats.total)} />
+          <Tile label="With embeddings" value={String(stats.vec_total)} />
+          <Tile
+            label="Pending"
+            value={String(stats.by_status.pending || 0)}
+            tone={stats.by_status.pending ? "amber" : "neutral"}
+          />
+        </div>
+      )}
+
+      <form onSubmit={doSearch} className="mb-3 flex gap-2">
+        <input
+          aria-label="Search memory"
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search memory (FTS keyword)…"
+          className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
+        />
+        <button
+          type="submit"
+          disabled={searching || loading}
+          className="px-3 py-1.5 text-xs rounded bg-zinc-700 hover:bg-zinc-600 text-white disabled:opacity-40"
+        >
+          {searching ? "…" : "Search"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setQuery("");
+            refresh();
+          }}
+          className="px-3 py-1.5 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+        >
+          All
+        </button>
+      </form>
+
+      {failed ? (
+        <div role="alert" className="text-zinc-300 text-sm py-6 text-center">
+          Memory could not be loaded.
+          <button className="block mx-auto mt-3 underline" onClick={refresh}>
+            Try again
           </button>
         </div>
-
-        {stats && (
-          <div className="grid grid-cols-3 gap-2 mb-3 text-xs">
-            <Tile label="Total observations" value={String(stats.total)} />
-            <Tile label="With embeddings" value={String(stats.vec_total)} />
-            <Tile
-              label="Pending"
-              value={String(stats.by_status.pending || 0)}
-              tone={stats.by_status.pending ? "amber" : "neutral"}
-            />
-          </div>
-        )}
-
-        <form onSubmit={doSearch} className="mb-3 flex gap-2">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search memory (FTS keyword)…"
-            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm text-zinc-200"
-          />
-          <button
-            type="submit"
-            disabled={searching}
-            className="px-3 py-1.5 text-xs rounded bg-zinc-700 hover:bg-zinc-600 text-white disabled:opacity-40"
-          >
-            {searching ? "…" : "Search"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setQuery("");
-              refresh();
-            }}
-            className="px-3 py-1.5 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-          >
-            All
-          </button>
-        </form>
-
-        {loading && items.length === 0 ? (
-          <div className="text-zinc-400 text-sm py-6 text-center">Loading…</div>
-        ) : items.length === 0 ? (
-          <div className="text-zinc-400 text-sm py-6 text-center">
-            No observations yet. Have a few conversations and check back -
-            non-trivial turns are embedded asynchronously.
-          </div>
-        ) : (
-          <div className="space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">
-            {items.map((o) => (
-              <div
-                key={o.id}
-                className="text-xs p-2 rounded border border-zinc-800 bg-zinc-950/40 group"
-              >
-                <div className="flex items-center gap-2 mb-1">
-                <span className="font-mono text-zinc-400 text-[10px]">#{o.id}</span>
-                  <span className="font-mono text-zinc-400 text-[10px]">{o.role}</span>
-                  <span
-                    className={`px-1 py-0.5 rounded text-[9px] font-medium ${sensColor(o.sensitivity)}`}
-                  >
-                    {o.sensitivity}
-                  </span>
-                  <span className="text-[10px] text-zinc-400 font-mono">
-                    {o.embedding_status}
-                  </span>
-                  <span className="ml-auto text-[10px] text-zinc-600">
-                    {fmtDate(o.created_at)}
-                  </span>
-                  <button
-                    onClick={() => deleteOne(o.id)}
-                  className="text-zinc-400 hover:text-red-400 opacity-0 group-hover:opacity-100"
-                    title="Delete"
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="text-zinc-300 break-words whitespace-pre-wrap">
-                  {o.text}
-                </div>
+      ) : loading && items.length === 0 ? (
+        <div className="text-zinc-400 text-sm py-6 text-center">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="text-zinc-400 text-sm py-6 text-center">
+          {query.trim()
+            ? "No matching observations."
+            : "No observations yet. Conversation memory will appear here when available."}
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">
+          {items.map((o) => (
+            <div
+              key={o.id}
+              className="text-xs p-2 rounded border border-zinc-800 bg-zinc-950/40 group"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-mono text-zinc-400 text-[10px]">
+                  #{o.id}
+                </span>
+                <span className="font-mono text-zinc-400 text-[10px]">
+                  {o.role}
+                </span>
+                <span
+                  className={`px-1 py-0.5 rounded text-[9px] font-medium ${sensColor(o.sensitivity)}`}
+                >
+                  {o.sensitivity}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono">
+                  {o.embedding_status}
+                </span>
+                <span className="ml-auto text-[10px] text-zinc-400">
+                  {fmtDate(o.created_at)}
+                </span>
+                <button
+                  onClick={() => deleteOne(o.id)}
+                  className="text-zinc-400 hover:text-red-400 opacity-100 sm:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                  aria-label={`Delete observation ${o.id}`}
+                  title="Delete"
+                >
+                  ×
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+              <div className="text-zinc-300 break-words whitespace-pre-wrap">
+                {o.text}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Dialog>
   );
 }
 
@@ -219,7 +242,9 @@ function Tile({
       : "border-zinc-800 bg-zinc-950/40 text-zinc-200";
   return (
     <div className={`p-2 rounded border ${cls}`}>
-      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">
+        {label}
+      </div>
       <div className="text-lg font-semibold font-mono">{value}</div>
     </div>
   );

@@ -37,7 +37,12 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === "/api/health") {
-          return json({ ok: true, mode: "standard", demo_mode: false, default_backend: "ollama" });
+          return json({
+            ok: true,
+            mode: "standard",
+            demo_mode: false,
+            default_backend: "ollama",
+          });
         }
         if (url.startsWith("/api/sessions")) return json({ sessions: [] });
         if (url.startsWith("/api/costs")) {
@@ -59,7 +64,8 @@ describe("App", () => {
             by_classification_source: [],
           });
         }
-        if (url === "/api/memory?limit=100") return json({ observations: [], count: 0 });
+        if (url === "/api/memory?limit=100")
+          return json({ observations: [], count: 0 });
         if (url === "/api/memory/stats") {
           return json({ total: 0, vec_total: 0, by_status: {} });
         }
@@ -82,7 +88,9 @@ describe("App", () => {
     const textarea = await screen.findByPlaceholderText(/Message Yagami/);
     await user.type(textarea, "private draft");
 
-    await waitFor(() => expect(sessionStorage.getItem("yagami:draft")).toBe("private draft"));
+    await waitFor(() =>
+      expect(sessionStorage.getItem("yagami:draft")).toBe("private draft"),
+    );
     expect(localStorage.getItem("yagami:draft")).toBeNull();
   });
 
@@ -90,12 +98,52 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Cross-session memory" }));
-    expect(await screen.findByText("Cross-session memory", { selector: "h3" })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Cross-session memory" }),
+    );
+    expect(
+      await screen.findByText("Cross-session memory", { selector: "h3" }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     await user.click(screen.getByRole("button", { name: "Stats dashboard" }));
     expect(await screen.findByText("Stats", { selector: "h3" })).toBeVisible();
+  });
+
+  it("starts a new conversation without retaining a private draft", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      screen.getByRole("textbox", { name: "Message Yagami" }),
+      "private draft",
+    );
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+    expect(screen.getByRole("textbox", { name: "Message Yagami" })).toHaveValue(
+      "",
+    );
+    expect(sessionStorage.getItem("yagami:draft")).toBeNull();
+  });
+
+  it("describes a running local model accurately in demonstration mode", async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) =>
+      String(input) === "/api/health"
+        ? Promise.resolve(
+            json({
+              demo_mode: true,
+              mode: "local-model-demo",
+              default_backend: "ollama",
+            }),
+          )
+        : normal(input, init),
+    );
+    render(<App />);
+    expect(
+      await screen.findByText("Local model demonstration:", { exact: true }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(/no AI model is running/i),
+    ).not.toBeInTheDocument();
   });
 
   it("makes echo demonstration mode unmistakable", async () => {
@@ -114,7 +162,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Echo demonstration:", { exact: true })).toBeVisible();
+    expect(
+      await screen.findByText("Echo demonstration:", { exact: true }),
+    ).toBeVisible();
     expect(screen.getByText(/no AI model is running/i)).toBeVisible();
   });
 });

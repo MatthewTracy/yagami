@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type ToastKind = "error" | "warning" | "info";
 
@@ -22,21 +23,27 @@ export function ToastHost() {
   const [items, setItems] = useState<Toast[]>([]);
 
   useEffect(() => {
+    const timers = new Set<ReturnType<typeof setTimeout>>();
     const onToast = (e: Event) => {
       const t = (e as CustomEvent<Toast>).detail;
-      setItems((cur) => [...cur, t]);
-      setTimeout(() => {
+      setItems((cur) => [...cur.slice(-3), t]);
+      const timer = setTimeout(() => {
+        timers.delete(timer);
         setItems((cur) => cur.filter((x) => x.id !== t.id));
       }, 5000);
+      timers.add(timer);
     };
     window.addEventListener("yagami:toast", onToast);
-    return () => window.removeEventListener("yagami:toast", onToast);
+    return () => {
+      window.removeEventListener("yagami:toast", onToast);
+      timers.forEach(clearTimeout);
+    };
   }, []);
 
   if (items.length === 0) return null;
 
-  return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-md pointer-events-none">
+  return createPortal(
+    <div className="fixed top-4 right-4 left-4 sm:left-auto z-60 flex flex-col gap-2 max-w-md pointer-events-none">
       {items.map((t) => (
         <div
           key={t.id}
@@ -55,7 +62,9 @@ export function ToastHost() {
             </span>
             <div className="flex-1 break-words">{t.text}</div>
             <button
-              onClick={() => setItems((cur) => cur.filter((x) => x.id !== t.id))}
+              onClick={() =>
+                setItems((cur) => cur.filter((x) => x.id !== t.id))
+              }
               className="text-zinc-400 hover:text-white text-base leading-none ml-1"
               aria-label="Dismiss"
             >
@@ -64,6 +73,7 @@ export function ToastHost() {
           </div>
         </div>
       ))}
-    </div>
+    </div>,
+    document.querySelector('[role="dialog"]') ?? document.body,
   );
 }

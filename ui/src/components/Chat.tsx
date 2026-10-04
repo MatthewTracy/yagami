@@ -3,12 +3,25 @@ import { connectChat, ClientImage, sendChat, ServerMsg } from "../lib/ws";
 import { AssistantBubble } from "./AssistantBubble";
 import { emitToast } from "./Toast";
 import { ToolCallInfo } from "./ToolCallCard";
+import { Icon } from "./Icon";
 
 const DRAFT_KEY = "yagami:draft";
 
 type Attachment =
-  | { kind: "image"; filename: string; preview_url: string; media_type: string; data_b64: string }
-  | { kind: "document"; filename: string; text: string; chars: number; truncated: boolean };
+  | {
+      kind: "image";
+      filename: string;
+      preview_url: string;
+      media_type: string;
+      data_b64: string;
+    }
+  | {
+      kind: "document";
+      filename: string;
+      text: string;
+      chars: number;
+      truncated: boolean;
+    };
 
 export type RecallHit = {
   id: number;
@@ -20,7 +33,12 @@ export type RecallHit = {
 };
 
 type Bubble =
-  | { role: "user"; text: string; payloadText?: string; attachments?: Attachment[] }
+  | {
+      role: "user";
+      text: string;
+      payloadText?: string;
+      attachments?: Attachment[];
+    }
   | {
       role: "assistant";
       text: string;
@@ -61,7 +79,12 @@ const FORCE_OPTIONS = [
   { value: "stability", label: "Image (Stability)" },
 ];
 
-export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Props) {
+export function Chat({
+  onRouting,
+  onSession,
+  onTurnComplete,
+  loadSessionId,
+}: Props) {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState<string>(() => {
     try {
@@ -70,7 +93,11 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       return "";
     }
   });
-  const [connected, setConnected] = useState(false);
+  const [connection, setConnection] = useState<
+    "connecting" | "connected" | "disconnected"
+  >("connecting");
+  const [connectionKey, setConnectionKey] = useState(0);
+  const connected = connection === "connected";
   const [inFlight, setInFlight] = useState(false);
   const [forceBackend, setForceBackend] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -78,6 +105,9 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const handleRef = useRef(handle);
+  const activeSessionRef = useRef<string | null>(null);
+  handleRef.current = handle;
 
   useEffect(() => {
     const onReset = () => {
@@ -124,7 +154,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
         // Reload page = fresh session. Avoid in inputs to not trample Ctrl+L
         // address-bar focus expectations when user is typing.
         e.preventDefault();
-        window.location.reload();
+        window.dispatchEvent(new Event("yagami:new-chat"));
         return;
       }
     };
@@ -133,6 +163,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   }, [inFlight]);
 
   async function uploadFiles(files: FileList | File[]) {
+    if (!connected || inFlight || uploading) return;
     setUploading(true);
     try {
       const list = Array.from(files);
@@ -170,7 +201,10 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
             ]);
           }
         } catch {
-          emitToast("error", `Upload failed: could not reach the server (${f.name})`);
+          emitToast(
+            "error",
+            `Upload failed: could not reach the server (${f.name})`,
+          );
         }
       }
     } finally {
@@ -198,17 +232,48 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   }
 
   useEffect(() => {
-    const ws = connectChat(handle, () => setConnected(false), () => setConnected(true));
+    let active = true;
+    setConnection("connecting");
+    const ws = connectChat(
+      (message) => {
+        if (active) handleRef.current(message);
+      },
+      () => {
+        if (!active) return;
+        setConnection("disconnected");
+        setInFlight(false);
+        updateLastAssistant((last) => ({ ...last, pending: false }));
+      },
+      () => {
+        if (!active) return;
+        setConnection("connected");
+        if (!loadSessionId && activeSessionRef.current)
+          sendChat(ws, {
+            type: "load_session",
+            session_id: activeSessionRef.current,
+          });
+      },
+    );
     wsRef.current = ws;
-    return () => ws.close();
-  }, []);
+    return () => {
+      active = false;
+      ws.close();
+    };
+  }, [connectionKey]);
 
   useEffect(() => {
     if (loadSessionId && wsRef.current?.readyState === WebSocket.OPEN) {
       let cancelled = false;
+      if (
+        !sendChat(wsRef.current, {
+          type: "load_session",
+          session_id: loadSessionId,
+        })
+      )
+        return;
       setBubbles([]);
-      sendChat(wsRef.current, { type: "load_session", session_id: loadSessionId });
-      fetch(`/api/sessions/${loadSessionId}`)
+      setInFlight(false);
+      fetch(`/api/sessions/${encodeURIComponent(loadSessionId)}`)
         .then((r) => {
           if (!r.ok) throw new Error(`session load failed (${r.status})`);
           return r.json();
@@ -224,13 +289,15 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
               if (m.role !== "user") {
                 return { role: "assistant", text: m.content, pending: false };
               }
-              const savedImages: Attachment[] = (m.images || []).map((image, index) => ({
-                kind: "image",
-                filename: `Saved image ${index + 1}`,
-                media_type: image.media_type,
-                data_b64: image.data_b64,
-                preview_url: `data:${image.media_type};base64,${image.data_b64}`,
-              }));
+              const savedImages: Attachment[] = (m.images || []).map(
+                (image, index) => ({
+                  kind: "image",
+                  filename: `Saved image ${index + 1}`,
+                  media_type: image.media_type,
+                  data_b64: image.data_b64,
+                  preview_url: `data:${image.media_type};base64,${image.data_b64}`,
+                }),
+              );
               return {
                 role: "user",
                 text: m.content || "(attached images)",
@@ -241,18 +308,22 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           );
           setBubbles(loaded);
         })
-        .catch(() => !cancelled && emitToast("error", "Failed to load conversation"));
+        .catch(
+          () => !cancelled && emitToast("error", "Failed to load conversation"),
+        );
       return () => {
         cancelled = true;
       };
     }
-  }, [loadSessionId]);
+  }, [loadSessionId, connected]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [bubbles]);
 
-  function updateLastAssistant(patch: (last: Extract<Bubble, { role: "assistant" }>) => Bubble) {
+  function updateLastAssistant(
+    patch: (last: Extract<Bubble, { role: "assistant" }>) => Bubble,
+  ) {
     setBubbles((b) => {
       const last = b[b.length - 1];
       if (last?.role !== "assistant") return b;
@@ -262,6 +333,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
 
   function handle(m: ServerMsg) {
     if (m.type === "session") {
+      activeSessionRef.current = m.session_id;
       onSession(m.session_id);
       return;
     }
@@ -309,11 +381,19 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       return;
     }
     if (m.type === "text") {
-      updateLastAssistant((last) => ({ ...last, text: last.text + m.content, pending: false }));
+      updateLastAssistant((last) => ({
+        ...last,
+        text: last.text + m.content,
+        pending: false,
+      }));
       return;
     }
     if (m.type === "image_url") {
-      updateLastAssistant((last) => ({ ...last, image: m.content, pending: false }));
+      updateLastAssistant((last) => ({
+        ...last,
+        image: m.content,
+        pending: false,
+      }));
       return;
     }
     if (m.type === "recall") {
@@ -339,6 +419,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
     if (m.type === "error") {
       emitToast("error", m.content);
       updateLastAssistant((last) => ({ ...last, pending: false }));
+      setInFlight(false);
       return;
     }
     if (m.type === "done") {
@@ -350,7 +431,14 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
 
   function send() {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || !wsRef.current || inFlight) return;
+    if (
+      (!text && attachments.length === 0) ||
+      !wsRef.current ||
+      !connected ||
+      inFlight ||
+      uploading
+    )
+      return;
 
     // Fold document attachments into the message text. Image attachments stay
     // as proper vision content blocks.
@@ -363,19 +451,35 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
 
     const images: ClientImage[] = attachments
       .filter((a) => a.kind === "image")
-      .map((a) => (a.kind === "image" ? { media_type: a.media_type, data_b64: a.data_b64 } : null!))
+      .map((a) =>
+        a.kind === "image"
+          ? { media_type: a.media_type, data_b64: a.data_b64 }
+          : null!,
+      )
       .filter(Boolean);
 
-    setBubbles((b) => [
-      ...b,
-      { role: "user", text: text || "(attached files)", payloadText: composed, attachments },
-    ]);
-    const payload: { content: string; force_backend?: string; images?: ClientImage[] } = {
+    const payload: {
+      content: string;
+      force_backend?: string;
+      images?: ClientImage[];
+    } = {
       content: composed,
     };
     if (forceBackend) payload.force_backend = forceBackend;
     if (images.length) payload.images = images;
-    sendChat(wsRef.current, payload);
+    if (!sendChat(wsRef.current, payload)) {
+      emitToast("error", "Message was not sent. Your draft has been kept.");
+      return;
+    }
+    setBubbles((b) => [
+      ...b,
+      {
+        role: "user",
+        text: text || "(attached files)",
+        payloadText: composed,
+        attachments,
+      },
+    ]);
     setInput("");
     setAttachments([]);
     setInFlight(true);
@@ -390,31 +494,32 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
   }
 
   function regenerate() {
-    if (!wsRef.current || inFlight) return;
+    if (!wsRef.current || !connected || inFlight || uploading) return;
     // Find the last user message; drop the trailing assistant bubble if any;
     // resend the same content (the server records a new turn - sticky floor
     // and force_backend still apply).
-    let userBubble: Extract<Bubble, { role: "user" }> | null = null;
-    setBubbles((b) => {
-      const copy = [...b];
-      while (copy.length && copy[copy.length - 1].role === "assistant") copy.pop();
-      const last = copy[copy.length - 1];
-      if (last && last.role === "user") userBubble = last;
-      return copy;
-    });
-    setTimeout(() => {
-      if (!userBubble || !wsRef.current) return;
-      const images: ClientImage[] = (userBubble.attachments || [])
-        .filter((a) => a.kind === "image")
-        .map((a) => ({ media_type: a.media_type, data_b64: a.data_b64 }));
-      const payload: { content: string; force_backend?: string; images?: ClientImage[] } = {
-        content: userBubble.payloadText ?? userBubble.text,
-      };
-      if (forceBackend) payload.force_backend = forceBackend;
-      if (images.length) payload.images = images;
-      sendChat(wsRef.current, payload);
-      setInFlight(true);
-    }, 0);
+    let userIndex = bubbles.length - 1;
+    while (userIndex >= 0 && bubbles[userIndex].role !== "user") userIndex -= 1;
+    const userBubble = bubbles[userIndex];
+    if (!userBubble || userBubble.role !== "user") return;
+    const images: ClientImage[] = (userBubble.attachments || [])
+      .filter((a) => a.kind === "image")
+      .map((a) => ({ media_type: a.media_type, data_b64: a.data_b64 }));
+    const payload: {
+      content: string;
+      force_backend?: string;
+      images?: ClientImage[];
+    } = {
+      content: userBubble.payloadText ?? userBubble.text,
+    };
+    if (forceBackend) payload.force_backend = forceBackend;
+    if (images.length) payload.images = images;
+    if (!sendChat(wsRef.current, payload)) {
+      emitToast("error", "Could not regenerate. Reconnect and try again.");
+      return;
+    }
+    setBubbles(bubbles.slice(0, userIndex + 1));
+    setInFlight(true);
   }
 
   return (
@@ -423,10 +528,64 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
     >
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+      <div
+        ref={scrollRef}
+        className={`chat-scroll flex-1 min-h-0 overflow-y-auto space-y-4 ${bubbles.length === 0 ? "flex" : ""}`}
+      >
         {bubbles.length === 0 && (
-        <div className="text-zinc-400 text-sm">
-            Say hi. Try "what is 2+2", "draw a red sailboat", or paste a long passage.
+          <div className="welcome">
+            <div className="welcome-icon">
+              <Icon name="shield" size={28} />
+            </div>
+            <p className="welcome-eyebrow">A workspace for governed AI</p>
+            <h2>
+              Your context.
+              <br />
+              Your control.
+            </h2>
+            <p className="welcome-copy">
+              Work with local and cloud models through one policy gateway. Each
+              turn has a route, a reason, and a record you can review.
+            </p>
+            <div className="suggestion-grid">
+              <button
+                className="suggestion-card"
+                disabled={!connected}
+                onClick={() => {
+                  setInput(
+                    "Explain how an AI context firewall works in plain language.",
+                  );
+                  document.getElementById("message-input")?.focus();
+                }}
+              >
+                <Icon name="message" />
+                <strong>Explore a topic</strong>
+                <span>Get a clear explanation.</span>
+              </button>
+              <button
+                className="suggestion-card"
+                disabled={!connected}
+                onClick={() => {
+                  setInput(
+                    "Help me break a complex project into practical next steps.",
+                  );
+                  document.getElementById("message-input")?.focus();
+                }}
+              >
+                <Icon name="activity" />
+                <strong>Plan your next step</strong>
+                <span>Turn a problem into a plan.</span>
+              </button>
+              <button
+                className="suggestion-card"
+                disabled={!connected}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Icon name="document" />
+                <strong>Review a document</strong>
+                <span>Attach a file to get started.</span>
+              </button>
+            </div>
           </div>
         )}
         {bubbles.map((b, i) => {
@@ -434,7 +593,7 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
             return (
               <div
                 key={i}
-                className="max-w-2xl px-3 py-2 rounded-lg text-sm whitespace-pre-wrap bg-zinc-800 ml-auto"
+                className="max-w-2xl px-4 py-3 rounded-xl text-sm whitespace-pre-wrap break-words bg-zinc-800 ml-auto"
               >
                 {b.text}
                 {b.attachments?.some((a) => a.kind === "image") && (
@@ -476,117 +635,160 @@ export function Chat({ onRouting, onSession, onTurnComplete, loadSessionId }: Pr
           );
         })}
       </div>
-      <div className="p-3 border-t border-zinc-800 flex gap-2 items-end shrink-0">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".txt,.md,.markdown,.pdf,.log,.csv,.json,image/*"
-          onChange={(e) => {
-            if (e.target.files?.length) uploadFiles(e.target.files);
-            e.target.value = "";
-          }}
-          className="hidden"
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!connected || inFlight || uploading}
-          title="Attach file (PDF, MD, TXT, image) - or drag-drop / paste"
-          aria-label="Attach file"
-          className="px-2 py-2 text-zinc-400 hover:text-zinc-100 text-base disabled:opacity-50"
-        >
-          {uploading ? "…" : "📎"}
-        </button>
-        <div className="flex-1 min-w-0">
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1 mb-1">
-              {attachments.map((a, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 text-[11px] text-zinc-300"
-                >
-                  {a.kind === "image" ? (
-                    <img src={a.preview_url} className="h-4 w-4 object-cover rounded-sm" alt="" />
-                  ) : (
-                    <span>📄</span>
-                  )}
-                  <span className="max-w-[180px] truncate">{a.filename}</span>
-                  <button
-                    onClick={() => setAttachments((arr) => arr.filter((_, j) => j !== i))}
-                    className="text-zinc-400 hover:text-red-400"
-                    title="Remove"
-                    aria-label={`Remove ${a.filename}`}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <textarea
-            rows={1}
-            className="block w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm outline-none focus:border-zinc-600 disabled:opacity-50 resize-none max-h-64 overflow-y-auto"
-            placeholder={
-              !connected
-                ? "connecting…"
-                : inFlight
-                  ? "waiting for reply…"
-                  : "Message Yagami… (Shift+Enter newline · /cloud /local /image /think /code · 📎/drop/paste files)"
-            }
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              const el = e.currentTarget;
-              el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 256) + "px";
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            onPaste={onPaste}
-            disabled={!connected || inFlight}
-          />
-          {input.length > 200 && (
-          <div className="text-[10px] text-zinc-400 mt-1 px-1">
-              {input.length.toLocaleString()} chars
-              {input.length > 6000 && " · will route to cloud unless flagged sensitive"}
-            </div>
+      <div className="composer-area shrink-0">
+        <div className="composer-status" role="status">
+          <span className={`status-dot ${connection}`} />
+          <span>
+            {connected
+              ? "Connected to gateway"
+              : connection === "connecting"
+                ? "Connecting to gateway…"
+                : "Disconnected from gateway"}
+          </span>
+          {connection === "disconnected" && (
+            <button
+              className="underline underline-offset-4 ml-auto"
+              onClick={() => setConnectionKey((key) => key + 1)}
+            >
+              Reconnect
+            </button>
           )}
         </div>
-        <select
-          value={forceBackend}
-          onChange={(e) => setForceBackend(e.target.value)}
-          disabled={!connected || inFlight}
-          title="Force routing to a specific backend (PHI guard still applies)"
-          className="bg-zinc-900 border border-zinc-800 rounded-md px-2 py-2 text-xs text-zinc-300 disabled:opacity-50 focus:border-zinc-600 outline-none"
-        >
-          {FORCE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-        {inFlight ? (
+        <div className="composer-row">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".txt,.md,.markdown,.pdf,.log,.csv,.json,image/*"
+            onChange={(e) => {
+              if (e.target.files?.length) uploadFiles(e.target.files);
+              e.target.value = "";
+            }}
+            className="hidden"
+          />
           <button
-            onClick={stop}
-            className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-md text-sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!connected || inFlight || uploading}
+            title="Attach file (PDF, MD, TXT, image) - or drag-drop / paste"
+            aria-label="Attach file"
+            className="toolbar-button min-h-11 disabled:opacity-50"
           >
-            Stop
+            {uploading ? "…" : <Icon name="paperclip" size={20} />}
           </button>
-        ) : (
+          <div className="composer-input">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-1">
+                {attachments.map((a, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 text-[11px] text-zinc-300"
+                  >
+                    {a.kind === "image" ? (
+                      <img
+                        src={a.preview_url}
+                        className="h-4 w-4 object-cover rounded-sm"
+                        alt=""
+                      />
+                    ) : (
+                      <span>📄</span>
+                    )}
+                    <span className="max-w-[180px] truncate">{a.filename}</span>
+                    <button
+                      onClick={() =>
+                        setAttachments((arr) => arr.filter((_, j) => j !== i))
+                      }
+                      className="text-zinc-400 hover:text-red-400"
+                      title="Remove"
+                      aria-label={`Remove ${a.filename}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <textarea
+              id="message-input"
+              aria-label="Message Yagami"
+              rows={1}
+              className="composer-textarea"
+              placeholder={
+                !connected
+                  ? "connecting…"
+                  : inFlight
+                    ? "waiting for reply…"
+                    : "Message Yagami…"
+              }
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                const el = e.currentTarget;
+                el.style.height = "auto";
+                el.style.height = Math.min(el.scrollHeight, 256) + "px";
+              }}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              onPaste={onPaste}
+              disabled={!connected || inFlight}
+            />
+            {input.length > 200 && (
+              <div className="text-[10px] text-zinc-400 mt-1 px-1">
+                {input.length.toLocaleString()} chars
+                {input.length > 6000 && " · routing remains subject to policy"}
+              </div>
+            )}
+          </div>
+          <select
+            value={forceBackend}
+            onChange={(e) => setForceBackend(e.target.value)}
+            disabled={!connected || inFlight}
+            title="Force routing to a specific backend (PHI guard still applies)"
+            aria-label="Routing preference"
+            className="composer-select disabled:opacity-50"
+          >
+            {FORCE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {inFlight ? (
+            <button onClick={stop} className="send-button stop-button">
+              Stop
+            </button>
+          ) : (
+            <button
+              onClick={send}
+              disabled={
+                !connected ||
+                uploading ||
+                (!input.trim() && attachments.length === 0)
+              }
+              className="send-button"
+            >
+              Send <Icon name="arrow" size={16} />
+            </button>
+          )}
+        </div>
+        <div className="composer-hint">
+          <span>Shift + Enter for a new line · Attach or drop files</span>
           <button
-            onClick={send}
-            disabled={!connected}
-            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-400 rounded-md text-sm"
+            onClick={() => window.dispatchEvent(new Event("yagami:shortcuts"))}
+            className="shrink-0 hover:text-white"
+            aria-label="Keyboard shortcuts"
           >
-            Send
+            Shortcuts
           </button>
-        )}
+        </div>
       </div>
     </div>
   );
 }
-

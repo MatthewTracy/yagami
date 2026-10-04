@@ -126,7 +126,7 @@ async def chat_endpoint(
                 continue
 
             user_text = payload.get("content", "")
-            images_raw = payload.get("images") or []
+            images_raw = payload.get("images", [])
             force_backend = payload.get("force_backend")
             if not isinstance(user_text, str):
                 await _refuse_turn(ws, "content must be a string")
@@ -145,6 +145,12 @@ async def chat_endpoint(
                 continue
             if isinstance(force_backend, str) and len(force_backend) > 128:
                 await _refuse_turn(ws, "force_backend exceeds 128 characters")
+                continue
+            if any(
+                not isinstance(image, dict) or not isinstance(image.get("data_b64"), str)
+                for image in images_raw
+            ):
+                await _refuse_turn(ws, "invalid image attachment")
                 continue
             if (
                 sum(

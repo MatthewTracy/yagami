@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Dialog } from "./Dialog";
 import { fetchJson } from "../lib/http";
 import { emitToast } from "./Toast";
 
@@ -20,7 +21,12 @@ type Cfg = {
       trust_zone: "device" | "private_network";
       performance_profile: "memory_saver" | "balanced" | "performance";
     };
-    foundry_local: { enabled: boolean; base_url: string; model: string; max_tokens: number };
+    foundry_local: {
+      enabled: boolean;
+      base_url: string;
+      model: string;
+      max_tokens: number;
+    };
     anthropic: { model: string; max_tokens: number };
     stability: { model: string };
     routing: {
@@ -38,7 +44,11 @@ type Cfg = {
   };
   defaults: Cfg["config"];
   prompts: { phi_default: string; phi_medical_default: string };
-  notes: { phi_must_be_local: string; live_reload: string; storage_encryption: string };
+  notes: {
+    phi_must_be_local: string;
+    live_reload: string;
+    storage_encryption: string;
+  };
 };
 
 type Props = {
@@ -50,33 +60,61 @@ export function SettingsModal({ open, onClose }: Props) {
   const [data, setData] = useState<Cfg | null>(null);
   const [tab, setTab] = useState<Section>("models");
   const [saving, setSaving] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
+    setData(null);
+    setLoadFailed(false);
     fetchJson<Cfg>("/api/config")
       .then((d) => {
+        if (!active) return;
+        if (!d.config || !d.defaults || !d.notes)
+          throw new Error("invalid settings response");
         setData(d);
         setDirty(false);
       })
-      .catch(() => emitToast("error", "Failed to load /api/config"));
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      .catch(() => {
+        if (active) setLoadFailed(true);
+      });
+    return () => {
+      active = false;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, retryKey]);
 
   if (!open) return null;
   if (!data) {
     return (
       <Backdrop onClose={onClose}>
-        <div className="text-zinc-300 text-sm">Loading settings…</div>
+        <div className="dialog-heading">
+          <h3>Settings</h3>
+          <button
+            className="toolbar-button"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        {loadFailed ? (
+          <div role="alert" className="text-sm text-zinc-300">
+            Settings could not be loaded.
+            <button
+              className="block mt-3 underline"
+              onClick={() => setRetryKey((key) => key + 1)}
+            >
+              Try again
+            </button>
+          </div>
+        ) : (
+          <div role="status" className="text-zinc-300 text-sm">
+            Loading settings…
+          </div>
+        )}
       </Backdrop>
     );
   }
@@ -86,7 +124,15 @@ export function SettingsModal({ open, onClose }: Props) {
     patch: Partial<Cfg["config"][K]>,
   ) {
     setData((d) =>
-      d ? { ...d, config: { ...d.config, [section]: { ...d.config[section], ...patch } } } : d,
+      d
+        ? {
+            ...d,
+            config: {
+              ...d.config,
+              [section]: { ...d.config[section], ...patch },
+            },
+          }
+        : d,
     );
     setDirty(true);
   }
@@ -98,7 +144,10 @@ export function SettingsModal({ open, onClose }: Props) {
             ...d,
             config: {
               ...d.config,
-              profiles: { ...d.config.profiles, [name]: { ...d.config.profiles[name], ...patch } },
+              profiles: {
+                ...d.config.profiles,
+                [name]: { ...d.config.profiles[name], ...patch },
+              },
             },
           }
         : d,
@@ -110,7 +159,15 @@ export function SettingsModal({ open, onClose }: Props) {
     const name = newProfileName.trim();
     if (!data || !name || data.config.profiles[name]) return;
     setData((d) =>
-      d ? { ...d, config: { ...d.config, profiles: { ...d.config.profiles, [name]: {} } } } : d,
+      d
+        ? {
+            ...d,
+            config: {
+              ...d.config,
+              profiles: { ...d.config.profiles, [name]: {} },
+            },
+          }
+        : d,
     );
     setNewProfileName("");
     setDirty(true);
@@ -122,10 +179,16 @@ export function SettingsModal({ open, onClose }: Props) {
       const profiles = { ...d.config.profiles };
       delete profiles[name];
       const active_profile =
-        d.config.routing.active_profile === name ? "" : d.config.routing.active_profile;
+        d.config.routing.active_profile === name
+          ? ""
+          : d.config.routing.active_profile;
       return {
         ...d,
-        config: { ...d.config, profiles, routing: { ...d.config.routing, active_profile } },
+        config: {
+          ...d.config,
+          profiles,
+          routing: { ...d.config.routing, active_profile },
+        },
       };
     });
     setDirty(true);
@@ -171,7 +234,10 @@ export function SettingsModal({ open, onClose }: Props) {
       const r = await fetch("/api/privacy/cleanup", { method: "POST" });
       if (!r.ok) throw new Error(await r.text());
       const result = await r.json();
-      emitToast("info", `Retention cleanup removed ${result.sessions_deleted} conversation(s).`);
+      emitToast(
+        "info",
+        `Retention cleanup removed ${result.sessions_deleted} conversation(s).`,
+      );
     } catch {
       emitToast("error", "Retention cleanup failed");
     }
@@ -183,7 +249,7 @@ export function SettingsModal({ open, onClose }: Props) {
         ? "all conversations, memory, and indexed documents"
         : "all conversations and cross-session memory";
     if (!confirm(`Permanently delete ${label}? This cannot be undone.`)) return;
-    if (prompt('Type DELETE to confirm') !== "DELETE") return;
+    if (prompt("Type DELETE to confirm") !== "DELETE") return;
     try {
       const r = await fetch("/api/privacy/data", {
         method: "DELETE",
@@ -211,7 +277,9 @@ export function SettingsModal({ open, onClose }: Props) {
         </button>
       </div>
       <div className="flex gap-1 mb-3 border-b border-zinc-800">
-        {(["models", "routing", "profiles", "privacy", "prompts"] as Section[]).map((s) => (
+        {(
+          ["models", "routing", "profiles", "privacy", "prompts"] as Section[]
+        ).map((s) => (
           <button
             key={s}
             onClick={() => setTab(s)}
@@ -241,21 +309,27 @@ export function SettingsModal({ open, onClose }: Props) {
                   value={c.ollama.trust_zone}
                   onChange={(e) =>
                     update("ollama", {
-                      trust_zone: e.target.value as "device" | "private_network",
+                      trust_zone: e.target.value as
+                        | "device"
+                        | "private_network",
                     })
                   }
                   className="flex-1 rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-zinc-200"
                 >
                   <option value="device">This device</option>
-                  <option value="private_network">Trusted private network</option>
+                  <option value="private_network">
+                    Trusted private network
+                  </option>
                 </select>
               </label>
               <p className="text-[10px] text-zinc-400">
-                Private-network mode explicitly trusts that service with classifier input,
-                generation prompts, and embeddings.
+                Private-network mode explicitly trusts that service with
+                classifier input, generation prompts, and embeddings.
               </p>
               <label className="flex items-center gap-2">
-                <span className="text-zinc-400 w-44 shrink-0">Local performance</span>
+                <span className="text-zinc-400 w-44 shrink-0">
+                  Local performance
+                </span>
                 <select
                   value={c.ollama.performance_profile}
                   onChange={(e) =>
@@ -268,14 +342,19 @@ export function SettingsModal({ open, onClose }: Props) {
                   }
                   className="flex-1 rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-zinc-200"
                 >
-                  <option value="memory_saver">Memory saver (30-second idle)</option>
+                  <option value="memory_saver">
+                    Memory saver (30-second idle)
+                  </option>
                   <option value="balanced">Balanced (5-minute idle)</option>
-                  <option value="performance">Performance (preload, 30-minute idle)</option>
+                  <option value="performance">
+                    Performance (preload, 30-minute idle)
+                  </option>
                 </select>
               </label>
               <p className="text-[10px] text-zinc-400">
-                Performance mode reduces first-token delays but reserves memory for configured
-                local models. Restart Yagami after changing this setting.
+                Performance mode reduces first-token delays but reserves memory
+                for configured local models. Restart Yagami after changing this
+                setting.
               </p>
               <Field
                 label="Generation model"
@@ -292,7 +371,10 @@ export function SettingsModal({ open, onClose }: Props) {
                 value={c.routing.local_model_overrides.phi ?? ""}
                 onChange={(v) =>
                   update("routing", {
-                    local_model_overrides: { ...c.routing.local_model_overrides, phi: v },
+                    local_model_overrides: {
+                      ...c.routing.local_model_overrides,
+                      phi: v,
+                    },
                   })
                 }
               />
@@ -351,7 +433,8 @@ export function SettingsModal({ open, onClose }: Props) {
               />
             </Group>
             <p className="text-[10px] text-zinc-400 italic mt-2">
-              Note: model URL or name changes need a uvicorn restart to fully take effect.
+              Note: model URL or name changes need a uvicorn restart to fully
+              take effect.
             </p>
           </>
         )}
@@ -392,19 +475,23 @@ export function SettingsModal({ open, onClose }: Props) {
                 onChange={(v) => update("routing", { daily_spend_cap_usd: v })}
               />
               <label className="flex items-center gap-2">
-                <span className="text-zinc-400 w-44 shrink-0">Block all cloud routes</span>
+                <span className="text-zinc-400 w-44 shrink-0">
+                  Block all cloud routes
+                </span>
                 <input
                   type="checkbox"
                   checked={c.routing.block_cloud}
-                  onChange={(e) => update("routing", { block_cloud: e.target.checked })}
+                  onChange={(e) =>
+                    update("routing", { block_cloud: e.target.checked })
+                  }
                   className="accent-emerald-600"
                 />
               </label>
               <p className="text-[10px] text-zinc-400">
-                Once today's spend reaches the cap - or "block all cloud" is
-                on - cloud backends are refused with an explicit error. Local
-                Ollama stays available. Note: cap 0 means NO cap; use "block
-                all cloud" for a zero-cloud setup.
+                Once today's spend reaches the cap - or "block all cloud" is on
+                - cloud backends are refused with an explicit error. Local
+                Ollama stays available. Note: cap 0 means NO cap; use "block all
+                cloud" for a zero-cloud setup.
               </p>
             </Group>
             <Group title="Privacy (locked)">
@@ -414,7 +501,9 @@ export function SettingsModal({ open, onClose }: Props) {
                   ON · locked
                 </span>
               </div>
-              <p className="text-[10px] text-zinc-400">{data.notes.phi_must_be_local}</p>
+              <p className="text-[10px] text-zinc-400">
+                {data.notes.phi_must_be_local}
+              </p>
             </Group>
           </>
         )}
@@ -429,14 +518,16 @@ export function SettingsModal({ open, onClose }: Props) {
                 onChange={(v) => update("routing", { active_profile: v })}
               />
               <p className="text-[10px] text-zinc-400">
-                "" = no profile - [routing] above applies directly. A
-                profile overrides default backend / spend cap / long-message
-                threshold / block-cloud only. PHI must stay local either
-                way; no profile can change that.
+                "" = no profile - [routing] above applies directly. A profile
+                overrides default backend / spend cap / long-message threshold /
+                block-cloud only. PHI must stay local either way; no profile can
+                change that.
               </p>
             </Group>
             {Object.keys(c.profiles).length === 0 && (
-              <p className="text-[10px] text-zinc-400 italic">No profiles yet.</p>
+              <p className="text-[10px] text-zinc-400 italic">
+                No profiles yet.
+              </p>
             )}
             {Object.entries(c.profiles).map(([name, p]) => (
               <Group key={name} title={name}>
@@ -459,36 +550,47 @@ export function SettingsModal({ open, onClose }: Props) {
                   label="Default backend"
                   value={p.default_backend ?? c.routing.default_backend}
                   options={[
-                  "ollama",
-                  "foundry_local",
-                  "anthropic",
-                  "openai",
-                  "mistral",
-                  "groq",
-                  "openrouter",
-                  "gemini",
-                  "stability",
-                  "echo",
-                ]}
+                    "ollama",
+                    "foundry_local",
+                    "anthropic",
+                    "openai",
+                    "mistral",
+                    "groq",
+                    "openrouter",
+                    "gemini",
+                    "stability",
+                    "echo",
+                  ]}
                   onChange={(v) => updateProfile(name, { default_backend: v })}
                 />
                 <NumField
                   label="Daily cap (USD, 0 = no cap)"
                   value={p.daily_spend_cap_usd ?? c.routing.daily_spend_cap_usd}
                   step={0.5}
-                  onChange={(v) => updateProfile(name, { daily_spend_cap_usd: v })}
+                  onChange={(v) =>
+                    updateProfile(name, { daily_spend_cap_usd: v })
+                  }
                 />
                 <NumField
                   label="Long-message threshold"
-                  value={p.long_message_token_threshold ?? c.routing.long_message_token_threshold}
-                  onChange={(v) => updateProfile(name, { long_message_token_threshold: v })}
+                  value={
+                    p.long_message_token_threshold ??
+                    c.routing.long_message_token_threshold
+                  }
+                  onChange={(v) =>
+                    updateProfile(name, { long_message_token_threshold: v })
+                  }
                 />
                 <label className="flex items-center gap-2">
-                  <span className="text-zinc-400 w-44 shrink-0">Block all cloud routes</span>
+                  <span className="text-zinc-400 w-44 shrink-0">
+                    Block all cloud routes
+                  </span>
                   <input
                     type="checkbox"
                     checked={p.block_cloud ?? c.routing.block_cloud}
-                    onChange={(e) => updateProfile(name, { block_cloud: e.target.checked })}
+                    onChange={(e) =>
+                      updateProfile(name, { block_cloud: e.target.checked })
+                    }
                     className="accent-emerald-600"
                   />
                 </label>
@@ -523,12 +625,14 @@ export function SettingsModal({ open, onClose }: Props) {
               <NumField
                 label="Retention (days)"
                 value={c.privacy.session_retention_days}
-                onChange={(v) => update("privacy", { session_retention_days: v })}
+                onChange={(v) =>
+                  update("privacy", { session_retention_days: v })
+                }
               />
               <p className="text-[10px] text-zinc-400">
-                0 keeps conversations until you delete them. A positive value removes inactive
-                conversations and their derived cross-session memories. Cleanup runs at startup
-                and every six hours.
+                0 keeps conversations until you delete them. A positive value
+                removes inactive conversations and their derived cross-session
+                memories. Cleanup runs at startup and every six hours.
               </p>
               <button
                 onClick={cleanupExpired}
@@ -559,18 +663,22 @@ export function SettingsModal({ open, onClose }: Props) {
                 </button>
               </div>
               <p className="text-[10px] text-zinc-400">
-                “Everything” also removes document chunks you explicitly indexed. Configuration
-                and API keys are retained.
+                “Everything” also removes document chunks you explicitly
+                indexed. Configuration and API keys are retained.
               </p>
             </Group>
             <Group title="Encryption at rest">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-zinc-300">Application-managed encryption</span>
+                <span className="text-zinc-300">
+                  Application-managed encryption
+                </span>
                 <span className="px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 font-medium">
                   NOT ENABLED
                 </span>
               </div>
-              <p className="text-[10px] text-zinc-400">{data.notes.storage_encryption}</p>
+              <p className="text-[10px] text-zinc-400">
+                {data.notes.storage_encryption}
+              </p>
             </Group>
           </>
         )}
@@ -579,8 +687,9 @@ export function SettingsModal({ open, onClose }: Props) {
           <>
             <Group title="Private-data system prompt">
               <p className="text-[10px] text-zinc-400">
-                Sent to local Ollama for non-medical PHI so authorized administrative tasks do
-                not get refused merely because private identifiers are present.
+                Sent to local Ollama for non-medical PHI so authorized
+                administrative tasks do not get refused merely because private
+                identifiers are present.
               </p>
               <textarea
                 readOnly
@@ -594,7 +703,9 @@ export function SettingsModal({ open, onClose }: Props) {
                 Sent to local Ollama whenever a turn is classified as
                 <code className="ml-1 mr-1 px-1 bg-zinc-800">phi_medical</code>.
                 Read-only here - edit{" "}
-                <code className="px-1 bg-zinc-800">src/yagami/router/prompts.py</code>{" "}
+                <code className="px-1 bg-zinc-800">
+                  src/yagami/router/prompts.py
+                </code>{" "}
                 to change.
               </p>
               <textarea
@@ -609,7 +720,9 @@ export function SettingsModal({ open, onClose }: Props) {
       </div>
 
       <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800">
-        <span className="text-[10px] text-zinc-400 italic">{data.notes.live_reload}</span>
+        <span className="text-[10px] text-zinc-400 italic">
+          {data.notes.live_reload}
+        </span>
         <div className="flex gap-2">
           <button
             onClick={onClose}
@@ -630,26 +743,32 @@ export function SettingsModal({ open, onClose }: Props) {
   );
 }
 
-function Backdrop({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function Backdrop({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-8"
-      onClick={onClose}
-    >
-      <div
-        className="bg-zinc-900 border border-zinc-700 rounded-lg p-5 max-w-xl w-full mx-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
+    <Dialog title="Settings" onClose={onClose} className="max-w-xl">
+      {children}
+    </Dialog>
   );
 }
 
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+function Group({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-1.5 p-2.5 rounded border border-zinc-800 bg-zinc-950/30">
-      <div className="text-[10px] uppercase tracking-wider text-zinc-400">{title}</div>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-400">
+        {title}
+      </div>
       {children}
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -40,24 +40,38 @@ export function AssistantBubble({
   const [copied, setCopied] = useState(false);
   const [rating, setRating] = useState<-1 | 0 | 1>(0);
   const [recallOpen, setRecallOpen] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const feedbackInFlight = useRef(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   async function sendFeedback(r: -1 | 1) {
-    if (!decisionId) return;
+    if (!decisionId || feedbackInFlight.current) return;
+    feedbackInFlight.current = true;
+    setFeedbackPending(true);
     const next = rating === r ? 0 : r; // toggle off if clicked again
     const previous = rating;
     setRating(next);
     try {
       const response =
         next === 0
-          ? await fetch(`/api/decisions/${decisionId}/feedback`, { method: "DELETE" })
+          ? await fetch(`/api/decisions/${decisionId}/feedback`, {
+              method: "DELETE",
+            })
           : await fetch(`/api/decisions/${decisionId}/feedback`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ rating: next }),
             });
-      if (!response.ok) throw new Error(`feedback request failed (${response.status})`);
+      if (!response.ok)
+        throw new Error(`feedback request failed (${response.status})`);
     } catch {
       setRating(previous);
+    } finally {
+      feedbackInFlight.current = false;
+      setFeedbackPending(false);
     }
   }
 
@@ -65,7 +79,8 @@ export function AssistantBubble({
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // ignore
     }
@@ -77,11 +92,13 @@ export function AssistantBubble({
         <div className="mb-1">
           <button
             onClick={() => setRecallOpen((v) => !v)}
+            aria-expanded={recallOpen}
             className="text-[10px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
           >
             <span>🧠</span>
             <span>
-              recalled {recall.length} from prior session{recall.length === 1 ? "" : "s"}
+              recalled {recall.length} from prior session
+              {recall.length === 1 ? "" : "s"}
             </span>
             <span className="text-zinc-600">{recallOpen ? "▾" : "▸"}</span>
           </button>
@@ -92,7 +109,7 @@ export function AssistantBubble({
                   key={h.id}
                   className="text-[10px] p-1.5 rounded border border-zinc-800 bg-zinc-950/40"
                 >
-              <div className="text-zinc-400 mb-0.5">
+                  <div className="text-zinc-400 mb-0.5">
                     {h.role} · {h.session_id.slice(0, 8)} · {h.source}
                     {h.distance != null ? ` · d=${h.distance.toFixed(3)}` : ""}
                   </div>
@@ -121,6 +138,14 @@ export function AssistantBubble({
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
+            components={{
+              pre: ({ node: _node, ...props }) => (
+                <pre {...props} tabIndex={0} aria-label="Code sample" />
+              ),
+              table: ({ node: _node, ...props }) => (
+                <table {...props} tabIndex={0} />
+              ),
+            }}
           >
             {text}
           </ReactMarkdown>
@@ -133,12 +158,15 @@ export function AssistantBubble({
         <img src={image} alt="generated" className="mt-2 rounded max-w-full" />
       )}
       {!pending && (text || image) && (
-        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="assistant-actions absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           {decisionId && (
             <>
               <button
                 onClick={() => sendFeedback(1)}
                 title="Helpful"
+                aria-label="Helpful"
+                aria-pressed={rating === 1}
+                disabled={feedbackPending}
                 className={`text-[10px] px-1.5 py-0.5 rounded ${
                   rating === 1
                     ? "bg-emerald-800 text-emerald-100"
@@ -150,6 +178,9 @@ export function AssistantBubble({
               <button
                 onClick={() => sendFeedback(-1)}
                 title="Not helpful"
+                aria-label="Not helpful"
+                aria-pressed={rating === -1}
+                disabled={feedbackPending}
                 className={`text-[10px] px-1.5 py-0.5 rounded ${
                   rating === -1
                     ? "bg-red-900 text-red-100"
@@ -164,6 +195,7 @@ export function AssistantBubble({
             <button
               onClick={copy}
               title={copied ? "Copied" : "Copy"}
+              aria-label={copied ? "Copied" : "Copy"}
               className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
             >
               {copied ? "✓" : "copy"}
@@ -173,6 +205,7 @@ export function AssistantBubble({
             <button
               onClick={onRegenerate}
               title="Regenerate"
+              aria-label="Regenerate"
               className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
             >
               ↻

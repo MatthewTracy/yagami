@@ -96,7 +96,11 @@ def _safe_eval(node: ast.AST) -> int | float:
 def _eval_node(node: ast.AST) -> int | float:
     if isinstance(node, ast.Expression):
         return _safe_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    ):
         return node.value
     if isinstance(node, ast.BinOp):
         binary_op = _BIN_OPS.get(type(node.op))

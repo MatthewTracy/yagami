@@ -30,6 +30,8 @@ local AI answers, install Ollama and run
 
 https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2
 
+![Yagami workspace with conversation history, chat, and session insights](docs/images/workspace.png)
+
 Yagami is for developers and platform/security teams that need to control
 where agent context goes and which tools it may execute. For example: a coding
 agent can keep repository secrets on-device and require an identity-bound,
