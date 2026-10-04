@@ -275,3 +275,46 @@ async def test_disconnect_after_done_does_not_cancel_stream_finalization(fresh_d
     gateway.release.set()
     await asyncio.wait_for(endpoint, timeout=2)
     assert gateway.completed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        42,
+        "hello",
+        False,
+        {"content": None},
+        {"content": 42},
+        {"content": []},
+        {"content": "hello", "images": False},
+        {"content": "hello", "images": {}},
+        {"content": "hello", "images": ""},
+        {"content": "hello", "images": None},
+        {"content": "hello", "images": [None]},
+        {"content": "hello", "images": [{"media_type": "image/png", "data_b64": 42}]},
+        {"content": "hello", "images": [{"media_type": "image/png", "data_b64": "invalid"}]},
+        {"content": "hello", "images": [{"media_type": "text/plain", "data_b64": "aGVsbG8="}]},
+        {"content": "hello", "images": [{}] * 5},
+        {"content": "hello", "force_backend": []},
+        {"type": "unknown", "content": "hello"},
+    ],
+)
+async def test_malformed_turn_is_refused_and_the_connection_remains_usable(fresh_db, payload):
+    ws = _FakeWebSocket()
+    backend = _RecordingBackend()
+    endpoint = asyncio.create_task(chat_endpoint(ws, SessionStore(), _gateway(backend)))
+    try:
+        await ws.wait_for(lambda message: message.get("type") == "session")
+        await ws.incoming.put(payload)
+        error = await ws.wait_for(lambda message: message.get("type") == "error")
+        assert error["content"]
+        assert backend.calls == 0
+        await ws.incoming.put({"content": "hello"})
+        await ws.wait_for(lambda message: message.get("type") == "routing")
+        await ws.wait_for(lambda message: message.get("type") == "done" and backend.calls == 1)
+        assert backend.calls == 1
+    finally:
+        await ws.incoming.put(_DISCONNECT)
+        await asyncio.wait_for(endpoint, timeout=2)

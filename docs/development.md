@@ -59,9 +59,21 @@ python -m evals.run_routing
 python -m evals.run_containment
 
 cd ui
-npx tsc --noEmit
+npm ci
+npm test
 npm run build
+npx playwright install --with-deps chromium firefox webkit
+npm run test:e2e
 ```
+
+The UI suite covers reconnects, failed sends, IME input, pending uploads,
+settings and deletion failures, stale responses, feedback, and privacy controls.
+Coverage floors are 75% statements, 70% branches/functions, and 80% lines.
+Browser checks exercise Chromium desktop/tablet/mobile, Firefox, and WebKit,
+including keyboard navigation, focus restoration, wide responses, and automated
+WCAG accessibility checks. These browser tests use deterministic API/socket
+fixtures; live classifier containment is evaluated separately as described in
+[reproducible evaluation](benchmarks.md).
 
 Some evaluation commands require a running Yagami service; see the
 [benchmark guide](benchmarks.md) for their setup and output formats.
@@ -99,6 +111,24 @@ Skills must not raise into a chat turn. Catch operational failures and return
 `SkillResult(ok=False, error=...)`. Networked or third-party skills should use
 a conservative sensitivity ceiling unless their data handling has been
 explicitly designed and tested for sensitive context.
+
+The built-in `calc.eval` tool bounds synchronous work before evaluating an
+expression: at most 4,096 characters, 256 AST nodes, and 32 levels of nesting.
+Integer values, including intermediate results, are limited to 4,096 bits;
+exponent magnitude is limited to 10,000 and factorial arguments to 512.
+Oversized or malformed expressions return a failed `SkillResult`. Integer
+powers use a conservative size estimate before allocating the result, so
+some calculations close to the size limit may also be rejected. Boolean literals
+are rejected rather than treated as integers.
+
+`web.fetch` returns the exception type on fetch failures without copying the
+exception message, which may contain credentials or query parameters from
+the requested URL. Unknown response charsets also return a failed result.
+The 15-second deadline covers the complete redirect chain and response stream.
+Every redirect is checked against the HTTPS allowlist; URLs containing credentials,
+control characters, or invalid ports are rejected before network access. Requests
+ask for identity encoding and reject compressed responses before decoding to keep
+the byte limit effective. Plain-text responses preserve angle brackets and layout.
 
 The implementation examples are in
 [`src/yagami/backends`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/backends)

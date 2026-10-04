@@ -13,6 +13,7 @@ remote host's logs.
 from __future__ import annotations
 
 import re
+import asyncio
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
@@ -28,6 +29,7 @@ _DEFAULT_ALLOWLIST = {
 }
 _MAX_BYTES = 200_000  # truncate response to keep tool result LLM-friendly
 _MAX_REDIRECTS = 5
+_FETCH_TIMEOUT_SECONDS = 15.0
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
@@ -89,10 +91,15 @@ class WebFetch:
         self._transport = transport
 
     def _validate_url(self, url: str) -> str | None:
+        if any(ord(char) < 32 or ord(char) == 127 for char in url):
+            return "URL must not contain control characters"
         try:
             parsed = urlparse(url)
-        except ValueError as exc:
-            return f"invalid URL: {exc}"
+            parsed.port  # validate malformed and out-of-range ports before connecting
+        except ValueError:
+            return "invalid URL"
+        if parsed.username is not None or parsed.password is not None:
+            return "URL credentials are not allowed"
         if parsed.scheme != "https":
             return "only https:// URLs are allowed"
         host = (parsed.hostname or "").lower()
@@ -101,7 +108,10 @@ class WebFetch:
         return None
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
-        url = (args.get("url") or "").strip()
+        raw_url = args.get("url", "")
+        if not isinstance(raw_url, str):
+            return SkillResult(ok=False, error="'url' must be a string")
+        url = raw_url.strip()
         if not url:
             return SkillResult(ok=False, error="missing 'url'")
         validation_error = self._validate_url(url)
@@ -109,12 +119,18 @@ class WebFetch:
             return SkillResult(ok=False, error=validation_error)
 
         try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(15.0),
-                follow_redirects=False,
-                headers={"User-Agent": "Yagami/0.2 (local-first AI orchestrator)"},
-                transport=self._transport,
-            ) as client:
+            async with (
+                asyncio.timeout(_FETCH_TIMEOUT_SECONDS),
+                httpx.AsyncClient(
+                    timeout=httpx.Timeout(_FETCH_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    headers={
+                        "User-Agent": "Yagami/0.2 (local-first AI orchestrator)",
+                        "Accept-Encoding": "identity",
+                    },
+                    transport=self._transport,
+                ) as client,
+            ):
                 current_url = url
                 redirect_count = 0
                 while True:
@@ -138,6 +154,13 @@ class WebFetch:
                             continue
 
                         response.raise_for_status()
+                        if (
+                            response.headers.get("content-encoding", "identity").strip().casefold()
+                            != "identity"
+                        ):
+                            return SkillResult(
+                                ok=False, error="compressed responses are not supported"
+                            )
                         content_type = response.headers.get("content-type", "text/plain")
                         media_type = content_type.split(";", 1)[0].strip().casefold()
                         if media_type not in {"text/html", "text/plain", "application/xhtml+xml"}:
@@ -157,10 +180,11 @@ class WebFetch:
                             body_bytes.extend(chunk)
                         body = bytes(body_bytes).decode(encoding, errors="replace")
                         break
-        except (httpx.HTTPError, ValueError) as exc:
-            return SkillResult(ok=False, error=f"fetch failed: {exc}")
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError, LookupError, TimeoutError) as exc:
+            # HTTP exceptions can contain URLs with credentials or sensitive queries.
+            return SkillResult(ok=False, error=f"fetch failed: {type(exc).__name__}")
 
-        stripped = _strip_html(body)
+        stripped = body if media_type == "text/plain" else _strip_html(body)
         truncated = response_truncated or len(stripped) > _MAX_BYTES
         return SkillResult(
             ok=True,

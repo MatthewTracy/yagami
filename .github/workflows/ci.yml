@@ -99,7 +99,7 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
 
   integrations:
@@ -139,6 +139,7 @@ jobs:
         working-directory: integrations/ai-sdk-provider
         run: |
           npm ci
+          npm audit --audit-level=high
           npm run check
           npm test
           npm run build

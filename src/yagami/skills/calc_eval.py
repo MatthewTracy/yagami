@@ -17,6 +17,41 @@ from typing import Any
 from ..router.schema import Sensitivity
 from .base import Skill, SkillContext, SkillResult
 
+_MAX_EXPRESSION_LENGTH = 4096
+_MAX_AST_NODES = 256
+_MAX_AST_DEPTH = 32
+_MAX_INTEGER_BITS = 4096
+_MAX_EXPONENT = 10_000
+_MAX_FACTORIAL = 512
+
+
+def _bounded_power(base, exponent, *modulus):
+    # Check before pow: checking only its result allows huge allocations first.
+    if abs(exponent) > _MAX_EXPONENT:
+        raise ValueError("exponent exceeds calculation limit")
+    if isinstance(base, int) and isinstance(exponent, int) and abs(base) > 1 and exponent > 0:
+        if not modulus and (abs(base) - 1).bit_length() * exponent > _MAX_INTEGER_BITS:
+            raise ValueError("power exceeds integer size limit")
+    return pow(base, exponent, *modulus)
+
+
+def _bounded_factorial(value):
+    if value > _MAX_FACTORIAL:
+        raise ValueError("factorial exceeds calculation limit")
+    return math.factorial(value)
+
+
+def _validate_tree(tree: ast.AST) -> None:
+    pending = [(tree, 0)]
+    count = 0
+    while pending:
+        node, depth = pending.pop()
+        count += 1
+        if count > _MAX_AST_NODES or depth > _MAX_AST_DEPTH:
+            raise ValueError("expression exceeds complexity limit")
+        pending.extend((child, depth + 1) for child in ast.iter_child_nodes(node))
+
+
 _BIN_OPS: dict[type[ast.operator], Callable[..., Any]] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
@@ -24,7 +59,7 @@ _BIN_OPS: dict[type[ast.operator], Callable[..., Any]] = {
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+    ast.Pow: _bounded_power,
 }
 _UNARY_OPS: dict[type[ast.unaryop], Callable[..., Any]] = {
     ast.USub: operator.neg,
@@ -43,18 +78,29 @@ _FUNCS: dict[str, Callable[..., Any]] = {
     "floor": math.floor,
     "ceil": math.ceil,
     "round": round,
-    "factorial": math.factorial,
+    "factorial": _bounded_factorial,
     "min": min,
     "max": max,
-    "pow": pow,
+    "pow": _bounded_power,
 }
 _CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf, "nan": math.nan}
 
 
 def _safe_eval(node: ast.AST) -> int | float:
+    value = _eval_node(node)
+    if isinstance(value, int) and value.bit_length() > _MAX_INTEGER_BITS:
+        raise ValueError("result exceeds integer size limit")
+    return value
+
+
+def _eval_node(node: ast.AST) -> int | float:
     if isinstance(node, ast.Expression):
         return _safe_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    ):
         return node.value
     if isinstance(node, ast.BinOp):
         binary_op = _BIN_OPS.get(type(node.op))
@@ -104,7 +150,7 @@ class CalcEval:
         "properties": {
             "expression": {
                 "type": "string",
-                "description": "Math expression to evaluate, e.g. 'sqrt(2) * pi' or '14!'",
+                "description": "Math expression to evaluate, e.g. 'sqrt(2) * pi' or 'factorial(14)'",
             }
         },
         "required": ["expression"],
@@ -114,12 +160,24 @@ class CalcEval:
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
         expr = args.get("expression", "")
+        if not isinstance(expr, str):
+            return SkillResult(ok=False, error="'expression' must be a string")
         if not expr:
             return SkillResult(ok=False, error="missing 'expression'")
+        if len(expr) > _MAX_EXPRESSION_LENGTH:
+            return SkillResult(ok=False, error="expression exceeds length limit")
         try:
             tree = ast.parse(expr, mode="eval")
+            _validate_tree(tree)
             value = _safe_eval(tree)
-        except (ValueError, SyntaxError, ZeroDivisionError, OverflowError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            SyntaxError,
+            ZeroDivisionError,
+            OverflowError,
+            RecursionError,
+        ) as exc:
             return SkillResult(ok=False, error=str(exc))
         return SkillResult(ok=True, content=str(value))
 

@@ -29,10 +29,16 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!sessionId) return;
+    setRows([]);
+    if (!sessionId) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
-    fetchJson<{ decisions?: DecisionRow[] }>(`/api/decisions?session_id=${sessionId}&limit=50`)
+    fetchJson<{ decisions?: DecisionRow[] }>(
+      `/api/decisions?session_id=${encodeURIComponent(sessionId)}&limit=50`,
+    )
       .then((d) => {
         if (!cancelled) setRows(d.decisions || []);
       })
@@ -52,7 +58,9 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
     return <div className="text-xs text-zinc-400">Loading…</div>;
   }
   if (rows.length === 0) {
-    return <div className="text-xs text-zinc-400">No routing decisions yet.</div>;
+    return (
+      <div className="text-xs text-zinc-400">No routing decisions yet.</div>
+    );
   }
 
   const sessionHasPhi = rows.some((r) => {
@@ -64,7 +72,7 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
     <div className="space-y-2">
       <div className="flex justify-end">
         <a
-          href={`/api/decisions/export?session_id=${sessionId}`}
+          href={`/api/decisions/export?session_id=${encodeURIComponent(sessionId)}`}
           download
           className="text-[10px] text-zinc-400 hover:text-zinc-300 underline underline-offset-2"
           title="Download this session's routing decisions as CSV"
@@ -76,14 +84,18 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
         <div className="text-[11px] p-2 rounded border border-amber-900/50 bg-amber-900/10 text-amber-200 flex items-start gap-2">
           <span className="text-base leading-none">🔒</span>
           <div className="flex-1 min-w-0">
-            <div className="font-medium">Session contains sensitive content</div>
+            <div className="font-medium">
+              Session contains sensitive content
+            </div>
             <div className="text-amber-200/70 mt-0.5">
-              Cloud text routes are blocked. Image gen still works (only the
-              prompt is sent). Reset starts a fresh model context for one turn.
+              Sensitive context is restricted by policy. Reset omits prior
+              conversation for one turn; detected sensitivity still applies.
             </div>
           </div>
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent("yagami:reset-phi"))}
+            onClick={() =>
+              window.dispatchEvent(new CustomEvent("yagami:reset-phi"))
+            }
             className="shrink-0 text-amber-100 hover:text-white underline underline-offset-2"
             title="Send the next prompt without prior chat context"
           >
@@ -128,10 +140,12 @@ export function PrivacyLedger({ sessionId, refreshKey }: Props) {
           <div className="mt-1 text-zinc-400 text-[11px]">{r.reason}</div>
           <div className="mt-1 text-[10px] text-zinc-400 flex gap-3">
             <span title="classifier + routing">
-              route <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>
+              route{" "}
+              <span className="text-zinc-300">{fmtMs(r.t_classify_ms)}</span>
             </span>
             <span title="time from routing to first token">
-              ttft <span className="text-zinc-300">{fmtMs(r.t_first_token_ms)}</span>
+              ttft{" "}
+              <span className="text-zinc-300">{fmtMs(r.t_first_token_ms)}</span>
             </span>
             <span title="total turn duration">
               total <span className="text-zinc-300">{fmtMs(r.t_total_ms)}</span>
