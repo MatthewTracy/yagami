@@ -195,7 +195,7 @@ describe("AssistantBubble", () => {
     expect(screen.getByText(/d=0.125/)).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: /web.fetch/ }));
     expect(screen.getByText(/Content-free evidence/)).toBeVisible();
-    expect(screen.getByText(/https:\/\/example.com/)).toBeVisible();
+    expect(screen.getByText(/"url":/)).toHaveTextContent("https://example.com");
     await userEvent.click(recall);
     expect(screen.queryByText("related context")).not.toBeInTheDocument();
   });
