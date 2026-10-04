@@ -8,7 +8,7 @@ updates:
     ignore:
       # MCP 2 removes FastMCP; retain maintained v1 until a tested migration.
       - dependency-name: mcp
-        update-types: [version-update:semver-major]
+        versions: [">=2"]
 
   - package-ecosystem: npm
     directory: /ui
@@ -33,6 +33,9 @@ updates:
       codeql:
         # Init, analyze, and upload-sarif must use the same action version.
         patterns: [github/codeql-action/*]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /
