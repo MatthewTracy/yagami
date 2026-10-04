@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # MCP 2 removes FastMCP; retain maintained v1 until a tested migration.
+      - dependency-name: mcp
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: npm
     directory: /ui
@@ -17,6 +21,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      codeql:
+        # Init, analyze, and upload-sarif must use the same action version.
+        patterns: [github/codeql-action/*]
 
   - package-ecosystem: docker
     directory: /

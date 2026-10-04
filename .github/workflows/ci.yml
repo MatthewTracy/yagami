@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         with:
-          node-version: "22"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Build bundled control surface
@@ -92,7 +92,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "22"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
@@ -118,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install build==1.5.1 twine==6.2.0 ruff
+          python -m pip install build==1.5.1 twine==7.0.0 ruff
           for package in \
             integrations/langchain-yagami \
             integrations/llama-index-llms-yagami \
@@ -132,7 +132,7 @@ jobs:
           ruff format --check integrations
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "22"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: integrations/ai-sdk-provider/package-lock.json
       - name: Build and test AI SDK provider
