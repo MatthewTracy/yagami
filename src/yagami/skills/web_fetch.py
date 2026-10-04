@@ -101,7 +101,10 @@ class WebFetch:
         return None
 
     async def run(self, args: dict, ctx: SkillContext) -> SkillResult:
-        url = (args.get("url") or "").strip()
+        raw_url = args.get("url", "")
+        if not isinstance(raw_url, str):
+            return SkillResult(ok=False, error="'url' must be a string")
+        url = raw_url.strip()
         if not url:
             return SkillResult(ok=False, error="missing 'url'")
         validation_error = self._validate_url(url)
@@ -157,8 +160,9 @@ class WebFetch:
                             body_bytes.extend(chunk)
                         body = bytes(body_bytes).decode(encoding, errors="replace")
                         break
-        except (httpx.HTTPError, ValueError) as exc:
-            return SkillResult(ok=False, error=f"fetch failed: {exc}")
+        except (httpx.HTTPError, ValueError, LookupError) as exc:
+            # HTTP exceptions can contain URLs with credentials or sensitive queries.
+            return SkillResult(ok=False, error=f"fetch failed: {type(exc).__name__}")
 
         stripped = _strip_html(body)
         truncated = response_truncated or len(stripped) > _MAX_BYTES

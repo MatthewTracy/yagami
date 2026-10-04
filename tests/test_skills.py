@@ -70,6 +70,82 @@ async def test_calc_handles_div_by_zero():
     assert "division" in res.error.lower()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expression", [None, 42, [], {}])
+async def test_calc_rejects_non_string_arguments(expression):
+    result = await CalcEval().run({"expression": expression}, _ctx())
+    assert not result.ok
+    assert "string" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expression", ["sqrt()", "factorial(1.5)", "pow(2)", "min(1)"])
+async def test_calc_handles_invalid_function_arguments(expression):
+    result = await CalcEval().run({"expression": expression}, _ctx())
+    assert not result.ok
+    assert result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "2 ** 1000000000",
+        "pow(2, 1000000000)",
+        "pow(2, 1000000000, 7)",
+        "2 ** 5000",
+        "factorial(1000000000)",
+    ],
+)
+async def test_calc_rejects_expensive_operations_before_execution(expression, monkeypatch):
+    import yagami.skills.calc_eval as calc
+
+    def unexpected_execution(*args):
+        pytest.fail("expensive operation executed before checking limits")
+
+    monkeypatch.setattr(calc, "pow", unexpected_execution, raising=False)
+    monkeypatch.setattr(calc.math, "factorial", unexpected_execution)
+    result = await CalcEval().run({"expression": expression}, _ctx())
+    assert not result.ok
+    assert "limit" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expression",
+    ["1" * 4097, "1+" * 150 + "1", "-" * 40 + "1", "min(" + "1," * 260 + "1)"],
+)
+async def test_calc_rejects_large_or_deep_expressions(expression):
+    result = await CalcEval().run({"expression": expression}, _ctx())
+    assert not result.ok
+    assert "limit" in result.error
+
+
+@pytest.mark.asyncio
+async def test_calc_checks_intermediate_integer_size():
+    result = await CalcEval().run({"expression": "(2**3000 * 2**3000) % 7"}, _ctx())
+    assert not result.ok
+    assert "integer size limit" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("pow(2, 10, 7)", "2"),
+        ("2**-3", "0.125"),
+        ("0**5000", "0"),
+        ("(-1)**5000", "1"),
+        ("2**4095", str(2**4095)),
+        ("factorial(512)", str(math.factorial(512))),
+    ],
+)
+async def test_calc_preserves_bounded_power_operations(expression, expected):
+    result = await CalcEval().run({"expression": expression}, _ctx())
+    assert result.ok
+    assert result.content == expected
+
+
 # ---- web.fetch ----
 
 
@@ -156,6 +232,47 @@ async def test_web_fetch_rejects_binary_content_type():
     )
     assert result.ok is False
     assert "content type" in (result.error or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", [None, 42, [], {}])
+async def test_web_fetch_rejects_non_string_arguments(url):
+    result = await WebFetch().run({"url": url}, _ctx())
+    assert not result.ok
+    assert "string" in result.error
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_handles_unknown_response_encoding():
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200, content=b"hello", headers={"content-type": "text/plain; charset=unknown-charset"}
+        )
+    )
+    result = await WebFetch(allowlist={"trusted.example"}, transport=transport).run(
+        {"url": "https://trusted.example/page"}, _ctx()
+    )
+    assert not result.ok
+    assert result.error == "fetch failed: LookupError"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["status", "connection"])
+async def test_web_fetch_errors_do_not_echo_sensitive_urls(failure):
+    url = "https://trusted.example/page?token=private-query-value"
+
+    def handler(request):
+        if failure == "connection":
+            raise httpx.ConnectError(f"cannot connect to {request.url}", request=request)
+        return httpx.Response(500)
+
+    result = await WebFetch(
+        allowlist={"trusted.example"}, transport=httpx.MockTransport(handler)
+    ).run({"url": url}, _ctx())
+    assert not result.ok
+    assert result.error.startswith("fetch failed:")
+    assert "private-query-value" not in result.error
+    assert "trusted.example" not in result.error
 
 
 # ---- adapters ----

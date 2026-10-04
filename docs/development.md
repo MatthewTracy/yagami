@@ -100,6 +100,18 @@ Skills must not raise into a chat turn. Catch operational failures and return
 a conservative sensitivity ceiling unless their data handling has been
 explicitly designed and tested for sensitive context.
 
+The built-in `calc.eval` tool bounds synchronous work before evaluating an
+expression: at most 4,096 characters, 256 AST nodes, and 32 levels of nesting.
+Integer values, including intermediate results, are limited to 4,096 bits;
+exponent magnitude is limited to 10,000 and factorial arguments to 512.
+Oversized or malformed expressions return a failed `SkillResult`. Integer
+powers use a conservative size estimate before allocating the result, so
+some calculations close to the size limit may also be rejected.
+
+`web.fetch` returns the exception type on fetch failures without copying the
+exception message, which may contain credentials or query parameters from
+the requested URL. Unknown response charsets also return a failed result.
+
 The implementation examples are in
 [`src/yagami/backends`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/backends)
 and [`src/yagami/skills`](https://github.com/MatthewTracy/yagami/tree/main/src/yagami/skills).
