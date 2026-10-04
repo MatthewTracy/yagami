@@ -139,6 +139,7 @@ jobs:
         working-directory: integrations/ai-sdk-provider
         run: |
           npm ci
+          npm audit --audit-level=high
           npm run check
           npm test
           npm run build
