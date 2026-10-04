@@ -45,7 +45,7 @@ jobs:
           python scripts/check_release.py
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "22"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: integrations/ai-sdk-provider/package-lock.json
       - name: Verify generated package metadata
