@@ -222,8 +222,18 @@ jobs:
           push: false
           load: true
           tags: yagami:ci
+          no-cache-filters: runtime
           cache-from: type=gha
           cache-to: type=gha,mode=min,ignore-error=true
+      - name: Scan container before release tagging
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: yagami:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
 
   helm:
     timeout-minutes: 10

@@ -8,11 +8,12 @@ shipped.
 
 ## [Unreleased]
 
-## [0.8.1] - 2026-10-06
+## [0.8.2] - 2026-10-06
 
-The signed 0.8.0 candidate was withdrawn before publication when a new Mako advisory appeared; its immutable tag is retained. This release includes all intended 0.8 improvements.
+The signed 0.8.0 and 0.8.1 candidates were withdrawn before publication while dependency and container security checks were completed; their immutable tags are retained. This release includes all intended 0.8 improvements.
 
 ### Security
+- Apply signed Debian security updates to the pinned container runtime, including the Perl and PCRE2 fixes reported by the release scan. Refresh that stage on every CI/release build, and enforce the high/critical container scan before creating immutable release tags.
 - Update Mako to 1.4.3 in the reproducible Python and container locks to fix the newly disclosed Windows TemplateLookup path traversal advisory.
 - Bound calculator input complexity and intermediate arithmetic work to reject resource-exhaustion attempts before expensive operations.
 - Enforce a whole-operation HTTPS fetch deadline, validate every redirect, reject compressed responses before decoding, and omit sensitive URLs from error output.

@@ -28,6 +28,12 @@ RUN python -m pip wheel --no-build-isolation --no-deps --wheel-dir /wheels .
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+# Apply signed Debian updates before installing application packages. Release
+# builds refresh this stage even when the pinned upstream image is unchanged.
+RUN apt-get update && \
+    apt-get upgrade --yes --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
 LABEL org.opencontainers.image.source="https://github.com/MatthewTracy/yagami" \
       org.opencontainers.image.licenses="MIT" \
       io.modelcontextprotocol.server.name="io.github.MatthewTracy/yagami"
