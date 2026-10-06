@@ -8,7 +8,12 @@ shipped.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-06
+
 ### Security
+- Bound calculator input complexity and intermediate arithmetic work to reject resource-exhaustion attempts before expensive operations.
+- Enforce a whole-operation HTTPS fetch deadline, validate every redirect, reject compressed responses before decoding, and omit sensitive URLs from error output.
+- Refresh Python, JavaScript, and build dependencies to address reported advisories, including the newly disclosed source-map-js and selector-parser issues.
 - Inspect caller-supplied tool schemas during policy preview so malicious tool
   descriptions cannot bypass context-risk quarantine.
 - Preserve medical sensitivity inherited from prior messages and record
@@ -22,6 +27,7 @@ shipped.
 - Delete session-scoped memory vectors and reversible privacy tokens when a conversation is deleted.
 
 ### Added
+- Add 75 UI tests and 40 cross-browser checks covering recovery, races, dialogs, keyboard access, overflow, mobile layouts, and automated accessibility scans.
 - Add native governed tool calling for Ollama and explicit, chat-format-gated
   tool support for llama.cpp, including a sensitive local-tool flagship demo.
 - Add a schema-validated containment corpus covering identifiers, clinical
@@ -32,6 +38,8 @@ shipped.
   maintainer-ready contributor and launch drafts.
 
 ### Changed
+- Redesign the control surface with consistent typography, responsive history and session-insight panels, accessible dialogs, starter actions, and clearer connection states.
+- Upgrade paired React/React DOM and Vitest/coverage packages together; align packaging metadata and workflow action versions. JavaScript development requires supported Node 22.22.2+, 24.15.0+, or 26+.
 - Make provider SDKs, PDF ingestion, and OS keyring support optional extras;
   improve `yagami doctor` with optional-capability status and actionable next
   commands.
@@ -40,6 +48,9 @@ shipped.
   user content as though it were an AI answer.
 
 ### Fixed
+- Preserve drafts through reconnects and failed operations, prevent stale responses from overwriting current sessions, and restore feedback state when persistence fails.
+- Clear prior-session privacy and budget data during transitions and support response actions by keyboard and touch.
+- Reject malformed chat image fields without terminating the WebSocket, allowing the next valid turn on the same connection.
 - Add memory-saver, balanced, and performance profiles for explicit Ollama model retention and optional background preloading, with content-free readiness health and truthful UI phases for policy checks, model loading, and generation.
 - Keep default Ollama embedding chunks below the configured `all-minilm` context without reducing the prior per-message retention ceiling.
 - Hide abandoned empty chat sessions and allow completed streams to finalize cleanly when a client disconnects immediately after the `done` event.
