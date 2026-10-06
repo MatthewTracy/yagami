@@ -4,4 +4,4 @@ from .chat_models import ChatYagami
 from .governance import YagamiGovernanceClient
 
 __all__ = ["ChatYagami", "YagamiGovernanceClient"]
-__version__ = "0.8.0"
+__version__ = "0.8.1"
