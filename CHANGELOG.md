@@ -8,6 +8,11 @@ shipped.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-06
+
+### Changed
+- Include the MCP ownership marker in the published PyPI description, and validate the README configured in package metadata before registry publication.
+
 ## [0.8.2] - 2026-10-06
 
 The signed 0.8.0 and 0.8.1 candidates were withdrawn before publication while dependency and container security checks were completed; their immutable tags are retained. This release includes all intended 0.8 improvements.
