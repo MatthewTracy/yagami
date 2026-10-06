@@ -1,5 +1,7 @@
 # Yagami
 
+<!-- mcp-name: io.github.MatthewTracy/yagami -->
+
 **Open-source AI context firewall for governed model, retrieval, memory, and
 tool access.**
 

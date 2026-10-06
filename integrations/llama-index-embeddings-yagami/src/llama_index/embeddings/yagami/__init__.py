@@ -3,4 +3,4 @@
 from .base import YagamiEmbedding
 
 __all__ = ["YagamiEmbedding"]
-__version__ = "0.8.2"
+__version__ = "0.8.3"
