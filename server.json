@@ -3,7 +3,7 @@
   "name": "io.github.MatthewTracy/yagami",
   "title": "Yagami AI Context Firewall",
   "description": "Open-source AI context firewall for governed model, retrieval, memory, and tool access.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "websiteUrl": "https://matthewtracy.github.io/yagami/",
   "repository": {
     "url": "https://github.com/MatthewTracy/yagami",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "yagami",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "runtimeHint": "uvx",
       "packageArguments": [
         {
