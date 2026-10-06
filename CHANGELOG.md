@@ -8,9 +8,12 @@ shipped.
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-10-06
+## [0.8.1] - 2026-10-06
+
+The signed 0.8.0 candidate was withdrawn before publication when a new Mako advisory appeared; its immutable tag is retained. This release includes all intended 0.8 improvements.
 
 ### Security
+- Update Mako to 1.4.3 in the reproducible Python and container locks to fix the newly disclosed Windows TemplateLookup path traversal advisory.
 - Bound calculator input complexity and intermediate arithmetic work to reject resource-exhaustion attempts before expensive operations.
 - Enforce a whole-operation HTTPS fetch deadline, validate every redirect, reject compressed responses before decoding, and omit sensitive URLs from error output.
 - Refresh Python, JavaScript, and build dependencies to address reported advisories, including the newly disclosed source-map-js and selector-parser issues.
