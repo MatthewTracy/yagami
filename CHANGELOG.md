@@ -8,6 +8,11 @@ shipped.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-29
+
+### Changed
+- Patch the tested Python, container, UI and SDK dependency locks for newly reported advisories, retaining compatible MCP 1.30 and aligning OpenTelemetry packages.
+
 ## [0.8.3] - 2026-10-06
 
 ### Changed

@@ -1,6 +1,6 @@
 [project]
 name = "yagami"
-version = "0.8.3"
+version = "0.8.4"
 description = "Open-source AI context firewall for governed model, retrieval, memory, and tool access."
 keywords = [
     "ai-gateway",
@@ -45,11 +45,11 @@ dependencies = [
     "aiosqlite>=0.20",
     "python-multipart>=0.0.20",
     "sqlite-vec>=0.1.6",
-    "mcp>=1.28,<2",
+    "mcp>=1.30,<2",
     "jsonschema>=4.23",
     "PyYAML>=6.0.2",
     "prometheus-client>=0.21",
-    "opentelemetry-api>=1.28",
+    "opentelemetry-api>=1.45.1",
     "cryptography>=43",
     "PyJWT[crypto]>=2.10",
     "sqlalchemy[asyncio]>=2.0.41",
@@ -70,7 +70,7 @@ providers = [
     "openai>=2.0",
 ]
 ingest = [
-    "pypdf>=5.0",
+    "pypdf>=6.21.2",
 ]
 desktop = [
     "keyring>=25.4",
@@ -78,7 +78,7 @@ desktop = [
 all = [
     "anthropic>=0.39",
     "openai>=2.0",
-    "pypdf>=5.0",
+    "pypdf>=6.21.2",
     "keyring>=25.4",
 ]
 dev = [
@@ -90,7 +90,7 @@ dev = [
     "types-PyYAML>=6.0",
     "anthropic>=0.39",
     "openai>=2.0",
-    "pypdf>=5.0",
+    "pypdf>=6.21.2",
     "keyring>=25.4",
 ]
 observability = [
