@@ -12,6 +12,7 @@ shipped.
 
 ### Changed
 - Retain generated assistant images in conversation history and restore them after reload, with bounded inline media validation and regression coverage.
+- Require pypdf 6.21.4 or newer and refresh its locked version to address newly reported PDF denial-of-service vulnerabilities.
 
 ## [0.8.4] - 2026-10-29
 

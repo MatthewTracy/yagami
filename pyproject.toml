@@ -70,7 +70,7 @@ providers = [
     "openai>=2.0",
 ]
 ingest = [
-    "pypdf>=6.21.2",
+    "pypdf>=6.21.4",
 ]
 desktop = [
     "keyring>=25.4",
@@ -78,7 +78,7 @@ desktop = [
 all = [
     "anthropic>=0.39",
     "openai>=2.0",
-    "pypdf>=6.21.2",
+    "pypdf>=6.21.4",
     "keyring>=25.4",
 ]
 dev = [
@@ -90,7 +90,7 @@ dev = [
     "types-PyYAML>=6.0",
     "anthropic>=0.39",
     "openai>=2.0",
-    "pypdf>=6.21.2",
+    "pypdf>=6.21.4",
     "keyring>=25.4",
 ]
 observability = [
