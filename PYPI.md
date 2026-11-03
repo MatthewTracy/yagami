@@ -2,18 +2,36 @@
 
 <!-- mcp-name: io.github.MatthewTracy/yagami -->
 
-**Open-source AI context firewall for governed model, retrieval, memory, and
-tool access.**
+**An AI router that chooses models and protects privacy.**
 
 [![CI](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml/badge.svg)](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/yagami.svg)](https://pypi.org/project/yagami/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/MatthewTracy/yagami/blob/main/LICENSE)
 
-Yagami is a self-hosted LLM gateway and policy boundary for applications and
-AI agents. It classifies context locally, maps destinations to trust zones,
-applies versioned policy, governs tool execution, and records content-free
-evidence. Existing OpenAI SDK applications can adopt it by changing one
-`base_url`.
+Yagami automatically routes requests to local or cloud models based on the
+task and your privacy policy. When it detects sensitive information, including
+protected health information (PHI), the default policy keeps processing local.
+Sensitive conversation history inherits the same restriction.
+
+Local models can also reduce cloud API costs when they are sufficient for the
+task. More demanding reasoning, research, and image generation can use cloud
+models when your policy allows and the appropriate provider is configured.
+
+Use the included browser chat or connect your application through the
+OpenAI-compatible API. Yagami is open source and self-hosted; existing OpenAI
+SDK applications can connect by changing one `base_url`.
+
+## Watch Yagami in action
+
+[![Preview of Yagami generating an image with the cloud route highlighted](https://raw.githubusercontent.com/MatthewTracy/yagami/v0.8.6/docs/images/capabilities-demo.png)](https://matthewtracy.github.io/yagami/demo/)
+
+[Watch the 59-second demo](https://matthewtracy.github.io/yagami/demo/): an
+everyday physics question, a fictional patient request kept local, and an image
+generated through a cloud provider. The recording uses real models and
+synthetic patient information.
+
+The recording uses configured local and cloud providers with `yagami serve`.
+The no-credential `yagami demo` command below disables cloud routing.
 
 ## Try it in 60 seconds
 
@@ -32,8 +50,6 @@ exercising classification, policy, lineage, storage, and audit behavior.
 
 For local model-backed answers, install Ollama, run
 `ollama pull llama3.2:3b-instruct-q4_K_M`, and restart the demo.
-
-[Watch the two-minute demo](https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2).
 
 ## Protect an application
 

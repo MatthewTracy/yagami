@@ -8,6 +8,12 @@ shipped.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-11-02
+
+### Changed
+- Refresh the PyPI and project introductions with plain-language model routing, sensitive-data containment, and potential cloud-cost savings.
+- Replace the older demo link with the verified 59-second capabilities recording and a preview image; document the local/cloud setup used in the video.
+
 ## [0.8.5] - 2026-11-02
 
 ### Changed
