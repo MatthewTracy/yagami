@@ -43,6 +43,7 @@ type Bubble =
       role: "assistant";
       text: string;
       image?: string;
+      images?: string[];
       pending: boolean;
       pendingHint?: string;
       backend?: string;
@@ -287,7 +288,15 @@ export function Chat({
               images?: { media_type: string; data_b64: string }[];
             }) => {
               if (m.role !== "user") {
-                return { role: "assistant", text: m.content, pending: false };
+                return {
+                  role: "assistant",
+                  text: m.content,
+                  images: (m.images || []).map(
+                    (image) =>
+                      `data:${image.media_type};base64,${image.data_b64}`,
+                  ),
+                  pending: false,
+                };
               }
               const savedImages: Attachment[] = (m.images || []).map(
                 (image, index) => ({
@@ -391,7 +400,7 @@ export function Chat({
     if (m.type === "image_url") {
       updateLastAssistant((last) => ({
         ...last,
-        image: m.content,
+        images: [...(last.images || []), m.content],
         pending: false,
       }));
       return;
@@ -624,6 +633,7 @@ export function Chat({
               key={i}
               text={b.text}
               image={b.image}
+              images={b.images}
               pending={b.pending}
               pendingHint={b.pendingHint}
               isLastAssistant={i === lastAssistantIdx && !inFlight}

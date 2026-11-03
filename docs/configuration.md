@@ -64,3 +64,15 @@ approvals, and external detector settings. The
 Environment variables override `config/yagami.toml`. After changing either,
 restart Yagami and run `yagami doctor` so endpoint, model, storage, and
 credential problems are visible before traffic reaches the gateway.
+
+## Generated image history
+
+Browser-generated images are saved with their assistant reply and restored when
+you reopen a conversation. Session deletion and retention cleanup remove these
+attachments along with the conversation. Generated output accepts up to four
+inline PNG, JPEG, GIF, or WebP images per reply, each no larger than 20 MB;
+remote URLs and malformed image data are rejected.
+
+Saved generated images are display history, rather than implicit vision input
+on later turns. To ask a vision-capable backend about an image, attach it
+explicitly. Existing uploaded-image behavior is unchanged.
