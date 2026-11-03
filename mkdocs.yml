@@ -38,6 +38,7 @@ extra:
   social_image: assets/og.png
 nav:
   - Start here: index.md
+  - Watch the demo: demo.md
   - Security tour: tour.md
   - Gateway API: gateway.md
   - Policies: policies.md

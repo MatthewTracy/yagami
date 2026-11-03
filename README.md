@@ -2,7 +2,12 @@
 
 <!-- mcp-name: io.github.MatthewTracy/yagami -->
 
-**Open-source AI context firewall for governed model, retrieval, memory, and tool access.**
+**An AI router that chooses models and protects privacy.**
+
+Yagami automatically routes requests to local or cloud models based on the
+task and your privacy policy. Detected sensitive information, including PHI,
+stays local under the default policy. Local models can reduce cloud API costs;
+more demanding work and image generation can use cloud providers when allowed.
 
 [![CI](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml/badge.svg)](https://github.com/MatthewTracy/yagami/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/yagami.svg)](https://pypi.org/project/yagami/)
@@ -10,6 +15,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/MatthewTracy/yagami/blob/main/LICENSE)
 
 [Documentation](https://matthewtracy.github.io/yagami/) | [Gateway API](https://matthewtracy.github.io/yagami/gateway/) | [Deployment](https://matthewtracy.github.io/yagami/deployment/) | [Security](https://github.com/MatthewTracy/yagami/security/policy) | [Roadmap](https://github.com/MatthewTracy/yagami/blob/main/docs/roadmap.md)
+
+## Watch Yagami in action
+
+[![Preview of Yagami generating an image with the cloud route highlighted](https://raw.githubusercontent.com/MatthewTracy/yagami/v0.8.6/docs/images/capabilities-demo.png)](https://matthewtracy.github.io/yagami/demo/)
+
+[Watch the 59-second demo](https://matthewtracy.github.io/yagami/demo/): local
+answers, a fictional patient case kept on the machine, and cloud image
+generation. The recording uses real models, synthetic patient information,
+and configured providers with `yagami serve`. The no-credential demo below
+keeps cloud routing disabled.
 
 ## Try it in 60 seconds
 
@@ -27,8 +42,6 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000), or use
 routing while exercising the UI, policy, lineage, storage, and audit path. For
 local AI answers, install Ollama and run
 `ollama pull llama3.2:3b-instruct-q4_K_M` before starting the demo.
-
-https://github.com/user-attachments/assets/a7be9449-eafc-4acb-99b6-ea39edc43cd2
 
 ![Yagami workspace with conversation history, chat, and session insights](https://raw.githubusercontent.com/MatthewTracy/yagami/a77795286244242a1a1b116d272a128c575f106f/docs/images/workspace.png)
 

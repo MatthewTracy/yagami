@@ -1,7 +1,7 @@
 [project]
 name = "yagami"
-version = "0.8.5"
-description = "Open-source AI context firewall for governed model, retrieval, memory, and tool access."
+version = "0.8.6"
+description = "AI router for local and cloud models that keeps detected sensitive data local."
 keywords = [
     "ai-gateway",
     "llm-gateway",

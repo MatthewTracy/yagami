@@ -1,9 +1,16 @@
-# Put a privacy firewall in front of an AI app
+# An AI router that chooses models and protects privacy
 
-Yagami is an open-source, self-hosted context firewall for AI agents. It
-classifies prompts and inherited context locally, evaluates versioned policy,
-governs model and tool access, and produces content-free evidence for each
-decision.
+Yagami routes requests to local or cloud models based on the task and your
+privacy policy. Detected sensitive information stays local under the default
+policy. Local models can reduce cloud API costs; more demanding work and image
+generation can use cloud providers when allowed.
+
+Use the included browser chat or connect your application through the
+OpenAI-compatible API. Yagami also governs retrieval, memory, and tool access
+and records content-free evidence for its decisions.
+
+[Watch the 59-second demo](demo.md) to see local answers, a fictional patient
+case kept on the machine, and cloud image generation with real models.
 
 ## Try it in 60 seconds
 
