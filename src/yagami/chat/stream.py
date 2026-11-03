@@ -390,9 +390,9 @@ async def chat_endpoint(
                 _stream_gateway(ws, gateway, prepared, generation_done_sent)
             )
             try:
-                assistant_text = await gen_task
+                assistant_msg = await gen_task
             except asyncio.CancelledError:
-                assistant_text = ""
+                assistant_msg = None
                 if not connection_closed.is_set():
                     await _send(ws, {"type": "error", "content": "cancelled", "meta": {}})
                     await _send(
@@ -402,8 +402,8 @@ async def chat_endpoint(
             finally:
                 gen_task = None
 
-            if assistant_text:
-                assistant_msg = Message(role="assistant", content=assistant_text)
+            assistant_text = assistant_msg.content if assistant_msg is not None else ""
+            if assistant_msg is not None and (assistant_text or assistant_msg.images):
                 history_cache.append(assistant_msg)
                 await sessions.append(session_id, assistant_msg)
 
@@ -447,15 +447,46 @@ async def _stream_gateway(
     gateway: GatewayService,
     prepared,
     generation_done_sent: asyncio.Event | None = None,
-) -> str:
+) -> Message:
     pieces: list[str] = []
+    images: list[ImageAttachment] = []
     async for chunk in gateway.stream(prepared):
         if chunk["type"] == "text":
             pieces.append(chunk["content"])
+        elif chunk["type"] == "image_url":
+            header, separator, payload = chunk["content"].partition(",")
+            try:
+                if (
+                    not separator
+                    or not header.startswith("data:")
+                    or not header.endswith(";base64")
+                ):
+                    raise ValueError("generated images must be inline base64 data")
+                if len(images) >= _MAX_CHAT_IMAGES:
+                    raise ValueError("too many generated images")
+                images.append(
+                    ImageAttachment.model_validate(
+                        {"media_type": header[5:-7], "data_b64": payload}
+                    )
+                )
+            except ValueError:
+                # Do not forward remote URLs or include provider content in the error/log.
+                await _send(
+                    ws,
+                    {
+                        "type": "error",
+                        "content": "provider returned an invalid generated image",
+                        "meta": {"code": "invalid_generated_image"},
+                    },
+                )
+                await _send(ws, {"type": "done", "content": "", "meta": {}})
+                if generation_done_sent is not None:
+                    generation_done_sent.set()
+                return Message(role="assistant")
         await _send(ws, chunk)
         if chunk["type"] == "done" and generation_done_sent is not None:
             generation_done_sent.set()
-    return "".join(pieces)
+    return Message(role="assistant", content="".join(pieces), images=images or None)
 
 
 async def _generation_status(prepared) -> tuple[str, str]:
@@ -495,7 +526,16 @@ def _messages_for_backend(history: list[Message], *, reset_context: bool = False
     """
     if reset_context and history:
         return [history[-1]]
-    return list(history)
+    # Generated output is retained for display, not silently resent as vision input.
+    # User-supplied image attachments keep their existing backend behavior.
+    messages = []
+    for message in history:
+        if message.role == "assistant" and message.images:
+            if message.content:
+                messages.append(message.model_copy(update={"images": None}))
+        else:
+            messages.append(message)
+    return messages
 
 
 async def _maybe_queue_memory(

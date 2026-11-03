@@ -17,6 +17,7 @@ export type RecallHit = {
 type Props = {
   text: string;
   image?: string;
+  images?: string[];
   pending: boolean;
   pendingHint?: string;
   isLastAssistant: boolean;
@@ -29,6 +30,7 @@ type Props = {
 export function AssistantBubble({
   text,
   image,
+  images,
   pending,
   pendingHint,
   isLastAssistant,
@@ -154,10 +156,15 @@ export function AssistantBubble({
       {pending && text && (
         <span className="inline-block w-2 h-4 ml-0.5 align-text-bottom bg-zinc-500 animate-pulse" />
       )}
-      {image && (
-        <img src={image} alt="generated" className="mt-2 rounded max-w-full" />
-      )}
-      {!pending && (text || image) && (
+      {(images || (image ? [image] : [])).map((source, index) => (
+        <img
+          key={index}
+          src={source}
+          alt="generated"
+          className="mt-2 rounded max-w-full"
+        />
+      ))}
+      {!pending && (text || image || !!images?.length) && (
         <div className="assistant-actions absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           {decisionId && (
             <>

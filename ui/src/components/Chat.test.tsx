@@ -173,6 +173,58 @@ describe("chat edge cases", () => {
     expect(screen.queryByText("A useful answer")).not.toBeInTheDocument();
   });
 
+  it("restores generated assistant images and their caption from history", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      json({
+        messages: [
+          { role: "user", content: "draw two variations" },
+          {
+            role: "assistant",
+            content: "Two variations",
+            images: [
+              { media_type: "image/png", data_b64: "aGVsbG8=" },
+              { media_type: "image/jpeg", data_b64: "d29ybGQ=" },
+            ],
+          },
+        ],
+      }),
+    );
+    setup("image-session");
+    expect(await screen.findByText("Two variations")).toBeVisible();
+    const images = screen.getAllByRole("img", { name: "generated" });
+    expect(images).toHaveLength(2);
+    expect(images[0]).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
+    expect(images[1]).toHaveAttribute("src", "data:image/jpeg;base64,d29ybGQ=");
+  });
+
+  it("retains each generated image in a live response", async () => {
+    const { socket, input, user } = setup();
+    await user.type(input, "draw two variations");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    act(() => {
+      socket.receive({
+        type: "routing",
+        backend: "stability",
+        is_local: false,
+        reason: "image generation",
+        classification: { sensitivity: "none" },
+      });
+      socket.receive({
+        type: "image_url",
+        content: "data:image/png;base64,aGVsbG8=",
+        meta: {},
+      });
+      socket.receive({
+        type: "image_url",
+        content: "data:image/jpeg;base64,d29ybGQ=",
+        meta: {},
+      });
+      socket.receive({ type: "done", content: "", meta: {} });
+    });
+    expect(screen.getAllByRole("img", { name: "generated" })).toHaveLength(2);
+    expect(input).toBeEnabled();
+  });
+
   it("waits for the socket before loading a selected session", async () => {
     vi.mocked(fetch).mockResolvedValue(
       json({

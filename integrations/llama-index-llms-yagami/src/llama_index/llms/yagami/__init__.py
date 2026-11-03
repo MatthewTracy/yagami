@@ -3,4 +3,4 @@
 from .base import YagamiLLM
 
 __all__ = ["YagamiLLM"]
-__version__ = "0.8.4"
+__version__ = "0.8.5"

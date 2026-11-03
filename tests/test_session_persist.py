@@ -66,14 +66,15 @@ async def test_image_only_message_gets_useful_title(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_image_attachments_round_trip_and_cascade(fresh_db):
+@pytest.mark.parametrize("role", ["user", "assistant"])
+async def test_image_attachments_round_trip_and_cascade(fresh_db, role):
     store = SessionStore()
     sid = await store.new_session()
     images = [
         ImageAttachment(media_type="image/png", data_b64="aGVsbG8="),
         ImageAttachment(media_type="image/jpeg", data_b64="d29ybGQ="),
     ]
-    await store.append(sid, Message(role="user", content="compare these", images=images))
+    await store.append(sid, Message(role=role, content="compare these", images=images))
 
     history = await store.history(sid)
     assert history[0].images == images
