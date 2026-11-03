@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -72,6 +73,16 @@ async def test_too_many_generated_images_do_not_create_partial_history():
     result = await _stream_gateway(ws, ImageGateway(chunks), None)
     assert result.images is None
     assert ws.sent[-2]["type"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_oversized_generated_image_is_rejected_before_forwarding():
+    ws = _DisconnectOnDoneWebSocket()
+    payload = base64.b64encode(b"x" * (20 * 1024 * 1024 + 1)).decode("ascii")
+    chunks = [{"type": "image_url", "content": f"data:image/png;base64,{payload}", "meta": {}}]
+    result = await _stream_gateway(ws, ImageGateway(chunks), None)
+    assert result.images is None
+    assert [chunk["type"] for chunk in ws.sent] == ["error", "done"]
 
 
 def test_generated_media_is_display_history_not_implicit_vision_input():
